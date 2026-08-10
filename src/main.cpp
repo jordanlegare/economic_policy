@@ -64,10 +64,10 @@ std::string live_baseline(){
 }
 struct NegotiationState {
   unsigned long revision=0;
-  double us_tariff=50,retaliatory_tariff=5,canada_priority=50,us_priority=50;
+  double us_tariff=50,retaliatory_tariff=5,canada_priority=30,us_priority=70;
   double risk_aversion=50,cooperation_ceiling=50;
   std::array<double,20> canada_sectors{},us_sectors{};
-  std::string updated_by="opening baseline";
+  std::string updated_by="Mr. Greer's opening search";
   NegotiationState(){canada_sectors.fill(100);us_sectors.fill(100);}
   std::string json() const {
     std::ostringstream o;o<<"{\"revision\":"<<revision<<",\"updatedBy\":\""<<updated_by<<"\",\"usTariff\":"<<us_tariff

@@ -3,12 +3,12 @@
 #include <iostream>
 int main(){
   cad::Economy defaults;
-  assert(defaults.us_tariff_canada==50.0);assert(defaults.canada_priority==50.0);
-  assert(defaults.us_priority==50.0);assert(defaults.risk_aversion==50.0);assert(defaults.cooperation_ceiling==50.0);
+  assert(defaults.us_tariff_canada==50.0);assert(defaults.canada_priority==30.0);
+  assert(defaults.us_priority==70.0);assert(defaults.risk_aversion==50.0);assert(defaults.cooperation_ceiling==50.0);
   cad::PolicyEngine engine(42);auto baseline=engine.evaluate(defaults);
   assert(baseline.scenarios.size()==13);assert(baseline.candidates_examined==144);assert(baseline.scenarios.front().score>=baseline.scenarios.back().score);
   assert(!baseline.recommendation.strategy_id.empty());assert(baseline.recommendation.canada_priority>=10&&baseline.recommendation.canada_priority<=100);
-  assert(baseline.recommendation.us_priority>=10&&baseline.recommendation.us_priority<=100);assert(baseline.recommendation.cooperation_ceiling>=0&&baseline.recommendation.cooperation_ceiling<=100);
+  assert(baseline.recommendation.us_priority>=60&&baseline.recommendation.us_priority<=80);assert(baseline.recommendation.cooperation_ceiling>=0&&baseline.recommendation.cooperation_ceiling<=100);
   assert(baseline.recommendation.canada_priority+baseline.recommendation.us_priority==100.0);
   for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
   cad::Economy shock;shock.us_tariff_canada=60;shock.canada_retaliatory_tariff=25;auto stressed=engine.evaluate(shock);
