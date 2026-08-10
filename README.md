@@ -1,6 +1,6 @@
 # Canada Policy Studio
 
-A dependency-light C++17 monetary–fiscal scenario engine and professional browser dashboard for testing how U.S. tariffs affect Canada and the United States under a broad menu of monetary, fiscal, trade and supply-side strategies. The dashboard automatically reruns when a user changes the tariff, bilateral priorities, risk tolerance, or feasible negotiated-relief ceiling. The server refreshes its economic baseline from public internet sources and labels fallback operation clearly.
+A dependency-light C++17 monetary–fiscal scenario engine and professional browser dashboard for testing how U.S. tariffs affect Canada and the United States under a broad menu of monetary, fiscal, trade and supply-side strategies. The opening briefing uses a 50% U.S. tariff and neutral 50/50 win-win controls, then highlights the highest-scoring outcome for both nations. The dashboard automatically reruns and re-scores every modeled impact when a user changes the tariff, bilateral priorities, risk tolerance, or feasible negotiated-relief ceiling. The server refreshes its economic baseline from public internet sources and labels fallback operation clearly.
 
 The model evaluates macroeconomic, financial, external, housing, fiscal and Canada–US trade indicators. Twelve policy mixes each run through 700 seeded stochastic paths over 12 quarters. A three-party Nash score rewards outcomes that serve the Bank's mandate, Canadian fiscal/household sustainability and US trade-price interests while preventing a weak party from being averaged away.
 
