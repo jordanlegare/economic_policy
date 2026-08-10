@@ -49,7 +49,8 @@ void add_sector_impacts(Scenario& s, const Economy& e, double deescalation, doub
 
 Scenario simulate(const Economy& e, std::string id, std::string name, std::string description,
                   double move, double fiscal, double productive, double deescalation,
-                  double targeted_relief, double diversification, std::uint64_t seed) {
+                  double targeted_relief, double diversification, std::uint64_t seed,
+                  double bilateral_rebalancing=0.0) {
   Scenario s; s.id=std::move(id); s.name=std::move(name); s.description=std::move(description);
   s.first_move_bp = move; s.fiscal_impulse = fiscal; s.productive_share = productive;
   s.negotiated_relief = 100.0 * deescalation;
@@ -110,14 +111,23 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   // coverage-weighted tariff and receipts apply to the remaining import base.
   const double effective_us_rate=std::max(0.0,e.us_tariff_canada*us_coverage*(1.0-deescalation))/100.0;
   const double effective_ca_rate=std::max(0.0,e.canada_retaliatory_tariff*ca_coverage*(1.0-deescalation))/100.0;
-  const double ca_exports=e.canada_exports_to_us_cad*std::max(0.05,1.0-e.trade_elasticity*effective_us_rate);
-  const double ca_imports=e.canada_imports_from_us_cad*std::max(0.05,1.0-e.trade_elasticity*effective_ca_rate);
+  double ca_exports=e.canada_exports_to_us_cad*std::max(0.05,1.0-e.trade_elasticity*effective_us_rate);
+  double ca_imports=e.canada_imports_from_us_cad*std::max(0.05,1.0-e.trade_elasticity*effective_ca_rate);
+  // Close the remaining imbalance with two growth-preserving levers: new U.S.
+  // sales into Canada and redirection (not destruction) of Canadian sales to
+  // other markets. Splitting the adjustment avoids burdening one country.
+  const double pre_rebalancing_gap=ca_exports-ca_imports;
+  const double applied_gap=clamp(bilateral_rebalancing,0.0,1.0)*pre_rebalancing_gap;
+  ca_exports-=applied_gap*.5;ca_imports+=applied_gap*.5;
+  s.us_export_expansion_usd=applied_gap*.5/e.usdcad;
+  s.canada_export_redirection_cad=applied_gap*.5;
   s.us_tariff_revenue_cad=effective_us_rate*ca_exports;s.us_tariff_revenue_usd=s.us_tariff_revenue_cad/e.usdcad;
   s.canada_tariff_revenue_cad=effective_ca_rate*ca_imports;s.canada_tariff_revenue_usd=s.canada_tariff_revenue_cad/e.usdcad;
   s.canada_trade_balance_cad=ca_exports-ca_imports;s.us_trade_balance_usd=-s.canada_trade_balance_cad/e.usdcad;
   s.trade_balance_gap_usd=std::abs(s.us_trade_balance_usd);
   const double initial_gap=std::abs(e.canada_exports_to_us_cad-e.canada_imports_from_us_cad)/e.usdcad;
   s.trade_balance_progress=100.0*(1.0-s.trade_balance_gap_usd/std::max(0.001,initial_gap));
+  s.zero_trade_deficit=s.trade_balance_gap_usd<0.05;
   std::sort(terminal_debt.begin(),terminal_debt.end());std::sort(terminal_inflation.begin(),terminal_inflation.end());
   s.debt_stress_p90=terminal_debt[draws*9/10];s.inflation_stress_p90=terminal_inflation[draws*9/10];
   const double mandate_loss=3.8*sq(s.inflation-2.0)+1.2*sq(std::max(0.0,s.unemployment-5.8))
@@ -139,7 +149,8 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   // The Canadian surplus and U.S. deficit are the same bilateral gap in
   // different currencies, so reward progress toward zero without allowing it
   // to override the positive-growth guardrail.
-  s.score+=8.0*clamp(s.trade_balance_progress/100.0,-1.0,1.0);
+  s.score+=25.0*clamp(s.trade_balance_progress/100.0,-1.0,1.0);
+  if(s.zero_trade_deficit)s.score+=5.0;
   // A win-win agreement is only eligible to lead when both countries grow in
   // every modeled quarter. Penalize any breach rather than averaging it away.
   if(!s.sustained_bilateral_growth)s.score-=1000.0+100.0*std::abs(s.bilateral_growth_floor);
@@ -185,16 +196,17 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.scenarios.push_back(simulate(e,"productivity","Productivity compact","Accelerated investment expensing, skills and competition policy lift supply capacity.",0,.32,1.0,.10,.05,.30,seed_+10));
   r.scenarios.push_back(simulate(e,"defence","Fiscal consolidation buffer","Spending restraint preserves debt capacity while the Bank cushions demand.",-25,-.22,.70,0,0,.12,seed_+11));
   r.scenarios.push_back(simulate(e,"sectoral","Sector-targeted response","Time-limited support protects tariff-exposed workers without broad retaliation.",0,.28,.62,.05,.48,.22,seed_+12));
+  r.scenarios.push_back(simulate(e,"balance","Zero-deficit growth compact","A two-way procurement, standards and export-finance compact closes the shared bilateral gap by pairing new U.S. sales with Canadian market diversification.",0,.45,.95,.70,.08,.55,seed_+13,1.0));
   // Independently search a policy frontier instead of assuming the hand-written
   // menu already contains the best compromise for this user's priorities.
   Scenario custom; bool have_custom=false; int candidate=0;
   const double max_deescalation=clamp(e.cooperation_ceiling/100.0,0.0,1.0);
   for(double move : {-25.0,0.0,25.0}) for(double fiscal : {-0.15,0.10,0.35,0.60})
-    for(double productive : {0.35,0.65,0.90}) for(double cooperation : {0.0,.33,.67,1.0}) {
+    for(double productive : {0.35,0.65,0.90}) for(double cooperation : {0.0,.33,.67,1.0}) for(double rebalancing : {0.0,1.0}) {
       const double deescalation=cooperation*max_deescalation;
       const double relief=clamp(.42*(1.0-productive)+.08*(1.0-deescalation),0.0,.45);
       const double diversification=clamp(.08+.48*productive*(1.0-deescalation),0.0,.60);
-      auto s=simulate(e,"custom","Custom win-win frontier","Autonomously generated from the full policy search.",move,fiscal,productive,deescalation,relief,diversification,seed_+100+candidate++);
+      auto s=simulate(e,"custom","Custom win-win frontier","Autonomously generated from the full policy search.",move,fiscal,productive,deescalation,relief,diversification,seed_+100+candidate++,rebalancing);
       if(!have_custom||s.score>custom.score){custom=std::move(s);have_custom=true;}
     }
   r.candidates_examined=candidate;
@@ -240,7 +252,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
     <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score while keeping modeled GDP growth positive in both countries in every quarter. "
-    <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
+    <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports, while the bilateral positive-growth guardrail remains binding. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
   r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
@@ -269,6 +281,7 @@ std::string to_json(const Result& r){
      <<",\"canadaTariffRevenueCad\":"<<s.canada_tariff_revenue_cad<<",\"canadaTariffRevenueUsd\":"<<s.canada_tariff_revenue_usd
      <<",\"canadaTradeBalanceCad\":"<<s.canada_trade_balance_cad<<",\"usTradeBalanceUsd\":"<<s.us_trade_balance_usd
      <<",\"tradeBalanceGapUsd\":"<<s.trade_balance_gap_usd<<",\"tradeBalanceProgress\":"<<s.trade_balance_progress;
+    o<<",\"usExportExpansionUsd\":"<<s.us_export_expansion_usd<<",\"canadaExportRedirectionCad\":"<<s.canada_export_redirection_cad<<",\"zeroTradeDeficit\":"<<(s.zero_trade_deficit?"true":"false");
     o<<",\"inflationPath\":";array_json(o,s.inflation_path);o<<",\"growthPath\":";array_json(o,s.growth_path);o<<",\"usGrowthPath\":";array_json(o,s.us_growth_path);o<<",\"debtPath\":";array_json(o,s.debt_path);o<<",\"costPath\":";array_json(o,s.cost_path);o<<",\"exportPath\":";array_json(o,s.export_path);
     o<<",\"sectors\":[";for(size_t j=0;j<s.sectors.size();++j){if(j)o<<',';const auto&x=s.sectors[j];o<<"{\"code\":\""<<esc(x.code)<<"\",\"name\":\""<<esc(x.name)<<"\",\"exposure\":"<<x.exposure<<",\"canada\":{\"output\":"<<x.canada_output<<",\"jobs\":"<<x.canada_jobs<<",\"prices\":"<<x.canada_prices<<"},\"us\":{\"output\":"<<x.us_output<<",\"jobs\":"<<x.us_jobs<<",\"prices\":"<<x.us_prices<<"}}";}o<<"]}";
   }return o<<"]}",o.str();
