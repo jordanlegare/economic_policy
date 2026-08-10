@@ -247,32 +247,59 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.cooperation_ceiling=std::round(clamp(std::max(fair->negotiated_relief,
       e.us_tariff_canada>0.0?55.0:0.0),0.0,100.0));
   r.recommendation.strategy_id=fair->id;
-  // Search downward so a tie retains the strongest U.S. tariff stance.  The
-  // Canadian term prevents a superficially attractive U.S. result from being
-  // selected by exporting an unlimited loss to the counterparty.
-  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];double best_c=100,best_output=-1e100,best_us_output=0;
-    for(int coverage=100;coverage>=0;--coverage){const double c=coverage/100.0,tariff=e.us_tariff_canada/100.0*c;
-      const double us_output=100.0*tariff*(p.trade*.24*(1.0-.5*c)-p.import*.12);
-      const double canada_output=-100.0*tariff*p.trade*.72;
-      const double output=us_output+.12*canada_output;
-      if(output>best_output+1e-12){best_output=output;best_us_output=us_output;best_c=coverage;}}
-    r.recommendation.us_sector_coverage[i]=best_c;r.recommendation.us_sector_output[i]=best_us_output;}
-  // LeBlanc's side is optimized at the same time.  Retaliation is retained
-  // only where its modeled Canadian deal value, net of U.S. price/output harm,
-  // improves the bilateral outcome.  This makes both rooms one live solution.
-  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];double best_c=100,best_value=-1e100;
-    for(int coverage=100;coverage>=0;--coverage){const double c=coverage/100.0,tariff=e.canada_retaliatory_tariff/100.0*c;
-      const double canada_value=-100.0*tariff*p.import*.30;
-      const double us_cost=100.0*tariff*p.import*(.46+.10);
-      const double value=canada_value-.30*us_cost;
-      if(value>best_value+1e-12){best_value=value;best_c=coverage;}}
-    r.recommendation.canada_sector_coverage[i]=best_c;r.recommendation.canada_sector_value[i]=best_value;}
+  // Rebuild both delegations' positions from the metrics used for this run.
+  // Each sector is a joint 101 x 101 search rather than two independent best
+  // responses: output, employment, prices, current inflation/unemployment,
+  // risk tolerance, trade elasticity and the searched policy mix all affect
+  // the bargain.  Normalizing each country's utility within the feasible grid
+  // prevents the larger economy (or a large raw tariff) from dominating.
+  const double deescalation=fair->negotiated_relief/100.0;
+  const double productive=fair->productive_share;
+  const double diversification=clamp(e.trade_diversification+.20*deescalation,0.0,.75);
+  const double price_weight=.65+.70*clamp(e.risk_aversion/100.0,0.0,1.0)
+      +.18*std::max(0.0,(e.inflation+e.us_inflation)/2.0-2.0);
+  const double canada_jobs_weight=.45+.08*std::max(0.0,e.unemployment-5.0);
+  const double us_jobs_weight=.45+.08*std::max(0.0,4.5-e.us_growth);
+  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];
+    auto utilities=[&](int us_coverage,int canada_coverage){
+      const double uc=us_coverage/100.0,cc=canada_coverage/100.0;
+      const double ut=e.us_tariff_canada*(1.0-deescalation)/100.0*uc;
+      const double ct=e.canada_retaliatory_tariff*(1.0-deescalation)/100.0*cc;
+      const double supply=productive*fair->fiscal_impulse*(.16+.12*p.cyclical);
+      const double ca_output=100.0*(-ut*p.trade*(.72-.28*diversification)+supply);
+      const double us_protection=ut*p.trade*.24*(1.0-.5*uc);
+      const double us_output=100.0*(-ct*p.import*.46-ut*p.import*.12+us_protection+deescalation*.012*p.trade);
+      const double ca_jobs=ca_output*(.30+.42*p.jobs),us_jobs=us_output*(.28+.38*p.jobs);
+      const double ca_prices=100.0*(ct*p.import*.30+ut*p.import*.05-supply*.10);
+      const double us_prices=100.0*(ut*p.import*.24+ct*p.import*.10);
+      // Retaliation has limited negotiating leverage, but only while Canadian
+      // coverage remains targeted; broad retaliation rapidly loses that value.
+      const double leverage=100.0*ct*p.trade*.16*(1.0-.65*cc);
+      return std::array<double,2>{ca_output+canada_jobs_weight*ca_jobs-price_weight*ca_prices+leverage,
+                                  us_output+us_jobs_weight*us_jobs-price_weight*us_prices};
+    };
+    double ca_min=1e100,ca_max=-1e100,us_min=1e100,us_max=-1e100;
+    for(int uc=0;uc<=100;++uc)for(int cc=0;cc<=100;++cc){const auto u=utilities(uc,cc);
+      ca_min=std::min(ca_min,u[0]);ca_max=std::max(ca_max,u[0]);us_min=std::min(us_min,u[1]);us_max=std::max(us_max,u[1]);}
+    int best_uc=0,best_cc=0;double best=-1e100,best_ca=0,best_us=0;
+    const double ca_weight=r.recommendation.canada_priority/100.0,us_weight=1.0-ca_weight;
+    for(int uc=0;uc<=100;++uc)for(int cc=0;cc<=100;++cc){const auto u=utilities(uc,cc);
+      const double ca=100.0*(u[0]-ca_min)/std::max(1e-9,ca_max-ca_min);
+      const double us=100.0*(u[1]-us_min)/std::max(1e-9,us_max-us_min);
+      const double value=std::min(ca*ca_weight,us*us_weight)+.08*(ca*ca_weight+us*us_weight)
+          -.0001*(uc+cc); // exact ties prefer the less distortionary posture
+      if(value>best+1e-12){best=value;best_uc=uc;best_cc=cc;best_ca=ca;best_us=us;}}
+    r.recommendation.us_sector_coverage[i]=best_uc;
+    r.recommendation.canada_sector_coverage[i]=best_cc;
+    r.recommendation.us_sector_output[i]=best_us;
+    r.recommendation.canada_sector_value[i]=best_ca;
+  }
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
     <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score. "
     <<"The opening search tested GDP floors from 0% to 2% in 0.1-point increments with all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations. The selected "
-    <<r.recommendation.gdp_growth_floor<<"% floor maximizes the fairness-protected outcome across output, employment, and prices for every one of the 20 NAICS sectors. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
+    <<r.recommendation.gdp_growth_floor<<"% floor maximizes the fairness-protected outcome across output, employment, and prices for every one of the 20 NAICS sectors. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports. Every metric change jointly searches both delegations' coverage from 0% to 100% in one-point steps and synchronizes the resulting bilateral posture automatically.";
   r.recommendation.explanation=recommendation.str();
   for(auto& scenario:r.scenarios)scenario.sustained_bilateral_growth=
       scenario.bilateral_growth_floor+1e-9>=r.recommendation.gdp_growth_floor;

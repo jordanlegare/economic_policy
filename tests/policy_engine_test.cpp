@@ -26,6 +26,19 @@ int main(){
   cad::Economy exempt=shock;exempt.us_sector_coverage[4]=0;
   auto exempted=engine.evaluate(exempt);
   assert(find(exempted,"statusquo").sectors[4].canada_output>find(stressed,"statusquo").sectors[4].canada_output);
+  // A changed dashboard metric must produce a freshly balanced bilateral
+  // posture and refreshed deal scores, not reuse the opening sector answer.
+  cad::Economy price_stress=defaults;price_stress.inflation=4.8;price_stress.us_inflation=5.1;price_stress.risk_aversion=90;
+  auto rebalanced=engine.evaluate(price_stress);bool coverage_changed=false,deal_metrics_changed=false;
+  for(size_t i=0;i<baseline.recommendation.us_sector_coverage.size();++i){
+    coverage_changed=coverage_changed
+        ||baseline.recommendation.us_sector_coverage[i]!=rebalanced.recommendation.us_sector_coverage[i]
+        ||baseline.recommendation.canada_sector_coverage[i]!=rebalanced.recommendation.canada_sector_coverage[i];
+    deal_metrics_changed=deal_metrics_changed
+        ||std::abs(baseline.recommendation.us_sector_output[i]-rebalanced.recommendation.us_sector_output[i])>1e-9
+        ||std::abs(baseline.recommendation.canada_sector_value[i]-rebalanced.recommendation.canada_sector_value[i])>1e-9;
+  }
+  assert(coverage_changed);assert(deal_metrics_changed);
   assert(find(stressed,"custom").description.find("Best of 288")!=std::string::npos);
   cad::Economy canada_first=shock;canada_first.canada_priority=100;canada_first.us_priority=10;
   cad::Economy us_first=shock;us_first.canada_priority=10;us_first.us_priority=100;
