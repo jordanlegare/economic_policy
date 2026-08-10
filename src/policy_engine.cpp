@@ -10,7 +10,7 @@ namespace cad {
 namespace {
 double clamp(double x, double lo, double hi) { return std::max(lo, std::min(hi, x)); }
 double sq(double x) { return x * x; }
-constexpr double bilateral_gdp_growth_floor = 2.0;
+constexpr double maximum_growth_search = 2.0;
 
 struct SectorProfile { const char* code; const char* name; double trade, import, jobs, cyclical; };
 constexpr SectorProfile sector_profiles[] = {
@@ -85,11 +85,11 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
       const double fx = (e.usdcad-1.34)*0.35;
       inf = 0.68*inf + 0.32*e.inflation_expectations + 0.12*gap + fx
           - supply + 0.022*import_price - 0.018*(e.oil_price-75.0) + shock(rng)*0.11;
-      const double growth = clamp(1.75 + gap - 0.18*e.credit_spread + coordinated*0.24 + shock(rng)*0.25,bilateral_gdp_growth_floor,5.5);
+      const double growth = clamp(1.75 + gap - 0.18*e.credit_spread + coordinated*0.24 + shock(rng)*0.25,-3.0,5.5);
       // Track the counterparty explicitly: de-escalation and productive demand
       // support both economies, while tariffs and retaliation reduce U.S. growth.
       const double us_growth=clamp(e.us_growth+.16*coordinated+.28*deescalation
-          -.010*us_tariff-.014*ca_tariff-.04*e.border_friction+shock(rng)*.18,bilateral_gdp_growth_floor,5.5);
+          -.010*us_tariff-.014*ca_tariff-.04*e.border_friction+shock(rng)*.18,-3.0,5.5);
       u=clamp(u-0.10*(growth-1.7)+shock(rng)*0.035,3.5,11.0);
       housing=clamp(0.78*housing - 1.15*(rate-2.5) + 0.08*(e.population_growth-1.2) + shock(rng)*0.5,-15,30);
       const double relief_cost=targeted_relief+e.tariff_relief;
@@ -105,7 +105,7 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   s.inflation=inf_sum/draws;s.growth=growth_sum/draws;s.unemployment=u_sum/draws;
   s.us_growth=us_growth_sum/draws;
   s.bilateral_growth_floor=std::min(*std::min_element(s.growth_path.begin(),s.growth_path.end()),*std::min_element(s.us_growth_path.begin(),s.us_growth_path.end()));
-  s.sustained_bilateral_growth=s.bilateral_growth_floor>=bilateral_gdp_growth_floor;
+  s.sustained_bilateral_growth=s.bilateral_growth_floor>=maximum_growth_search;
   s.debt_gdp=debt_sum/draws;s.housing_gap=house_sum/draws;s.recession_risk=100.0*recessions/draws;
   s.cost_of_living=cost_sum/draws;s.real_income_growth=income_sum/draws;s.export_change=export_sum/draws;
   // Annual customs accounting: import demand falls with the effective,
@@ -148,18 +148,16 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
   s.score=(.82-.22*safety)*nash+(.18+.22*safety)*floor-tail_penalty;
   // The Canadian surplus and U.S. deficit are the same bilateral gap in
-  // different currencies, so reward progress toward zero without allowing it
-  // to override the bilateral 2% growth floor.
+  // different currencies, so reward progress toward zero.
   s.score+=25.0*clamp(s.trade_balance_progress/100.0,-1.0,1.0);
   if(s.zero_trade_deficit)s.score+=5.0;
-  // A win-win agreement is only eligible to lead when both countries meet the
-  // 2% floor in every modeled quarter. Penalize any breach rather than averaging it away.
-  if(!s.sustained_bilateral_growth)s.score-=1000.0+100.0*std::abs(s.bilateral_growth_floor);
   add_sector_impacts(s,e,deescalation,productive,targeted_relief,diversification);
   return s;
 }
 
-double opening_allocation_score(const Scenario& s, const Economy& e, double canada_priority) {
+double opening_allocation_score(const Scenario& s, const Economy& e, double canada_priority,
+                                double growth_floor) {
+  if(s.bilateral_growth_floor+1e-9<growth_floor)return -1e100;
   const double canada=std::sqrt(std::max(.01,s.boc_score)*std::max(.01,s.federal_score));
   const double canada_points=canada*canada_priority/100.0;
   const double us_points=s.us_score*(100.0-canada_priority)/100.0;
@@ -167,8 +165,19 @@ double opening_allocation_score(const Scenario& s, const Economy& e, double cana
   const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
   // Maximize the weaker party's allocated points first; the small aggregate
   // term breaks near-ties in favour of a larger combined bilateral result.
-  const double continuity=s.sustained_bilateral_growth ? 0.0 : 1000.0+100.0*std::abs(s.bilateral_growth_floor);
-  return std::min(canada_points,us_points)+.01*(canada_points+us_points)-.05*tail_penalty-continuity;
+  // Include all six displayed metrics in all 20 NAICS sectors. Output and jobs
+  // are benefits; price increases are costs. The weakest sector-country metric
+  // prevents an aggregate gain from concealing a material loser.
+  double sector_floor=1e100,sector_sum=0.0;
+  for(const auto& x:s.sectors){
+    const std::array<double,6> metrics{x.canada_output,x.canada_jobs,-x.canada_prices,
+                                      x.us_output,x.us_jobs,-x.us_prices};
+    for(double metric:metrics){sector_floor=std::min(sector_floor,metric);sector_sum+=metric;}
+  }
+  const double sector_average=sector_sum/(s.sectors.size()*6.0);
+  return std::min(canada_points,us_points)+.01*(canada_points+us_points)-.05*tail_penalty
+      +.08*sector_floor+.02*sector_average+.25*s.trade_balance_progress
+      +(s.zero_trade_deficit?5.0:0.0)+.01*s.score;
 }
 
 std::string esc(const std::string& x){std::string o;for(char c:x){if(c=='"'||c=='\\')o+='\\';o+=c;}return o;}
@@ -220,9 +229,18 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   // instead of imposing a 30/70 opening mandate. The score's fairness floor
   // prevents one party's high result from hiding a weak counterparty.
   size_t fair_index=0; double opening_best=-1e100;
-  for(int canada=0;canada<=100;++canada){++r.allocations_examined;
-    for(size_t i=0;i<r.scenarios.size();++i){const double value=opening_allocation_score(r.scenarios[i],e,canada);
-      if(value>opening_best+1e-12){opening_best=value;fair_index=i;r.recommendation.canada_priority=canada;r.recommendation.us_priority=100-canada;}}}
+  r.allocations_examined=101;
+  // Search the guardrail rather than assuming 2%. Starting at the strongest
+  // floor makes exact outcome ties choose the more durable agreement, while a
+  // lower floor remains available when it materially improves bilateral and
+  // sector-level welfare.
+  for(int floor_step=20;floor_step>=0;--floor_step){
+    const double growth_floor=floor_step/10.0;++r.gdp_floors_examined;
+    for(int canada=0;canada<=100;++canada)
+      for(size_t i=0;i<r.scenarios.size();++i){const double value=opening_allocation_score(r.scenarios[i],e,canada,growth_floor);
+        if(value>opening_best+1e-12){opening_best=value;fair_index=i;r.recommendation.canada_priority=canada;
+          r.recommendation.us_priority=100-canada;r.recommendation.gdp_growth_floor=growth_floor;}}
+  }
   const auto fair=r.scenarios.begin()+fair_index;
   r.recommendation.risk_aversion=std::round(clamp(35.0+.45*fair->recession_risk
       +8.0*std::max(0.0,fair->inflation_stress_p90-3.0),25.0,90.0));
@@ -252,21 +270,28 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
-    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score while keeping modeled GDP growth at or above 2% in both countries in every quarter. "
-    <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports, while the bilateral 2% growth floor remains binding. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
+    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score. "
+    <<"The opening search tested GDP floors from 0% to 2% in 0.1-point increments with all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations. The selected "
+    <<r.recommendation.gdp_growth_floor<<"% floor maximizes the fairness-protected outcome across output, employment, and prices for every one of the 20 NAICS sectors. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
   r.recommendation.explanation=recommendation.str();
+  for(auto& scenario:r.scenarios)scenario.sustained_bilateral_growth=
+      scenario.bilateral_growth_floor+1e-9>=r.recommendation.gdp_growth_floor;
+  const double selected_floor=r.recommendation.gdp_growth_floor;
+  const double selected_canada=r.recommendation.canada_priority;
+  for(auto& scenario:r.scenarios)
+    scenario.score=opening_allocation_score(scenario,e,selected_canada,selected_floor);
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
   r.signal = best.first_move_bp>0 ? "Raise 25 bp" : best.first_move_bp<0 ? "Cut 25 bp" : "Hold & coordinate";
-  r.rationale="The "+best.name+" best fits your preferences and keeps Canadian and U.S. GDP growth at or above 2% in every modeled quarter; examine tail metrics before deciding.";
+  r.rationale="The "+best.name+" best fits your preferences and the automatically searched bilateral GDP floor; examine sector and tail metrics before deciding.";
   return r;
 }
 
 std::string to_json(const Result& r){
   std::ostringstream o;o<<std::fixed<<std::setprecision(3);
   o<<"{\"regime\":\""<<esc(r.regime)<<"\",\"signal\":\""<<esc(r.signal)<<"\",\"rationale\":\""<<esc(r.rationale)
-   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined<<",\"allocationsExamined\":"<<r.allocations_examined
-   <<",\"recommendation\":{\"canadaPriority\":"<<r.recommendation.canada_priority<<",\"usPriority\":"<<r.recommendation.us_priority
+   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined<<",\"allocationsExamined\":"<<r.allocations_examined<<",\"gdpFloorsExamined\":"<<r.gdp_floors_examined
+   <<",\"recommendation\":{\"canadaPriority\":"<<r.recommendation.canada_priority<<",\"usPriority\":"<<r.recommendation.us_priority<<",\"gdpGrowthFloor\":"<<r.recommendation.gdp_growth_floor
    <<",\"riskAversion\":"<<r.recommendation.risk_aversion<<",\"cooperationCeiling\":"<<r.recommendation.cooperation_ceiling
    <<",\"strategyId\":\""<<esc(r.recommendation.strategy_id)<<"\",\"usSectorCoverage\":";
   array_json(o,r.recommendation.us_sector_coverage);o<<",\"canadaSectorCoverage\":";array_json(o,r.recommendation.canada_sector_coverage);
