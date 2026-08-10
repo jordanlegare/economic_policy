@@ -14,6 +14,7 @@
 #include <ctime>
 #include <iomanip>
 #include <array>
+#include <algorithm>
 
 namespace {
 std::string read_file(const std::string& p){std::ifstream f(p,std::ios::binary);std::ostringstream s;s<<f.rdbuf();return s.str();}
@@ -64,12 +65,14 @@ std::string live_baseline(){
 struct NegotiationState {
   unsigned long revision=0;
   double us_tariff=50,retaliatory_tariff=5,canada_priority=50,us_priority=50;
+  double risk_aversion=50,cooperation_ceiling=50;
   std::array<double,20> canada_sectors{},us_sectors{};
   std::string updated_by="opening baseline";
   NegotiationState(){canada_sectors.fill(100);us_sectors.fill(100);}
   std::string json() const {
     std::ostringstream o;o<<"{\"revision\":"<<revision<<",\"updatedBy\":\""<<updated_by<<"\",\"usTariff\":"<<us_tariff
-      <<",\"retaliatoryTariff\":"<<retaliatory_tariff<<",\"canadaPriority\":"<<canada_priority<<",\"usPriority\":"<<us_priority;
+      <<",\"retaliatoryTariff\":"<<retaliatory_tariff<<",\"canadaPriority\":"<<canada_priority<<",\"usPriority\":"<<us_priority
+      <<",\"riskAversion\":"<<risk_aversion<<",\"cooperationCeiling\":"<<cooperation_ceiling;
     auto add=[&](const char*key,const auto& values){o<<",\""<<key<<"\":[";for(size_t i=0;i<values.size();++i){if(i)o<<',';o<<values[i];}o<<']';};
     add("canadaSectors",canada_sectors);add("usSectors",us_sectors);o<<'}';return o.str();
   }
@@ -77,10 +80,13 @@ struct NegotiationState {
     const bool canada=body.find("\"actor\":\"canada\"")!=std::string::npos;
     const bool us=body.find("\"actor\":\"us\"")!=std::string::npos;
     if(!canada&&!us)return;
-    if(canada){retaliatory_tariff=number(body,"retaliatoryTariff",retaliatory_tariff);canada_priority=number(body,"canadaPriority",canada_priority);us_priority=100-canada_priority;updated_by="Minister LeBlanc";}
-    if(us){us_tariff=number(body,"usTariff",us_tariff);us_priority=number(body,"usPriority",us_priority);canada_priority=100-us_priority;updated_by="Mr. Greer";}
+    const auto bounded=[&](const std::string& key,double fallback){return std::clamp(number(body,key,fallback),0.0,100.0);};
+    risk_aversion=bounded("riskAversion",risk_aversion);
+    cooperation_ceiling=bounded("cooperationCeiling",cooperation_ceiling);
+    if(canada){retaliatory_tariff=std::min(60.0,bounded("retaliatoryTariff",retaliatory_tariff));canada_priority=bounded("canadaPriority",canada_priority);us_priority=100-canada_priority;updated_by="Minister LeBlanc";}
+    if(us){us_tariff=std::min(60.0,bounded("usTariff",us_tariff));us_priority=bounded("usPriority",us_priority);canada_priority=100-us_priority;updated_by="Mr. Greer";}
     auto& sectors=canada?canada_sectors:us_sectors;const std::string prefix=canada?"canadaSector":"usSector";
-    for(size_t i=0;i<sectors.size();++i)sectors[i]=number(body,prefix+std::to_string(i),sectors[i]);
+    for(size_t i=0;i<sectors.size();++i)sectors[i]=bounded(prefix+std::to_string(i),sectors[i]);
     ++revision;
   }
 };
