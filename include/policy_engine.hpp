@@ -72,6 +72,7 @@ struct Scenario {
 
 struct WinWinRecommendation {
   double canada_priority = 50.0, us_priority = 50.0;
+  double gdp_growth_floor = 0.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   std::string strategy_id, explanation;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
@@ -81,7 +82,7 @@ struct WinWinRecommendation {
 struct Result {
   std::string regime, signal, rationale;
   double data_confidence = 0.0, neutral_rate = 0.0, policy_gap = 0.0;
-  int candidates_examined = 0, allocations_examined = 0;
+  int candidates_examined = 0, allocations_examined = 0, gdp_floors_examined = 0;
   WinWinRecommendation recommendation;
   std::vector<Scenario> scenarios;
 };
