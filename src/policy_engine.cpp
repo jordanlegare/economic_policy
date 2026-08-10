@@ -56,8 +56,8 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   constexpr int draws = 700;
   std::mt19937_64 rng(seed);
   std::normal_distribution<double> shock(0.0, 1.0);
-  double inf_sum=0, growth_sum=0, u_sum=0, debt_sum=0, house_sum=0, cost_sum=0, income_sum=0, export_sum=0, recessions=0;
-  std::array<double,12> rp{}, ip{}, gp{}, dp{}, cp{}, xp{};
+  double inf_sum=0, growth_sum=0, us_growth_sum=0, u_sum=0, debt_sum=0, house_sum=0, cost_sum=0, income_sum=0, export_sum=0, recessions=0;
+  std::array<double,12> rp{}, ip{}, gp{}, ugp{}, dp{}, cp{}, xp{};
   std::vector<double> terminal_debt, terminal_inflation;
   double us_coverage=0,ca_coverage=0,weight=0;
   for(size_t i=0;i<std::size(sector_profiles);++i){const double w=sector_profiles[i].trade;weight+=w;us_coverage+=w*clamp(e.us_sector_coverage[i]/100.0,0.0,1.0);ca_coverage+=w*clamp(e.canada_sector_coverage[i]/100.0,0.0,1.0);}
@@ -84,19 +84,26 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
       inf = 0.68*inf + 0.32*e.inflation_expectations + 0.12*gap + fx
           - supply + 0.022*import_price - 0.018*(e.oil_price-75.0) + shock(rng)*0.11;
       const double growth = clamp(1.75 + gap - 0.18*e.credit_spread + coordinated*0.24 + shock(rng)*0.25,-4.0,5.5);
+      // Track the counterparty explicitly: de-escalation and productive demand
+      // support both economies, while tariffs and retaliation reduce U.S. growth.
+      const double us_growth=clamp(e.us_growth+.16*coordinated+.28*deescalation
+          -.010*us_tariff-.014*ca_tariff-.04*e.border_friction+shock(rng)*.18,-4.0,5.5);
       u=clamp(u-0.10*(growth-1.7)+shock(rng)*0.035,3.5,11.0);
       housing=clamp(0.78*housing - 1.15*(rate-2.5) + 0.08*(e.population_growth-1.2) + shock(rng)*0.5,-15,30);
       const double relief_cost=targeted_relief+e.tariff_relief;
       debt += (-(e.fiscal_balance_gdp) + fiscal*0.8 + relief_cost*0.55 + 0.045*(rate-2.5)*debt - 0.18*growth)/4.0;
       cost=0.56*inf+0.22*std::max(0.0,housing/10.0)+0.14*std::max(0.0,e.wage_growth-growth)+0.08*import_price;
       recession = recession || growth < 0.0;
-      rp[q]+=rate; ip[q]+=inf; gp[q]+=growth; dp[q]+=debt;cp[q]+=cost;xp[q]+=export_change;
-      if(q==11){ inf_sum+=inf; growth_sum+=growth; u_sum+=u; debt_sum+=debt; house_sum+=housing;cost_sum+=cost;income_sum+=growth-cost+targeted_relief*.15;export_sum+=export_change;terminal_debt.push_back(debt);terminal_inflation.push_back(inf); }
+      rp[q]+=rate; ip[q]+=inf; gp[q]+=growth;ugp[q]+=us_growth;dp[q]+=debt;cp[q]+=cost;xp[q]+=export_change;
+      if(q==11){ inf_sum+=inf; growth_sum+=growth;us_growth_sum+=us_growth; u_sum+=u; debt_sum+=debt; house_sum+=housing;cost_sum+=cost;income_sum+=growth-cost+targeted_relief*.15;export_sum+=export_change;terminal_debt.push_back(debt);terminal_inflation.push_back(inf); }
     }
     if(recession) recessions++;
   }
-  for(int q=0;q<12;++q){s.rates[q]=rp[q]/draws;s.inflation_path[q]=ip[q]/draws;s.growth_path[q]=gp[q]/draws;s.debt_path[q]=dp[q]/draws;s.cost_path[q]=cp[q]/draws;s.export_path[q]=xp[q]/draws;}
+  for(int q=0;q<12;++q){s.rates[q]=rp[q]/draws;s.inflation_path[q]=ip[q]/draws;s.growth_path[q]=gp[q]/draws;s.us_growth_path[q]=ugp[q]/draws;s.debt_path[q]=dp[q]/draws;s.cost_path[q]=cp[q]/draws;s.export_path[q]=xp[q]/draws;}
   s.inflation=inf_sum/draws;s.growth=growth_sum/draws;s.unemployment=u_sum/draws;
+  s.us_growth=us_growth_sum/draws;
+  s.bilateral_growth_floor=std::min(*std::min_element(s.growth_path.begin(),s.growth_path.end()),*std::min_element(s.us_growth_path.begin(),s.us_growth_path.end()));
+  s.sustained_bilateral_growth=s.bilateral_growth_floor>0.0;
   s.debt_gdp=debt_sum/draws;s.housing_gap=house_sum/draws;s.recession_risk=100.0*recessions/draws;
   s.cost_of_living=cost_sum/draws;s.real_income_growth=income_sum/draws;s.export_change=export_sum/draws;
   std::sort(terminal_debt.begin(),terminal_debt.end());std::sort(terminal_inflation.begin(),terminal_inflation.end());
@@ -117,6 +124,9 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   const double safety=clamp(e.risk_aversion/100.0,0.0,1.0);
   const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
   s.score=(.82-.22*safety)*nash+(.18+.22*safety)*floor-tail_penalty;
+  // A win-win agreement is only eligible to lead when both countries grow in
+  // every modeled quarter. Penalize any breach rather than averaging it away.
+  if(!s.sustained_bilateral_growth)s.score-=1000.0+100.0*std::abs(s.bilateral_growth_floor);
   add_sector_impacts(s,e,deescalation,productive,targeted_relief,diversification);
   return s;
 }
@@ -129,7 +139,8 @@ double opening_allocation_score(const Scenario& s, const Economy& e, double cana
   const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
   // Maximize the weaker party's allocated points first; the small aggregate
   // term breaks near-ties in favour of a larger combined bilateral result.
-  return std::min(canada_points,us_points)+.01*(canada_points+us_points)-.05*tail_penalty;
+  const double continuity=s.sustained_bilateral_growth ? 0.0 : 1000.0+100.0*std::abs(s.bilateral_growth_floor);
+  return std::min(canada_points,us_points)+.01*(canada_points+us_points)-.05*tail_penalty-continuity;
 }
 
 std::string esc(const std::string& x){std::string o;for(char c:x){if(c=='"'||c=='\\')o+='\\';o+=c;}return o;}
@@ -212,13 +223,13 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
-    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score. "
+    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score while keeping modeled GDP growth positive in both countries in every quarter. "
     <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
   r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
   r.signal = best.first_move_bp>0 ? "Raise 25 bp" : best.first_move_bp<0 ? "Cut 25 bp" : "Hold & coordinate";
-  r.rationale="The "+best.name+" best fits your Canada, U.S., cooperation and risk preferences using a fairness floor so neither country is averaged away; examine tail metrics before deciding.";
+  r.rationale="The "+best.name+" best fits your preferences and requires positive Canadian and U.S. GDP growth in every modeled quarter; examine tail metrics before deciding.";
   return r;
 }
 
@@ -235,10 +246,10 @@ std::string to_json(const Result& r){
   for(size_t i=0;i<r.scenarios.size();++i){if(i)o<<',';const auto&s=r.scenarios[i];
     o<<"{\"id\":\""<<s.id<<"\",\"name\":\""<<esc(s.name)<<"\",\"description\":\""<<esc(s.description)
      <<"\",\"move\":"<<s.first_move_bp<<",\"fiscal\":"<<s.fiscal_impulse<<",\"score\":"<<s.score<<",\"bocScore\":"<<s.boc_score
-     <<",\"federalScore\":"<<s.federal_score<<",\"usScore\":"<<s.us_score<<",\"inflation\":"<<s.inflation<<",\"growth\":"<<s.growth<<",\"unemployment\":"<<s.unemployment
+     <<",\"federalScore\":"<<s.federal_score<<",\"usScore\":"<<s.us_score<<",\"inflation\":"<<s.inflation<<",\"growth\":"<<s.growth<<",\"usGrowth\":"<<s.us_growth<<",\"bilateralGrowthFloor\":"<<s.bilateral_growth_floor<<",\"sustainedBilateralGrowth\":"<<(s.sustained_bilateral_growth?"true":"false")<<",\"unemployment\":"<<s.unemployment
      <<",\"debt\":"<<s.debt_gdp<<",\"housing\":"<<s.housing_gap<<",\"recessionRisk\":"<<s.recession_risk<<",\"rates\":";array_json(o,s.rates);
     o<<",\"costOfLiving\":"<<s.cost_of_living<<",\"realIncome\":"<<s.real_income_growth<<",\"exports\":"<<s.export_change<<",\"debtP90\":"<<s.debt_stress_p90<<",\"inflationP90\":"<<s.inflation_stress_p90;
-    o<<",\"inflationPath\":";array_json(o,s.inflation_path);o<<",\"growthPath\":";array_json(o,s.growth_path);o<<",\"debtPath\":";array_json(o,s.debt_path);o<<",\"costPath\":";array_json(o,s.cost_path);o<<",\"exportPath\":";array_json(o,s.export_path);
+    o<<",\"inflationPath\":";array_json(o,s.inflation_path);o<<",\"growthPath\":";array_json(o,s.growth_path);o<<",\"usGrowthPath\":";array_json(o,s.us_growth_path);o<<",\"debtPath\":";array_json(o,s.debt_path);o<<",\"costPath\":";array_json(o,s.cost_path);o<<",\"exportPath\":";array_json(o,s.export_path);
     o<<",\"sectors\":[";for(size_t j=0;j<s.sectors.size();++j){if(j)o<<',';const auto&x=s.sectors[j];o<<"{\"code\":\""<<esc(x.code)<<"\",\"name\":\""<<esc(x.name)<<"\",\"exposure\":"<<x.exposure<<",\"canada\":{\"output\":"<<x.canada_output<<",\"jobs\":"<<x.canada_jobs<<",\"prices\":"<<x.canada_prices<<"},\"us\":{\"output\":"<<x.us_output<<",\"jobs\":"<<x.us_jobs<<",\"prices\":"<<x.us_prices<<"}}";}o<<"]}";
   }return o<<"]}",o.str();
 }

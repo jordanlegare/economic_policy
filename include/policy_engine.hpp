@@ -52,10 +52,12 @@ struct Scenario {
   double negotiated_relief = 0.0;
   double score = 0.0, boc_score = 0.0, federal_score = 0.0, us_score = 0.0;
   double inflation = 0.0, growth = 0.0, unemployment = 0.0;
+  double us_growth = 0.0, bilateral_growth_floor = 0.0;
+  bool sustained_bilateral_growth = false;
   double debt_gdp = 0.0, housing_gap = 0.0, recession_risk = 0.0;
   double cost_of_living = 0.0, real_income_growth = 0.0, export_change = 0.0;
   double debt_stress_p90 = 0.0, inflation_stress_p90 = 0.0;
-  std::array<double, 12> rates{}, inflation_path{}, growth_path{}, debt_path{}, cost_path{}, export_path{};
+  std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{};
   std::vector<SectorImpact> sectors;
 };
 
