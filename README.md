@@ -1,8 +1,8 @@
 # Canada Policy Studio
 
-A dependency-light C++17 monetary–fiscal scenario engine and professional browser dashboard for exploring balanced (“win-win”) strategies between the Bank of Canada and the federal government.
+A dependency-light C++17 monetary–fiscal scenario engine and professional browser dashboard for testing how U.S. tariffs affect Canada under a broad menu of monetary, fiscal, trade and supply-side strategies. The tariff percentage is the only user-controlled assumption; the server refreshes its baseline from public internet sources and labels fallback operation clearly.
 
-The model evaluates macroeconomic, financial, external, housing, fiscal and Canada–US trade indicators. Seven policy mixes each run through 700 seeded stochastic paths over 12 quarters. A three-party Nash score rewards outcomes that serve the Bank's mandate, Canadian fiscal/household sustainability and US trade-price interests while preventing a weak party from being averaged away.
+The model evaluates macroeconomic, financial, external, housing, fiscal and Canada–US trade indicators. Twelve policy mixes each run through 700 seeded stochastic paths over 12 quarters. A three-party Nash score rewards outcomes that serve the Bank's mandate, Canadian fiscal/household sustainability and US trade-price interests while preventing a weak party from being averaged away.
 
 > **Research disclaimer:** This is an illustrative policy-analysis tool, not an official Bank of Canada model, forecast or recommendation. It does not reproduce Bank systems or federal budget projections.
 
@@ -31,10 +31,11 @@ ctest --test-dir build --output-on-failure
 - **Trade block:** effective bilateral tariffs, retaliation, border friction, import-price pass-through, export exposure, trade elasticity, US demand and market diversification.
 - **Household block:** an explicit cost-of-living pressure index and real-income growth alongside housing and unemployment.
 - **Risk block:** recession frequency plus 90th-percentile inflation and federal debt stress outcomes.
-- **Decision layer:** separate BoC, Canadian federal/household and US loss functions combined into a three-party Nash score. All assumptions are visible, editable and designed for scenario comparison—not point forecasting.
+- **Decision layer:** separate BoC, Canadian federal/household and US loss functions combined into a three-party Nash score across twelve strategies. Model assumptions are locked to a common data vintage so the U.S. tariff is the only changing variable.
+- **Internet baseline:** `GET /api/baseline` refreshes available Bank of Canada Valet observations at page load, exposes source metadata, and reports whether a documented fallback baseline is being used.
 
 ## Responsible decision use
 
 The defaults are illustrative—not a live tariff schedule. Before each decision round, analysts should replace them with a dated, trade-weighted tariff inventory and documented data vintage, then run sensitivity ranges for pass-through and trade elasticity. The engine is a scenario comparator, not a causal forecasting system; it requires expert judgment, model comparison and governance review.
 
-Useful primary reference points include the [Bank of Canada Monetary Policy Report](https://www.bankofcanada.ca/mpr/), [Statistics Canada Canadian international merchandise trade](https://www.statcan.gc.ca/en/subjects-start/international_trade), [Department of Finance tariff measures](https://www.canada.ca/en/department-finance.html), and [US International Trade Commission tariff data](https://hts.usitc.gov/). No data is downloaded automatically, so runs remain reproducible and auditable.
+Useful primary reference points include the [Bank of Canada Monetary Policy Report](https://www.bankofcanada.ca/mpr/), [Statistics Canada Canadian international merchandise trade](https://www.statcan.gc.ca/en/subjects-start/international_trade), [Department of Finance tariff measures](https://www.canada.ca/en/department-finance.html), and [US International Trade Commission tariff data](https://hts.usitc.gov/). Live observations are downloaded automatically where machine-readable feeds are available; every response includes its timestamp, source metadata, and live/fallback state for auditability.

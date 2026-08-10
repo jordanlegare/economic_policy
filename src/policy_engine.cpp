@@ -95,6 +95,11 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.scenarios.push_back(simulate(e,"diversify","Market diversification","Trade infrastructure and export-market diversification with a BoC hold.",0,.35,.9,0,.10,.45,seed_+5));
   r.scenarios.push_back(simulate(e,"guardrail","Inflation guardrail","A 25 bp increase and limited retaliation constrain tariff pass-through.",25,-.10,.75,.20,0,.10,seed_+6));
   r.scenarios.push_back(simulate(e,"supply","Cost-of-living supply plan","Housing, logistics and productivity investment with targeted household relief.",0,.40,.95,.35,.20,.25,seed_+7));
+  r.scenarios.push_back(simulate(e,"stabilizer","Automatic stabilizers","Income insurance absorbs the trade shock while monetary policy remains data dependent.",0,.22,.35,0,.30,.08,seed_+8));
+  r.scenarios.push_back(simulate(e,"eastwest","East–west trade corridor","Ports, rail and interprovincial trade reform accelerate non-US market access.",0,.48,.96,0,.08,.60,seed_+9));
+  r.scenarios.push_back(simulate(e,"productivity","Productivity compact","Accelerated investment expensing, skills and competition policy lift supply capacity.",0,.32,1.0,.10,.05,.30,seed_+10));
+  r.scenarios.push_back(simulate(e,"defence","Fiscal consolidation buffer","Spending restraint preserves debt capacity while the Bank cushions demand.",-25,-.22,.70,0,0,.12,seed_+11));
+  r.scenarios.push_back(simulate(e,"sectoral","Sector-targeted response","Time-limited support protects tariff-exposed workers without broad retaliation.",0,.28,.62,.05,.48,.22,seed_+12));
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
   r.signal = best.first_move_bp>0 ? "Raise 25 bp" : best.first_move_bp<0 ? "Cut 25 bp" : "Hold & coordinate";
