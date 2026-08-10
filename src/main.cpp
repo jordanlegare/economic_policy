@@ -33,6 +33,7 @@ cad::Economy parse(const std::string& b){cad::Economy e;
   FIELD("usGrowth",us_growth);FIELD("usInflation",us_inflation);FIELD("usTariff",us_tariff_canada);FIELD("retaliatoryTariff",canada_retaliatory_tariff);
   FIELD("exportsUs",exports_to_us_share);FIELD("importsUs",imports_from_us_share);FIELD("exportsGdp",exports_gdp);FIELD("importContent",import_content_consumption);
   FIELD("tradeElasticity",trade_elasticity);FIELD("borderFriction",border_friction);FIELD("tariffRelief",tariff_relief);FIELD("diversification",trade_diversification);
+  FIELD("bilateralExportsCad",canada_exports_to_us_cad);FIELD("bilateralImportsCad",canada_imports_from_us_cad);
   FIELD("canadaPriority",canada_priority);FIELD("usPriority",us_priority);FIELD("riskAversion",risk_aversion);FIELD("cooperationCeiling",cooperation_ceiling);
 #undef FIELD
   for(size_t i=0;i<e.us_sector_coverage.size();++i){

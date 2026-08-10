@@ -24,6 +24,9 @@ struct Economy {
   double exports_to_us_share = 75.0, imports_from_us_share = 49.0;
   double exports_gdp = 25.0, import_content_consumption = 22.0;
   double trade_elasticity = 0.65, border_friction = 2.0;
+  // Annual bilateral goods baseline, CAD billions. Explicit values make the
+  // resulting fiscal receipts auditable rather than inferred from a score.
+  double canada_exports_to_us_cad = 596.9, canada_imports_from_us_cad = 373.7;
   double tariff_relief = 0.0, trade_diversification = 0.0;
   // User decision preferences. These change ranking, not the economic baseline.
   // Neutral bootstrap values are replaced by the opening allocation search.
@@ -56,6 +59,10 @@ struct Scenario {
   bool sustained_bilateral_growth = false;
   double debt_gdp = 0.0, housing_gap = 0.0, recession_risk = 0.0;
   double cost_of_living = 0.0, real_income_growth = 0.0, export_change = 0.0;
+  double us_tariff_revenue_usd = 0.0, us_tariff_revenue_cad = 0.0;
+  double canada_tariff_revenue_cad = 0.0, canada_tariff_revenue_usd = 0.0;
+  double canada_trade_balance_cad = 0.0, us_trade_balance_usd = 0.0;
+  double trade_balance_gap_usd = 0.0, trade_balance_progress = 0.0;
   double debt_stress_p90 = 0.0, inflation_stress_p90 = 0.0;
   std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{};
   std::vector<SectorImpact> sectors;
