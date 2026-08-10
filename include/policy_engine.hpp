@@ -63,6 +63,8 @@ struct Scenario {
   double canada_tariff_revenue_cad = 0.0, canada_tariff_revenue_usd = 0.0;
   double canada_trade_balance_cad = 0.0, us_trade_balance_usd = 0.0;
   double trade_balance_gap_usd = 0.0, trade_balance_progress = 0.0;
+  double us_export_expansion_usd = 0.0, canada_export_redirection_cad = 0.0;
+  bool zero_trade_deficit = false;
   double debt_stress_p90 = 0.0, inflation_stress_p90 = 0.0;
   std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{};
   std::vector<SectorImpact> sectors;
