@@ -189,17 +189,31 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.cooperation_ceiling=std::round(clamp(std::max(fair->negotiated_relief,
       e.us_tariff_canada>0.0?55.0:0.0),0.0,100.0));
   r.recommendation.strategy_id=fair->id;
-  // Search downward so a tie retains the strongest U.S. tariff stance.
-  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];double best_c=100,best_output=-1e100;
+  // Search downward so a tie retains the strongest U.S. tariff stance.  The
+  // Canadian term prevents a superficially attractive U.S. result from being
+  // selected by exporting an unlimited loss to the counterparty.
+  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];double best_c=100,best_output=-1e100,best_us_output=0;
     for(int coverage=100;coverage>=0;--coverage){const double c=coverage/100.0,tariff=e.us_tariff_canada/100.0*c;
-      const double output=100.0*tariff*(p.trade*.24*(1.0-.5*c)-p.import*.12);
-      if(output>best_output+1e-12){best_output=output;best_c=coverage;}}
-    r.recommendation.us_sector_coverage[i]=best_c;r.recommendation.us_sector_output[i]=best_output;}
+      const double us_output=100.0*tariff*(p.trade*.24*(1.0-.5*c)-p.import*.12);
+      const double canada_output=-100.0*tariff*p.trade*.72;
+      const double output=us_output+.12*canada_output;
+      if(output>best_output+1e-12){best_output=output;best_us_output=us_output;best_c=coverage;}}
+    r.recommendation.us_sector_coverage[i]=best_c;r.recommendation.us_sector_output[i]=best_us_output;}
+  // LeBlanc's side is optimized at the same time.  Retaliation is retained
+  // only where its modeled Canadian deal value, net of U.S. price/output harm,
+  // improves the bilateral outcome.  This makes both rooms one live solution.
+  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];double best_c=100,best_value=-1e100;
+    for(int coverage=100;coverage>=0;--coverage){const double c=coverage/100.0,tariff=e.canada_retaliatory_tariff/100.0*c;
+      const double canada_value=-100.0*tariff*p.import*.30;
+      const double us_cost=100.0*tariff*p.import*(.46+.10);
+      const double value=canada_value-.30*us_cost;
+      if(value>best_value+1e-12){best_value=value;best_c=coverage;}}
+    r.recommendation.canada_sector_coverage[i]=best_c;r.recommendation.canada_sector_value[i]=best_value;}
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
     <<"% U.S. tariff, "<<fair->name<<" is the strongest U.S.-advantage opening offer that clears the Canadian viability floor. "
-    <<"Mr. Greer's 60--80% outcome mandate drives the initial search. Each U.S. sector is searched from 100% coverage downward in one-point steps, retaining the highest tariff stance that maximizes modeled U.S. output; Mr. LeBlanc's complementary share adjusts automatically.";
+    <<"Mr. Greer's 60--80% outcome mandate drives the search. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically, maximizing modeled U.S. advantage while charging counterparty harm to preserve a bilateral win-win.";
   r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
@@ -215,7 +229,8 @@ std::string to_json(const Result& r){
    <<",\"recommendation\":{\"canadaPriority\":"<<r.recommendation.canada_priority<<",\"usPriority\":"<<r.recommendation.us_priority
    <<",\"riskAversion\":"<<r.recommendation.risk_aversion<<",\"cooperationCeiling\":"<<r.recommendation.cooperation_ceiling
    <<",\"strategyId\":\""<<esc(r.recommendation.strategy_id)<<"\",\"usSectorCoverage\":";
-  array_json(o,r.recommendation.us_sector_coverage);o<<",\"usSectorOutput\":";array_json(o,r.recommendation.us_sector_output);
+  array_json(o,r.recommendation.us_sector_coverage);o<<",\"canadaSectorCoverage\":";array_json(o,r.recommendation.canada_sector_coverage);
+  o<<",\"usSectorOutput\":";array_json(o,r.recommendation.us_sector_output);o<<",\"canadaSectorValue\":";array_json(o,r.recommendation.canada_sector_value);
   o<<",\"explanation\":\""<<esc(r.recommendation.explanation)<<"\"},\"scenarios\":[";
   for(size_t i=0;i<r.scenarios.size();++i){if(i)o<<',';const auto&s=r.scenarios[i];
     o<<"{\"id\":\""<<s.id<<"\",\"name\":\""<<esc(s.name)<<"\",\"description\":\""<<esc(s.description)

@@ -79,14 +79,16 @@ struct NegotiationState {
   void update(const std::string& body){
     const bool canada=body.find("\"actor\":\"canada\"")!=std::string::npos;
     const bool us=body.find("\"actor\":\"us\"")!=std::string::npos;
-    if(!canada&&!us)return;
+    const bool automatic=body.find("\"actor\":\"automatic\"")!=std::string::npos;
+    if(!canada&&!us&&!automatic)return;
     const auto bounded=[&](const std::string& key,double fallback){return std::clamp(number(body,key,fallback),0.0,100.0);};
     risk_aversion=bounded("riskAversion",risk_aversion);
     cooperation_ceiling=bounded("cooperationCeiling",cooperation_ceiling);
     if(canada){retaliatory_tariff=std::min(60.0,bounded("retaliatoryTariff",retaliatory_tariff));canada_priority=bounded("canadaPriority",canada_priority);us_priority=100-canada_priority;updated_by="Minister LeBlanc";}
     if(us){us_tariff=std::min(60.0,bounded("usTariff",us_tariff));us_priority=bounded("usPriority",us_priority);canada_priority=100-us_priority;updated_by="Mr. Greer";}
-    auto& sectors=canada?canada_sectors:us_sectors;const std::string prefix=canada?"canadaSector":"usSector";
-    for(size_t i=0;i<sectors.size();++i)sectors[i]=bounded(prefix+std::to_string(i),sectors[i]);
+    if(automatic){us_tariff=std::min(60.0,bounded("usTariff",us_tariff));retaliatory_tariff=std::min(60.0,bounded("retaliatoryTariff",retaliatory_tariff));updated_by="automatic win-win search";}
+    if(canada||automatic)for(size_t i=0;i<canada_sectors.size();++i)canada_sectors[i]=bounded("canadaSector"+std::to_string(i),canada_sectors[i]);
+    if(us||automatic)for(size_t i=0;i<us_sectors.size();++i)us_sectors[i]=bounded("usSector"+std::to_string(i),us_sectors[i]);
     ++revision;
   }
 };
