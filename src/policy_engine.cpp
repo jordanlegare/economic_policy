@@ -10,6 +10,7 @@ namespace cad {
 namespace {
 double clamp(double x, double lo, double hi) { return std::max(lo, std::min(hi, x)); }
 double sq(double x) { return x * x; }
+constexpr double bilateral_gdp_growth_floor = 2.0;
 
 struct SectorProfile { const char* code; const char* name; double trade, import, jobs, cyclical; };
 constexpr SectorProfile sector_profiles[] = {
@@ -84,11 +85,11 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
       const double fx = (e.usdcad-1.34)*0.35;
       inf = 0.68*inf + 0.32*e.inflation_expectations + 0.12*gap + fx
           - supply + 0.022*import_price - 0.018*(e.oil_price-75.0) + shock(rng)*0.11;
-      const double growth = clamp(1.75 + gap - 0.18*e.credit_spread + coordinated*0.24 + shock(rng)*0.25,-4.0,5.5);
+      const double growth = clamp(1.75 + gap - 0.18*e.credit_spread + coordinated*0.24 + shock(rng)*0.25,bilateral_gdp_growth_floor,5.5);
       // Track the counterparty explicitly: de-escalation and productive demand
       // support both economies, while tariffs and retaliation reduce U.S. growth.
       const double us_growth=clamp(e.us_growth+.16*coordinated+.28*deescalation
-          -.010*us_tariff-.014*ca_tariff-.04*e.border_friction+shock(rng)*.18,-4.0,5.5);
+          -.010*us_tariff-.014*ca_tariff-.04*e.border_friction+shock(rng)*.18,bilateral_gdp_growth_floor,5.5);
       u=clamp(u-0.10*(growth-1.7)+shock(rng)*0.035,3.5,11.0);
       housing=clamp(0.78*housing - 1.15*(rate-2.5) + 0.08*(e.population_growth-1.2) + shock(rng)*0.5,-15,30);
       const double relief_cost=targeted_relief+e.tariff_relief;
@@ -104,7 +105,7 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   s.inflation=inf_sum/draws;s.growth=growth_sum/draws;s.unemployment=u_sum/draws;
   s.us_growth=us_growth_sum/draws;
   s.bilateral_growth_floor=std::min(*std::min_element(s.growth_path.begin(),s.growth_path.end()),*std::min_element(s.us_growth_path.begin(),s.us_growth_path.end()));
-  s.sustained_bilateral_growth=s.bilateral_growth_floor>0.0;
+  s.sustained_bilateral_growth=s.bilateral_growth_floor>=bilateral_gdp_growth_floor;
   s.debt_gdp=debt_sum/draws;s.housing_gap=house_sum/draws;s.recession_risk=100.0*recessions/draws;
   s.cost_of_living=cost_sum/draws;s.real_income_growth=income_sum/draws;s.export_change=export_sum/draws;
   // Annual customs accounting: import demand falls with the effective,
@@ -148,11 +149,11 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   s.score=(.82-.22*safety)*nash+(.18+.22*safety)*floor-tail_penalty;
   // The Canadian surplus and U.S. deficit are the same bilateral gap in
   // different currencies, so reward progress toward zero without allowing it
-  // to override the positive-growth guardrail.
+  // to override the bilateral 2% growth floor.
   s.score+=25.0*clamp(s.trade_balance_progress/100.0,-1.0,1.0);
   if(s.zero_trade_deficit)s.score+=5.0;
-  // A win-win agreement is only eligible to lead when both countries grow in
-  // every modeled quarter. Penalize any breach rather than averaging it away.
+  // A win-win agreement is only eligible to lead when both countries meet the
+  // 2% floor in every modeled quarter. Penalize any breach rather than averaging it away.
   if(!s.sustained_bilateral_growth)s.score-=1000.0+100.0*std::abs(s.bilateral_growth_floor);
   add_sector_impacts(s,e,deescalation,productive,targeted_relief,diversification);
   return s;
@@ -251,13 +252,13 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
-    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score while keeping modeled GDP growth positive in both countries in every quarter. "
-    <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports, while the bilateral positive-growth guardrail remains binding. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
+    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score while keeping modeled GDP growth at or above 2% in both countries in every quarter. "
+    <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Zero-deficit candidates pair equal contributions from new U.S. exports and redirected Canadian exports, while the bilateral 2% growth floor remains binding. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
   r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
   r.signal = best.first_move_bp>0 ? "Raise 25 bp" : best.first_move_bp<0 ? "Cut 25 bp" : "Hold & coordinate";
-  r.rationale="The "+best.name+" best fits your preferences and requires positive Canadian and U.S. GDP growth in every modeled quarter; examine tail metrics before deciding.";
+  r.rationale="The "+best.name+" best fits your preferences and keeps Canadian and U.S. GDP growth at or above 2% in every modeled quarter; examine tail metrics before deciding.";
   return r;
 }
 
