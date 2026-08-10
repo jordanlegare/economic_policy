@@ -106,6 +106,18 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   s.sustained_bilateral_growth=s.bilateral_growth_floor>0.0;
   s.debt_gdp=debt_sum/draws;s.housing_gap=house_sum/draws;s.recession_risk=100.0*recessions/draws;
   s.cost_of_living=cost_sum/draws;s.real_income_growth=income_sum/draws;s.export_change=export_sum/draws;
+  // Annual customs accounting: import demand falls with the effective,
+  // coverage-weighted tariff and receipts apply to the remaining import base.
+  const double effective_us_rate=std::max(0.0,e.us_tariff_canada*us_coverage*(1.0-deescalation))/100.0;
+  const double effective_ca_rate=std::max(0.0,e.canada_retaliatory_tariff*ca_coverage*(1.0-deescalation))/100.0;
+  const double ca_exports=e.canada_exports_to_us_cad*std::max(0.05,1.0-e.trade_elasticity*effective_us_rate);
+  const double ca_imports=e.canada_imports_from_us_cad*std::max(0.05,1.0-e.trade_elasticity*effective_ca_rate);
+  s.us_tariff_revenue_cad=effective_us_rate*ca_exports;s.us_tariff_revenue_usd=s.us_tariff_revenue_cad/e.usdcad;
+  s.canada_tariff_revenue_cad=effective_ca_rate*ca_imports;s.canada_tariff_revenue_usd=s.canada_tariff_revenue_cad/e.usdcad;
+  s.canada_trade_balance_cad=ca_exports-ca_imports;s.us_trade_balance_usd=-s.canada_trade_balance_cad/e.usdcad;
+  s.trade_balance_gap_usd=std::abs(s.us_trade_balance_usd);
+  const double initial_gap=std::abs(e.canada_exports_to_us_cad-e.canada_imports_from_us_cad)/e.usdcad;
+  s.trade_balance_progress=100.0*(1.0-s.trade_balance_gap_usd/std::max(0.001,initial_gap));
   std::sort(terminal_debt.begin(),terminal_debt.end());std::sort(terminal_inflation.begin(),terminal_inflation.end());
   s.debt_stress_p90=terminal_debt[draws*9/10];s.inflation_stress_p90=terminal_inflation[draws*9/10];
   const double mandate_loss=3.8*sq(s.inflation-2.0)+1.2*sq(std::max(0.0,s.unemployment-5.8))
@@ -124,6 +136,10 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   const double safety=clamp(e.risk_aversion/100.0,0.0,1.0);
   const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
   s.score=(.82-.22*safety)*nash+(.18+.22*safety)*floor-tail_penalty;
+  // The Canadian surplus and U.S. deficit are the same bilateral gap in
+  // different currencies, so reward progress toward zero without allowing it
+  // to override the positive-growth guardrail.
+  s.score+=8.0*clamp(s.trade_balance_progress/100.0,-1.0,1.0);
   // A win-win agreement is only eligible to lead when both countries grow in
   // every modeled quarter. Penalize any breach rather than averaging it away.
   if(!s.sustained_bilateral_growth)s.score-=1000.0+100.0*std::abs(s.bilateral_growth_floor);
@@ -248,7 +264,11 @@ std::string to_json(const Result& r){
      <<"\",\"move\":"<<s.first_move_bp<<",\"fiscal\":"<<s.fiscal_impulse<<",\"score\":"<<s.score<<",\"bocScore\":"<<s.boc_score
      <<",\"federalScore\":"<<s.federal_score<<",\"usScore\":"<<s.us_score<<",\"inflation\":"<<s.inflation<<",\"growth\":"<<s.growth<<",\"usGrowth\":"<<s.us_growth<<",\"bilateralGrowthFloor\":"<<s.bilateral_growth_floor<<",\"sustainedBilateralGrowth\":"<<(s.sustained_bilateral_growth?"true":"false")<<",\"unemployment\":"<<s.unemployment
      <<",\"debt\":"<<s.debt_gdp<<",\"housing\":"<<s.housing_gap<<",\"recessionRisk\":"<<s.recession_risk<<",\"rates\":";array_json(o,s.rates);
-    o<<",\"costOfLiving\":"<<s.cost_of_living<<",\"realIncome\":"<<s.real_income_growth<<",\"exports\":"<<s.export_change<<",\"debtP90\":"<<s.debt_stress_p90<<",\"inflationP90\":"<<s.inflation_stress_p90;
+    o<<",\"costOfLiving\":"<<s.cost_of_living<<",\"realIncome\":"<<s.real_income_growth<<",\"exports\":"<<s.export_change<<",\"debtP90\":"<<s.debt_stress_p90<<",\"inflationP90\":"<<s.inflation_stress_p90
+     <<",\"usTariffRevenueUsd\":"<<s.us_tariff_revenue_usd<<",\"usTariffRevenueCad\":"<<s.us_tariff_revenue_cad
+     <<",\"canadaTariffRevenueCad\":"<<s.canada_tariff_revenue_cad<<",\"canadaTariffRevenueUsd\":"<<s.canada_tariff_revenue_usd
+     <<",\"canadaTradeBalanceCad\":"<<s.canada_trade_balance_cad<<",\"usTradeBalanceUsd\":"<<s.us_trade_balance_usd
+     <<",\"tradeBalanceGapUsd\":"<<s.trade_balance_gap_usd<<",\"tradeBalanceProgress\":"<<s.trade_balance_progress;
     o<<",\"inflationPath\":";array_json(o,s.inflation_path);o<<",\"growthPath\":";array_json(o,s.growth_path);o<<",\"usGrowthPath\":";array_json(o,s.us_growth_path);o<<",\"debtPath\":";array_json(o,s.debt_path);o<<",\"costPath\":";array_json(o,s.cost_path);o<<",\"exportPath\":";array_json(o,s.export_path);
     o<<",\"sectors\":[";for(size_t j=0;j<s.sectors.size();++j){if(j)o<<',';const auto&x=s.sectors[j];o<<"{\"code\":\""<<esc(x.code)<<"\",\"name\":\""<<esc(x.name)<<"\",\"exposure\":"<<x.exposure<<",\"canada\":{\"output\":"<<x.canada_output<<",\"jobs\":"<<x.canada_jobs<<",\"prices\":"<<x.canada_prices<<"},\"us\":{\"output\":"<<x.us_output<<",\"jobs\":"<<x.us_jobs<<",\"prices\":"<<x.us_prices<<"}}";}o<<"]}";
   }return o<<"]}",o.str();

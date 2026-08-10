@@ -12,6 +12,8 @@ int main(){
   assert(baseline.recommendation.canada_priority+baseline.recommendation.us_priority==100.0);
   bool varied=false;for(size_t i=0;i<baseline.recommendation.us_sector_coverage.size();++i){const double c=baseline.recommendation.us_sector_coverage[i];assert(c>=0&&c<=100);assert(baseline.recommendation.canada_sector_coverage[i]>=0&&baseline.recommendation.canada_sector_coverage[i]<=100);if(c<100)varied=true;}assert(varied);
   for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.us_growth_path.size()==12);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
+  const auto& fiscal=baseline.scenarios.front();assert(fiscal.us_tariff_revenue_usd>=0);assert(fiscal.us_tariff_revenue_cad>=fiscal.us_tariff_revenue_usd);
+  assert(fiscal.canada_tariff_revenue_cad>=0);assert(std::abs(fiscal.canada_trade_balance_cad/defaults.usdcad+fiscal.us_trade_balance_usd)<1e-9);
   assert(baseline.scenarios.front().sustained_bilateral_growth);assert(baseline.scenarios.front().bilateral_growth_floor>0);
   cad::Economy shock;shock.us_tariff_canada=60;shock.canada_retaliatory_tariff=25;auto stressed=engine.evaluate(shock);
   assert(stressed.recommendation.canada_priority+stressed.recommendation.us_priority==100.0);
@@ -31,5 +33,6 @@ int main(){
   assert(json.find("\"usSectorCoverage\":[")!=std::string::npos);assert(json.find("\"usSectorOutput\":[")!=std::string::npos);
   assert(json.find("\"canadaSectorCoverage\":[")!=std::string::npos);assert(json.find("\"canadaSectorValue\":[")!=std::string::npos);
   assert(json.find("\"usGrowthPath\":[")!=std::string::npos);assert(json.find("\"sustainedBilateralGrowth\":true")!=std::string::npos);
+  assert(json.find("\"usTariffRevenueUsd\":")!=std::string::npos);assert(json.find("\"canadaTariffRevenueCad\":")!=std::string::npos);assert(json.find("\"tradeBalanceGapUsd\":")!=std::string::npos);
   std::cout<<"policy engine tests passed\n";
 }
