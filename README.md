@@ -30,6 +30,7 @@ ctest --test-dir build --output-on-failure
 - **Fiscal block:** balance and debt dynamics, program growth, fiscal impulse and the supply benefit of productive investment.
 - **Trade block:** effective bilateral tariffs, retaliation, border friction, import-price pass-through, export exposure, trade elasticity, US demand and market diversification.
 - **Household block:** an explicit cost-of-living pressure index and real-income growth alongside housing and unemployment.
+- **Whole-economy sector view:** all 20 two-digit NAICS sectors show comparable Canadian and U.S. output, employment and consumer-price effects, with trade exposure, search and accessible impact bars.
 - **Risk block:** recession frequency plus 90th-percentile inflation and federal debt stress outcomes.
 - **Decision layer:** separate BoC, Canadian federal/household and US loss functions combined into a preference-weighted Nash score with a fairness floor. Alongside twelve expert strategies, every request autonomously searches 144 monetary, fiscal, productive-investment, relief and diversification combinations for a customized win-win frontier.
 - **Internet baseline:** `GET /api/baseline` refreshes available Bank of Canada Valet observations at page load, exposes source metadata, and reports whether a documented fallback baseline is being used.
