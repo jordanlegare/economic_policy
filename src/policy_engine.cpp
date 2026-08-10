@@ -176,8 +176,10 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   const double us_welfare=std::max(.01,fair->us_score);
   // Give the currently weaker nation more negotiating weight while retaining
   // a meaningful floor for both sides.
-  r.recommendation.canada_priority=std::round(clamp(55.0+.45*(us_welfare-ca_welfare),25.0,85.0));
-  r.recommendation.us_priority=std::round(clamp(55.0+.45*(ca_welfare-us_welfare),25.0,85.0));
+  // Allocate a single 100% pool rather than calculating two independent
+  // weights (which could recommend more than 100% in aggregate).
+  r.recommendation.canada_priority=std::round(clamp(50.0+.45*(us_welfare-ca_welfare),25.0,75.0));
+  r.recommendation.us_priority=100.0-r.recommendation.canada_priority;
   r.recommendation.risk_aversion=std::round(clamp(35.0+.45*fair->recession_risk
       +8.0*std::max(0.0,fair->inflation_stress_p90-3.0),25.0,90.0));
   r.recommendation.cooperation_ceiling=std::round(clamp(std::max(fair->negotiated_relief,
