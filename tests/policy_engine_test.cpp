@@ -11,11 +11,11 @@ int main(){
   assert(baseline.recommendation.us_priority>0&&baseline.recommendation.us_priority<100);assert(baseline.allocations_examined==101);assert(baseline.recommendation.cooperation_ceiling>=0&&baseline.recommendation.cooperation_ceiling<=100);
   assert(baseline.recommendation.canada_priority+baseline.recommendation.us_priority==100.0);
   bool varied=false;for(size_t i=0;i<baseline.recommendation.us_sector_coverage.size();++i){const double c=baseline.recommendation.us_sector_coverage[i];assert(c>=0&&c<=100);assert(baseline.recommendation.canada_sector_coverage[i]>=0&&baseline.recommendation.canada_sector_coverage[i]<=100);if(c<100)varied=true;}assert(varied);
-  for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.us_growth_path.size()==12);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
+  for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.us_growth_path.size()==12);assert(s.growth>=2.0);assert(s.us_growth>=2.0);for(double growth:s.growth_path)assert(growth>=2.0);for(double growth:s.us_growth_path)assert(growth>=2.0);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
   const auto& fiscal=baseline.scenarios.front();assert(fiscal.us_tariff_revenue_usd>=0);assert(fiscal.us_tariff_revenue_cad>=fiscal.us_tariff_revenue_usd);
   assert(fiscal.canada_tariff_revenue_cad>=0);assert(std::abs(fiscal.canada_trade_balance_cad/defaults.usdcad+fiscal.us_trade_balance_usd)<1e-9);
   assert(fiscal.zero_trade_deficit);assert(fiscal.trade_balance_gap_usd<0.05);assert(fiscal.us_export_expansion_usd>0);assert(fiscal.canada_export_redirection_cad>0);
-  assert(baseline.scenarios.front().sustained_bilateral_growth);assert(baseline.scenarios.front().bilateral_growth_floor>0);
+  assert(baseline.scenarios.front().sustained_bilateral_growth);assert(baseline.scenarios.front().bilateral_growth_floor>=2.0);
   cad::Economy shock;shock.us_tariff_canada=60;shock.canada_retaliatory_tariff=25;auto stressed=engine.evaluate(shock);
   assert(stressed.recommendation.canada_priority+stressed.recommendation.us_priority==100.0);
   auto find=[](const cad::Result&r,const char*id)->const cad::Scenario&{for(const auto&s:r.scenarios)if(s.id==id)return s;assert(false);return r.scenarios[0];};
