@@ -34,7 +34,11 @@ void add_sector_impacts(Scenario& s, const Economy& e, double deescalation, doub
     const double us_shock=ca_tariff*p.import*.46+us_tariff*p.import*.12;
     const double supply_gain=productive*s.fiscal_impulse*(.16+.12*p.cyclical);
     x.canada_output=100.0*(-ca_shock+supply_gain+relief*.10*p.jobs);
-    x.us_output=100.0*(-us_shock+deescalation*.012*p.trade);
+    // Protection can lift domestic output, but its benefit diminishes as broad
+    // coverage raises input costs throughout the sector's supply chain.
+    const double c=clamp(e.us_sector_coverage[sector]/100.0,0.0,1.0);
+    const double us_protection=us_tariff*p.trade*.24*(1.0-.5*c);
+    x.us_output=100.0*(-us_shock+us_protection+deescalation*.012*p.trade);
     x.canada_jobs=x.canada_output*(.30+.42*p.jobs);
     x.us_jobs=x.us_output*(.28+.38*p.jobs);
     x.canada_prices=100.0*(ca_tariff*p.import*.30+us_tariff*p.import*.05-supply_gain*.10);
@@ -185,11 +189,17 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.cooperation_ceiling=std::round(clamp(std::max(fair->negotiated_relief,
       e.us_tariff_canada>0.0?55.0:0.0),0.0,100.0));
   r.recommendation.strategy_id=fair->id;
+  // Search downward so a tie retains the strongest U.S. tariff stance.
+  for(size_t i=0;i<std::size(sector_profiles);++i){const auto& p=sector_profiles[i];double best_c=100,best_output=-1e100;
+    for(int coverage=100;coverage>=0;--coverage){const double c=coverage/100.0,tariff=e.us_tariff_canada/100.0*c;
+      const double output=100.0*tariff*(p.trade*.24*(1.0-.5*c)-p.import*.12);
+      if(output>best_output+1e-12){best_output=output;best_c=coverage;}}
+    r.recommendation.us_sector_coverage[i]=best_c;r.recommendation.us_sector_output[i]=best_output;}
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
     <<"% U.S. tariff, "<<fair->name<<" is the strongest U.S.-advantage opening offer that clears the Canadian viability floor. "
-    <<"Mr. Greer's 60--80% outcome mandate drives the initial search; Mr. LeBlanc's complementary share adjusts automatically, while relief and caution reflect bilateral and tail-risk effects.";
+    <<"Mr. Greer's 60--80% outcome mandate drives the initial search. Each U.S. sector is searched from 100% coverage downward in one-point steps, retaining the highest tariff stance that maximizes modeled U.S. output; Mr. LeBlanc's complementary share adjusts automatically.";
   r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
@@ -204,7 +214,9 @@ std::string to_json(const Result& r){
    <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined
    <<",\"recommendation\":{\"canadaPriority\":"<<r.recommendation.canada_priority<<",\"usPriority\":"<<r.recommendation.us_priority
    <<",\"riskAversion\":"<<r.recommendation.risk_aversion<<",\"cooperationCeiling\":"<<r.recommendation.cooperation_ceiling
-   <<",\"strategyId\":\""<<esc(r.recommendation.strategy_id)<<"\",\"explanation\":\""<<esc(r.recommendation.explanation)<<"\"},\"scenarios\":[";
+   <<",\"strategyId\":\""<<esc(r.recommendation.strategy_id)<<"\",\"usSectorCoverage\":";
+  array_json(o,r.recommendation.us_sector_coverage);o<<",\"usSectorOutput\":";array_json(o,r.recommendation.us_sector_output);
+  o<<",\"explanation\":\""<<esc(r.recommendation.explanation)<<"\"},\"scenarios\":[";
   for(size_t i=0;i<r.scenarios.size();++i){if(i)o<<',';const auto&s=r.scenarios[i];
     o<<"{\"id\":\""<<s.id<<"\",\"name\":\""<<esc(s.name)<<"\",\"description\":\""<<esc(s.description)
      <<"\",\"move\":"<<s.first_move_bp<<",\"fiscal\":"<<s.fiscal_impulse<<",\"score\":"<<s.score<<",\"bocScore\":"<<s.boc_score
