@@ -63,7 +63,8 @@ struct WinWinRecommendation {
   double canada_priority = 30.0, us_priority = 70.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   std::string strategy_id, explanation;
-  std::array<double, 20> us_sector_coverage{}, us_sector_output{};
+  std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
+  std::array<double, 20> us_sector_output{}, canada_sector_value{};
 };
 
 struct Result {
