@@ -28,6 +28,15 @@ struct Economy {
   double risk_aversion = 50.0, cooperation_ceiling = 85.0;
 };
 
+// The complete two-digit NAICS economy, grouped into its 20 standard sectors.
+// Changes are percentage differences from a no-tariff baseline at quarter 12.
+struct SectorImpact {
+  std::string code, name;
+  double canada_output = 0.0, canada_jobs = 0.0, canada_prices = 0.0;
+  double us_output = 0.0, us_jobs = 0.0, us_prices = 0.0;
+  double exposure = 0.0;
+};
+
 struct Scenario {
   std::string id, name, description;
   double first_move_bp = 0.0, fiscal_impulse = 0.0, productive_share = 0.5;
@@ -37,6 +46,7 @@ struct Scenario {
   double cost_of_living = 0.0, real_income_growth = 0.0, export_change = 0.0;
   double debt_stress_p90 = 0.0, inflation_stress_p90 = 0.0;
   std::array<double, 12> rates{}, inflation_path{}, growth_path{}, debt_path{}, cost_path{}, export_path{};
+  std::vector<SectorImpact> sectors;
 };
 
 struct Result {

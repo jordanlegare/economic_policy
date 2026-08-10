@@ -11,10 +11,42 @@ namespace {
 double clamp(double x, double lo, double hi) { return std::max(lo, std::min(hi, x)); }
 double sq(double x) { return x * x; }
 
+struct SectorProfile { const char* code; const char* name; double trade, import, jobs, cyclical; };
+constexpr SectorProfile sector_profiles[] = {
+  {"11","Agriculture, forestry, fishing & hunting",.82,.42,.72,.65},{"21","Mining, quarrying, oil & gas",.88,.18,.32,.75},
+  {"22","Utilities",.16,.10,.25,.25},{"23","Construction",.18,.28,.82,.88},{"31-33","Manufacturing",.94,.76,.68,.92},
+  {"42","Wholesale trade",.68,.58,.64,.74},{"44-45","Retail trade",.30,.72,.88,.62},{"48-49","Transportation & warehousing",.72,.48,.70,.86},
+  {"51","Information & cultural industries",.34,.30,.48,.44},{"52","Finance & insurance",.22,.20,.34,.55},
+  {"53","Real estate, rental & leasing",.10,.12,.30,.78},{"54","Professional, scientific & technical services",.38,.26,.58,.48},
+  {"55","Management of companies & enterprises",.20,.18,.24,.40},{"56","Administrative, support & waste services",.28,.24,.86,.72},
+  {"61","Educational services",.08,.10,.82,.18},{"62","Health care & social assistance",.06,.14,.94,.16},
+  {"71","Arts, entertainment & recreation",.14,.16,.88,.68},{"72","Accommodation & food services",.18,.52,.96,.82},
+  {"81","Other services (except public administration)",.16,.30,.90,.58},{"91","Public administration",.04,.08,.62,.12}
+};
+
+void add_sector_impacts(Scenario& s, const Economy& e, double deescalation, double productive,
+                        double relief, double diversification) {
+  const double us_tariff=e.us_tariff_canada*(1.0-deescalation)/100.0;
+  const double ca_tariff=e.canada_retaliatory_tariff*(1.0-deescalation)/100.0;
+  for(const auto& p:sector_profiles){
+    SectorImpact x; x.code=p.code; x.name=p.name; x.exposure=100.0*p.trade;
+    const double ca_shock=us_tariff*p.trade*(.72-.28*diversification)+e.border_friction/100.0*p.trade*.18;
+    const double us_shock=ca_tariff*p.import*.46+us_tariff*p.import*.12;
+    const double supply_gain=productive*s.fiscal_impulse*(.16+.12*p.cyclical);
+    x.canada_output=100.0*(-ca_shock+supply_gain+relief*.10*p.jobs);
+    x.us_output=100.0*(-us_shock+deescalation*.012*p.trade);
+    x.canada_jobs=x.canada_output*(.30+.42*p.jobs);
+    x.us_jobs=x.us_output*(.28+.38*p.jobs);
+    x.canada_prices=100.0*(ca_tariff*p.import*.30+us_tariff*p.import*.05-supply_gain*.10);
+    x.us_prices=100.0*(us_tariff*p.import*.24+ca_tariff*p.import*.10);
+    s.sectors.push_back(std::move(x));
+  }
+}
+
 Scenario simulate(const Economy& e, std::string id, std::string name, std::string description,
                   double move, double fiscal, double productive, double deescalation,
                   double targeted_relief, double diversification, std::uint64_t seed) {
-  Scenario s{std::move(id), std::move(name), std::move(description)};
+  Scenario s; s.id=std::move(id); s.name=std::move(name); s.description=std::move(description);
   s.first_move_bp = move; s.fiscal_impulse = fiscal; s.productive_share = productive;
   constexpr int draws = 700;
   std::mt19937_64 rng(seed);
@@ -77,6 +109,7 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   const double safety=clamp(e.risk_aversion/100.0,0.0,1.0);
   const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
   s.score=(.82-.22*safety)*nash+(.18+.22*safety)*floor-tail_penalty;
+  add_sector_impacts(s,e,deescalation,productive,targeted_relief,diversification);
   return s;
 }
 
@@ -141,7 +174,8 @@ std::string to_json(const Result& r){
      <<",\"federalScore\":"<<s.federal_score<<",\"usScore\":"<<s.us_score<<",\"inflation\":"<<s.inflation<<",\"growth\":"<<s.growth<<",\"unemployment\":"<<s.unemployment
      <<",\"debt\":"<<s.debt_gdp<<",\"housing\":"<<s.housing_gap<<",\"recessionRisk\":"<<s.recession_risk<<",\"rates\":";array_json(o,s.rates);
     o<<",\"costOfLiving\":"<<s.cost_of_living<<",\"realIncome\":"<<s.real_income_growth<<",\"exports\":"<<s.export_change<<",\"debtP90\":"<<s.debt_stress_p90<<",\"inflationP90\":"<<s.inflation_stress_p90;
-    o<<",\"inflationPath\":";array_json(o,s.inflation_path);o<<",\"growthPath\":";array_json(o,s.growth_path);o<<",\"debtPath\":";array_json(o,s.debt_path);o<<",\"costPath\":";array_json(o,s.cost_path);o<<",\"exportPath\":";array_json(o,s.export_path);o<<'}';
+    o<<",\"inflationPath\":";array_json(o,s.inflation_path);o<<",\"growthPath\":";array_json(o,s.growth_path);o<<",\"debtPath\":";array_json(o,s.debt_path);o<<",\"costPath\":";array_json(o,s.cost_path);o<<",\"exportPath\":";array_json(o,s.export_path);
+    o<<",\"sectors\":[";for(size_t j=0;j<s.sectors.size();++j){if(j)o<<',';const auto&x=s.sectors[j];o<<"{\"code\":\""<<esc(x.code)<<"\",\"name\":\""<<esc(x.name)<<"\",\"exposure\":"<<x.exposure<<",\"canada\":{\"output\":"<<x.canada_output<<",\"jobs\":"<<x.canada_jobs<<",\"prices\":"<<x.canada_prices<<"},\"us\":{\"output\":"<<x.us_output<<",\"jobs\":"<<x.us_jobs<<",\"prices\":"<<x.us_prices<<"}}";}o<<"]}";
   }return o<<"]}",o.str();
 }
 } // namespace cad
