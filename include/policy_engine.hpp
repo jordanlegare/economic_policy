@@ -23,6 +23,9 @@ struct Economy {
   double exports_gdp = 25.0, import_content_consumption = 22.0;
   double trade_elasticity = 0.65, border_friction = 2.0;
   double tariff_relief = 0.0, trade_diversification = 0.0;
+  // User decision preferences. These change ranking, not the economic baseline.
+  double canada_priority = 50.0, us_priority = 50.0;
+  double risk_aversion = 50.0, cooperation_ceiling = 85.0;
 };
 
 struct Scenario {
@@ -39,6 +42,7 @@ struct Scenario {
 struct Result {
   std::string regime, signal, rationale;
   double data_confidence = 0.0, neutral_rate = 0.0, policy_gap = 0.0;
+  int candidates_examined = 0;
   std::vector<Scenario> scenarios;
 };
 
