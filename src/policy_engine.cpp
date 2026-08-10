@@ -26,9 +26,9 @@ constexpr SectorProfile sector_profiles[] = {
 
 void add_sector_impacts(Scenario& s, const Economy& e, double deescalation, double productive,
                         double relief, double diversification) {
-  const double us_tariff=e.us_tariff_canada*(1.0-deescalation)/100.0;
-  const double ca_tariff=e.canada_retaliatory_tariff*(1.0-deescalation)/100.0;
-  for(const auto& p:sector_profiles){
+  for(size_t sector=0;sector<std::size(sector_profiles);++sector){const auto& p=sector_profiles[sector];
+    const double us_tariff=e.us_tariff_canada*(1.0-deescalation)/100.0*clamp(e.us_sector_coverage[sector]/100.0,0.0,1.0);
+    const double ca_tariff=e.canada_retaliatory_tariff*(1.0-deescalation)/100.0*clamp(e.canada_sector_coverage[sector]/100.0,0.0,1.0);
     SectorImpact x; x.code=p.code; x.name=p.name; x.exposure=100.0*p.trade;
     const double ca_shock=us_tariff*p.trade*(.72-.28*diversification)+e.border_friction/100.0*p.trade*.18;
     const double us_shock=ca_tariff*p.import*.46+us_tariff*p.import*.12;
@@ -54,14 +54,17 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   double inf_sum=0, growth_sum=0, u_sum=0, debt_sum=0, house_sum=0, cost_sum=0, income_sum=0, export_sum=0, recessions=0;
   std::array<double,12> rp{}, ip{}, gp{}, dp{}, cp{}, xp{};
   std::vector<double> terminal_debt, terminal_inflation;
+  double us_coverage=0,ca_coverage=0,weight=0;
+  for(size_t i=0;i<std::size(sector_profiles);++i){const double w=sector_profiles[i].trade;weight+=w;us_coverage+=w*clamp(e.us_sector_coverage[i]/100.0,0.0,1.0);ca_coverage+=w*clamp(e.canada_sector_coverage[i]/100.0,0.0,1.0);}
+  us_coverage/=weight;ca_coverage/=weight;
   for (int d=0; d<draws; ++d) {
     double rate=e.policy_rate, inf=e.core_inflation, gap=e.output_gap, u=e.unemployment;
     double debt=e.federal_debt_gdp, housing=e.housing_gap, export_change=0, cost=e.inflation;
     bool recession=false;
     for (int q=0; q<12; ++q) {
       const double coordinated = productive * fiscal;
-      const double us_tariff = std::max(0.0, e.us_tariff_canada * (1.0-deescalation));
-      const double ca_tariff = std::max(0.0, e.canada_retaliatory_tariff * (1.0-deescalation));
+      const double us_tariff = std::max(0.0, e.us_tariff_canada * us_coverage * (1.0-deescalation));
+      const double ca_tariff = std::max(0.0, e.canada_retaliatory_tariff * ca_coverage * (1.0-deescalation));
       const double exposed_exports = e.exports_to_us_share/100.0 * (1.0-clamp(diversification+e.trade_diversification,0.0,0.75));
       const double trade_drag = exposed_exports * e.exports_gdp/100.0 * e.trade_elasticity * (us_tariff+e.border_friction)/100.0;
       const double import_price = e.imports_from_us_share/100.0 * e.import_content_consumption/100.0 * ca_tariff;
@@ -98,7 +101,7 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   const double federal_loss=0.32*sq(std::max(0.0,s.debt_gdp-e.federal_debt_gdp))+0.7*sq(std::min(0.0,s.growth))
       +0.8*sq(std::max(0.0,s.unemployment-6.0))+0.012*sq(s.housing_gap);
   s.boc_score=100.0/(1.0+mandate_loss);s.federal_score=100.0/(1.0+federal_loss);
-  const double us_loss=.55*sq(std::max(0.0,-s.export_change))+0.8*sq(std::max(0.0,e.us_inflation-2.0+e.us_tariff_canada*.025))+.25*sq(e.canada_retaliatory_tariff*(1.0-deescalation));
+  const double us_loss=.55*sq(std::max(0.0,-s.export_change))+0.8*sq(std::max(0.0,e.us_inflation-2.0+e.us_tariff_canada*us_coverage*.025))+.25*sq(e.canada_retaliatory_tariff*ca_coverage*(1.0-deescalation));
   s.us_score=100.0/(1.0+us_loss);
   // Preference-weighted Nash welfare. The floor keeps a win for one country
   // from masking a materially poor outcome for the other.

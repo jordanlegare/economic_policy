@@ -33,6 +33,10 @@ cad::Economy parse(const std::string& b){cad::Economy e;
   FIELD("tradeElasticity",trade_elasticity);FIELD("borderFriction",border_friction);FIELD("tariffRelief",tariff_relief);FIELD("diversification",trade_diversification);
   FIELD("canadaPriority",canada_priority);FIELD("usPriority",us_priority);FIELD("riskAversion",risk_aversion);FIELD("cooperationCeiling",cooperation_ceiling);
 #undef FIELD
+  for(size_t i=0;i<e.us_sector_coverage.size();++i){
+    e.us_sector_coverage[i]=number(b,"usSector"+std::to_string(i),e.us_sector_coverage[i]);
+    e.canada_sector_coverage[i]=number(b,"canadaSector"+std::to_string(i),e.canada_sector_coverage[i]);
+  }
   return e;
 }
 void respond(int fd,int status,const std::string&type,const std::string&body){std::ostringstream h;h<<"HTTP/1.1 "<<status<<(status==200?" OK":" Not Found")<<"\r\nContent-Type: "<<type<<"\r\nContent-Length: "<<body.size()<<"\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n";auto out=h.str()+body;send(fd,out.data(),out.size(),0);}

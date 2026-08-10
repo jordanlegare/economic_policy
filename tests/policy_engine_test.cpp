@@ -13,6 +13,9 @@ int main(){
   assert(find(stressed,"statusquo").export_change<find(baseline,"statusquo").export_change);
   assert(find(stressed,"compact").export_change>find(stressed,"statusquo").export_change);
   assert(find(stressed,"statusquo").sectors[4].canada_output<find(baseline,"statusquo").sectors[4].canada_output);
+  cad::Economy exempt=shock;exempt.us_sector_coverage[4]=0;
+  auto exempted=engine.evaluate(exempt);
+  assert(find(exempted,"statusquo").sectors[4].canada_output>find(stressed,"statusquo").sectors[4].canada_output);
   assert(find(stressed,"custom").description.find("Best of 144")!=std::string::npos);
   cad::Economy canada_first=shock;canada_first.canada_priority=100;canada_first.us_priority=10;
   cad::Economy us_first=shock;us_first.canada_priority=10;us_first.us_priority=100;
