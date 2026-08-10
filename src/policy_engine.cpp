@@ -68,9 +68,15 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   s.boc_score=100.0/(1.0+mandate_loss);s.federal_score=100.0/(1.0+federal_loss);
   const double us_loss=.55*sq(std::max(0.0,-s.export_change))+0.8*sq(std::max(0.0,e.us_inflation-2.0+e.us_tariff_canada*.025))+.25*sq(e.canada_retaliatory_tariff*(1.0-deescalation));
   s.us_score=100.0/(1.0+us_loss);
-  // Three-party Nash welfare: no party can be hidden by two strong results.
+  // Preference-weighted Nash welfare. The floor keeps a win for one country
+  // from masking a materially poor outcome for the other.
   const double floor=std::min({s.boc_score,s.federal_score,s.us_score});
-  s.score=.72*std::cbrt(s.boc_score*s.federal_score*s.us_score)+.28*floor;
+  const double ca=clamp(e.canada_priority,1.0,100.0), us=clamp(e.us_priority,1.0,100.0);
+  const double total=2.0*ca+us;
+  const double nash=std::exp((ca*std::log(std::max(0.01,s.boc_score))+ca*std::log(std::max(0.01,s.federal_score))+us*std::log(std::max(0.01,s.us_score)))/total);
+  const double safety=clamp(e.risk_aversion/100.0,0.0,1.0);
+  const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
+  s.score=(.82-.22*safety)*nash+(.18+.22*safety)*floor-tail_penalty;
   return s;
 }
 
@@ -100,17 +106,35 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.scenarios.push_back(simulate(e,"productivity","Productivity compact","Accelerated investment expensing, skills and competition policy lift supply capacity.",0,.32,1.0,.10,.05,.30,seed_+10));
   r.scenarios.push_back(simulate(e,"defence","Fiscal consolidation buffer","Spending restraint preserves debt capacity while the Bank cushions demand.",-25,-.22,.70,0,0,.12,seed_+11));
   r.scenarios.push_back(simulate(e,"sectoral","Sector-targeted response","Time-limited support protects tariff-exposed workers without broad retaliation.",0,.28,.62,.05,.48,.22,seed_+12));
+  // Independently search a policy frontier instead of assuming the hand-written
+  // menu already contains the best compromise for this user's priorities.
+  Scenario custom; bool have_custom=false; int candidate=0;
+  const double max_deescalation=clamp(e.cooperation_ceiling/100.0,0.0,1.0);
+  for(double move : {-25.0,0.0,25.0}) for(double fiscal : {-0.15,0.10,0.35,0.60})
+    for(double productive : {0.35,0.65,0.90}) for(double cooperation : {0.0,.33,.67,1.0}) {
+      const double deescalation=cooperation*max_deescalation;
+      const double relief=clamp(.42*(1.0-productive)+.08*(1.0-deescalation),0.0,.45);
+      const double diversification=clamp(.08+.48*productive*(1.0-deescalation),0.0,.60);
+      auto s=simulate(e,"custom","Custom win-win frontier","Autonomously generated from the full policy search.",move,fiscal,productive,deescalation,relief,diversification,seed_+100+candidate++);
+      if(!have_custom||s.score>custom.score){custom=std::move(s);have_custom=true;}
+    }
+  r.candidates_examined=candidate;
+  std::ostringstream custom_description;
+  custom_description<<"Best of "<<candidate<<" generated mixes: "<<(custom.first_move_bp<0?"ease monetary policy":custom.first_move_bp>0?"tighten monetary policy":"hold rates")
+    <<", "<<std::setprecision(2)<<custom.fiscal_impulse<<"% fiscal impulse, and negotiated tariff relief within your cooperation limit.";
+  custom.description=custom_description.str();
+  r.scenarios.push_back(std::move(custom));
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
   r.signal = best.first_move_bp>0 ? "Raise 25 bp" : best.first_move_bp<0 ? "Cut 25 bp" : "Hold & coordinate";
-  r.rationale="The "+best.name+" maximizes three-party Nash welfare across the BoC mandate, Canadian fiscal and household outcomes, and US trade-price outcomes; examine tail metrics before deciding.";
+  r.rationale="The "+best.name+" best fits your Canada, U.S., cooperation and risk preferences using a fairness floor so neither country is averaged away; examine tail metrics before deciding.";
   return r;
 }
 
 std::string to_json(const Result& r){
   std::ostringstream o;o<<std::fixed<<std::setprecision(3);
   o<<"{\"regime\":\""<<esc(r.regime)<<"\",\"signal\":\""<<esc(r.signal)<<"\",\"rationale\":\""<<esc(r.rationale)
-   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"scenarios\":[";
+   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined<<",\"scenarios\":[";
   for(size_t i=0;i<r.scenarios.size();++i){if(i)o<<',';const auto&s=r.scenarios[i];
     o<<"{\"id\":\""<<s.id<<"\",\"name\":\""<<esc(s.name)<<"\",\"description\":\""<<esc(s.description)
      <<"\",\"move\":"<<s.first_move_bp<<",\"fiscal\":"<<s.fiscal_impulse<<",\"score\":"<<s.score<<",\"bocScore\":"<<s.boc_score

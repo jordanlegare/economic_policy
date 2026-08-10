@@ -1,6 +1,6 @@
 # Canada Policy Studio
 
-A dependency-light C++17 monetary–fiscal scenario engine and professional browser dashboard for testing how U.S. tariffs affect Canada under a broad menu of monetary, fiscal, trade and supply-side strategies. The tariff percentage is the only user-controlled assumption; the server refreshes its baseline from public internet sources and labels fallback operation clearly.
+A dependency-light C++17 monetary–fiscal scenario engine and professional browser dashboard for testing how U.S. tariffs affect Canada and the United States under a broad menu of monetary, fiscal, trade and supply-side strategies. The dashboard automatically reruns when a user changes the tariff, bilateral priorities, risk tolerance, or feasible negotiated-relief ceiling. The server refreshes its economic baseline from public internet sources and labels fallback operation clearly.
 
 The model evaluates macroeconomic, financial, external, housing, fiscal and Canada–US trade indicators. Twelve policy mixes each run through 700 seeded stochastic paths over 12 quarters. A three-party Nash score rewards outcomes that serve the Bank's mandate, Canadian fiscal/household sustainability and US trade-price interests while preventing a weak party from being averaged away.
 
@@ -31,7 +31,7 @@ ctest --test-dir build --output-on-failure
 - **Trade block:** effective bilateral tariffs, retaliation, border friction, import-price pass-through, export exposure, trade elasticity, US demand and market diversification.
 - **Household block:** an explicit cost-of-living pressure index and real-income growth alongside housing and unemployment.
 - **Risk block:** recession frequency plus 90th-percentile inflation and federal debt stress outcomes.
-- **Decision layer:** separate BoC, Canadian federal/household and US loss functions combined into a three-party Nash score across twelve strategies. Model assumptions are locked to a common data vintage so the U.S. tariff is the only changing variable.
+- **Decision layer:** separate BoC, Canadian federal/household and US loss functions combined into a preference-weighted Nash score with a fairness floor. Alongside twelve expert strategies, every request autonomously searches 144 monetary, fiscal, productive-investment, relief and diversification combinations for a customized win-win frontier.
 - **Internet baseline:** `GET /api/baseline` refreshes available Bank of Canada Valet observations at page load, exposes source metadata, and reports whether a documented fallback baseline is being used.
 
 ## Responsible decision use
