@@ -13,6 +13,7 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <array>
 
 namespace {
 std::string read_file(const std::string& p){std::ifstream f(p,std::ios::binary);std::ostringstream s;s<<f.rdbuf();return s.str();}
@@ -60,6 +61,29 @@ std::string live_baseline(){
 #undef OUT
   o<<"\"diversification\":"<<e.trade_diversification<<"},\"sources\":[{\"name\":\"Bank of Canada Valet API\",\"url\":\"https://www.bankofcanada.ca/valet/docs\",\"fields\":\"Policy rate, USD/CAD, oil\"},{\"name\":\"Statistics Canada\",\"url\":\"https://www.statcan.gc.ca/en/subjects-start/economic_accounts\",\"fields\":\"National accounts and labour baseline\"},{\"name\":\"Department of Finance Canada\",\"url\":\"https://www.canada.ca/en/department-finance.html\",\"fields\":\"Fiscal and trade assumptions\"}]}";return o.str();
 }
+struct NegotiationState {
+  unsigned long revision=0;
+  double us_tariff=50,retaliatory_tariff=5,canada_priority=50,us_priority=50;
+  std::array<double,20> canada_sectors{},us_sectors{};
+  std::string updated_by="opening baseline";
+  NegotiationState(){canada_sectors.fill(100);us_sectors.fill(100);}
+  std::string json() const {
+    std::ostringstream o;o<<"{\"revision\":"<<revision<<",\"updatedBy\":\""<<updated_by<<"\",\"usTariff\":"<<us_tariff
+      <<",\"retaliatoryTariff\":"<<retaliatory_tariff<<",\"canadaPriority\":"<<canada_priority<<",\"usPriority\":"<<us_priority;
+    auto add=[&](const char*key,const auto& values){o<<",\""<<key<<"\":[";for(size_t i=0;i<values.size();++i){if(i)o<<',';o<<values[i];}o<<']';};
+    add("canadaSectors",canada_sectors);add("usSectors",us_sectors);o<<'}';return o.str();
+  }
+  void update(const std::string& body){
+    const bool canada=body.find("\"actor\":\"canada\"")!=std::string::npos;
+    const bool us=body.find("\"actor\":\"us\"")!=std::string::npos;
+    if(!canada&&!us)return;
+    if(canada){retaliatory_tariff=number(body,"retaliatoryTariff",retaliatory_tariff);canada_priority=number(body,"canadaPriority",canada_priority);us_priority=100-canada_priority;updated_by="Minister LeBlanc";}
+    if(us){us_tariff=number(body,"usTariff",us_tariff);us_priority=number(body,"usPriority",us_priority);canada_priority=100-us_priority;updated_by="Mr. Greer";}
+    auto& sectors=canada?canada_sectors:us_sectors;const std::string prefix=canada?"canadaSector":"usSector";
+    for(size_t i=0;i<sectors.size();++i)sectors[i]=number(body,prefix+std::to_string(i),sectors[i]);
+    ++revision;
+  }
+};
 }
 
 int main(int argc,char**argv){
@@ -69,10 +93,13 @@ int main(int argc,char**argv){
   if(bind(server,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))<0||listen(server,16)<0){std::cerr<<"Unable to listen on port "<<port<<"\n";return 1;}
   std::cout<<"Canada Policy Studio → http://localhost:"<<port<<"\n";
   cad::PolicyEngine engine;
+  NegotiationState negotiation;
   while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;
     while((n=recv(client,buf,sizeof(buf),0))>0){req.append(buf,n);auto h=req.find("\r\n\r\n");if(h!=std::string::npos){size_t len=0,p=req.find("Content-Length:");if(p!=std::string::npos)len=std::stoul(req.substr(p+15));if(req.size()>=h+4+len)break;}}
     auto first=req.substr(0,req.find("\r\n"));auto split=req.find("\r\n\r\n");std::string body=split==std::string::npos?"":req.substr(split+4);
     if(first.rfind("POST /api/evaluate ",0)==0)respond(client,200,"application/json",cad::to_json(engine.evaluate(parse(body))));
+    else if(first.rfind("POST /api/negotiation ",0)==0){negotiation.update(body);respond(client,200,"application/json",negotiation.json());}
+    else if(first.rfind("GET /api/negotiation ",0)==0)respond(client,200,"application/json",negotiation.json());
     else if(first.rfind("GET /api/baseline ",0)==0)respond(client,200,"application/json",live_baseline());
     else if(first.rfind("GET / ",0)==0)respond(client,200,"text/html; charset=utf-8",read_file("web/index.html"));
     else if(first.rfind("GET /app.css ",0)==0)respond(client,200,"text/css",read_file("web/app.css"));
