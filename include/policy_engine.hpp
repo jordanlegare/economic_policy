@@ -28,6 +28,11 @@ struct Economy {
   // User decision preferences. These change ranking, not the economic baseline.
   double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
+  // Sector-specific negotiating positions, expressed as a percentage of the
+  // headline tariff applied to each two-digit NAICS sector (0 = exempt).
+  std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
+
+  Economy() { us_sector_coverage.fill(100.0); canada_sector_coverage.fill(100.0); }
 };
 
 // The complete two-digit NAICS economy, grouped into its 20 standard sectors.
