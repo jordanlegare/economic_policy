@@ -7,6 +7,8 @@ int main(){
   assert(defaults.us_priority==50.0);assert(defaults.risk_aversion==50.0);assert(defaults.cooperation_ceiling==50.0);
   cad::PolicyEngine engine(42);auto baseline=engine.evaluate(defaults);
   assert(baseline.scenarios.size()==13);assert(baseline.candidates_examined==144);assert(baseline.scenarios.front().score>=baseline.scenarios.back().score);
+  assert(!baseline.recommendation.strategy_id.empty());assert(baseline.recommendation.canada_priority>=10&&baseline.recommendation.canada_priority<=100);
+  assert(baseline.recommendation.us_priority>=10&&baseline.recommendation.us_priority<=100);assert(baseline.recommendation.cooperation_ceiling>=0&&baseline.recommendation.cooperation_ceiling<=100);
   for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
   cad::Economy shock;shock.us_tariff_canada=60;shock.canada_retaliatory_tariff=25;auto stressed=engine.evaluate(shock);
   auto find=[](const cad::Result&r,const char*id)->const cad::Scenario&{for(const auto&s:r.scenarios)if(s.id==id)return s;assert(false);return r.scenarios[0];};
@@ -21,6 +23,6 @@ int main(){
   cad::Economy us_first=shock;us_first.canada_priority=10;us_first.us_priority=100;
   auto ca_result=engine.evaluate(canada_first),us_result=engine.evaluate(us_first);
   assert(ca_result.scenarios.front().name!=us_result.scenarios.front().name||ca_result.scenarios.front().score!=us_result.scenarios.front().score);
-  auto json=cad::to_json(stressed);assert(json.find("\"usScore\"")!=std::string::npos);assert(json.find("\"costOfLiving\"")!=std::string::npos);assert(json.find("\"candidatesExamined\":144")!=std::string::npos);assert(json.find("\"sectors\":[")!=std::string::npos);assert(json.find("Manufacturing")!=std::string::npos);
+  auto json=cad::to_json(stressed);assert(json.find("\"usScore\"")!=std::string::npos);assert(json.find("\"costOfLiving\"")!=std::string::npos);assert(json.find("\"candidatesExamined\":144")!=std::string::npos);assert(json.find("\"recommendation\":{")!=std::string::npos);assert(json.find("\"sectors\":[")!=std::string::npos);assert(json.find("Manufacturing")!=std::string::npos);
   std::cout<<"policy engine tests passed\n";
 }

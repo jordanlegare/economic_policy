@@ -48,6 +48,7 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
                   double targeted_relief, double diversification, std::uint64_t seed) {
   Scenario s; s.id=std::move(id); s.name=std::move(name); s.description=std::move(description);
   s.first_move_bp = move; s.fiscal_impulse = fiscal; s.productive_share = productive;
+  s.negotiated_relief = 100.0 * deescalation;
   constexpr int draws = 700;
   std::mt19937_64 rng(seed);
   std::normal_distribution<double> shock(0.0, 1.0);
@@ -160,6 +161,34 @@ Result PolicyEngine::evaluate(const Economy& e) const {
     <<", "<<std::setprecision(2)<<custom.fiscal_impulse<<"% fiscal impulse, and negotiated tariff relief within your cooperation limit.";
   custom.description=custom_description.str();
   r.scenarios.push_back(std::move(custom));
+  // Establish a preference-neutral starting point from the strategy that has
+  // the strongest compound outcome for all three parties. This is deliberately
+  // independent of the incoming sliders: those sliders must not predetermine
+  // the engine's recommendation for their own values.
+  const auto fair_value=[](const Scenario& s){
+    const double canada=std::sqrt(std::max(.01,s.boc_score)*std::max(.01,s.federal_score));
+    const double compound=std::cbrt(canada*canada*std::max(.01,s.us_score));
+    return compound-.08*s.recession_risk-.30*std::max(0.0,s.inflation_stress_p90-3.0)
+        -.06*std::max(0.0,s.debt_stress_p90-s.debt_gdp);
+  };
+  const auto fair=std::max_element(r.scenarios.begin(),r.scenarios.end(),[&](const auto&a,const auto&b){return fair_value(a)<fair_value(b);});
+  const double ca_welfare=std::sqrt(std::max(.01,fair->boc_score)*std::max(.01,fair->federal_score));
+  const double us_welfare=std::max(.01,fair->us_score);
+  // Give the currently weaker nation more negotiating weight while retaining
+  // a meaningful floor for both sides.
+  r.recommendation.canada_priority=std::round(clamp(55.0+.45*(us_welfare-ca_welfare),25.0,85.0));
+  r.recommendation.us_priority=std::round(clamp(55.0+.45*(ca_welfare-us_welfare),25.0,85.0));
+  r.recommendation.risk_aversion=std::round(clamp(35.0+.45*fair->recession_risk
+      +8.0*std::max(0.0,fair->inflation_stress_p90-3.0),25.0,90.0));
+  r.recommendation.cooperation_ceiling=std::round(clamp(std::max(fair->negotiated_relief,
+      e.us_tariff_canada>0.0?55.0:0.0),0.0,100.0));
+  r.recommendation.strategy_id=fair->id;
+  std::ostringstream recommendation;
+  recommendation<<"After comparing every expert strategy and all "<<candidate
+    <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
+    <<"% U.S. tariff, "<<fair->name<<" has the strongest risk-adjusted compound outcome. "
+    <<"The weights compensate the currently weaker side; the relief and caution settings reflect its bilateral and tail-risk effects.";
+  r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
   r.signal = best.first_move_bp>0 ? "Raise 25 bp" : best.first_move_bp<0 ? "Cut 25 bp" : "Hold & coordinate";
@@ -170,7 +199,10 @@ Result PolicyEngine::evaluate(const Economy& e) const {
 std::string to_json(const Result& r){
   std::ostringstream o;o<<std::fixed<<std::setprecision(3);
   o<<"{\"regime\":\""<<esc(r.regime)<<"\",\"signal\":\""<<esc(r.signal)<<"\",\"rationale\":\""<<esc(r.rationale)
-   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined<<",\"scenarios\":[";
+   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined
+   <<",\"recommendation\":{\"canadaPriority\":"<<r.recommendation.canada_priority<<",\"usPriority\":"<<r.recommendation.us_priority
+   <<",\"riskAversion\":"<<r.recommendation.risk_aversion<<",\"cooperationCeiling\":"<<r.recommendation.cooperation_ceiling
+   <<",\"strategyId\":\""<<esc(r.recommendation.strategy_id)<<"\",\"explanation\":\""<<esc(r.recommendation.explanation)<<"\"},\"scenarios\":[";
   for(size_t i=0;i<r.scenarios.size();++i){if(i)o<<',';const auto&s=r.scenarios[i];
     o<<"{\"id\":\""<<s.id<<"\",\"name\":\""<<esc(s.name)<<"\",\"description\":\""<<esc(s.description)
      <<"\",\"move\":"<<s.first_move_bp<<",\"fiscal\":"<<s.fiscal_impulse<<",\"score\":"<<s.score<<",\"bocScore\":"<<s.boc_score

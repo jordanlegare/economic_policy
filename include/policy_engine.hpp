@@ -47,6 +47,7 @@ struct SectorImpact {
 struct Scenario {
   std::string id, name, description;
   double first_move_bp = 0.0, fiscal_impulse = 0.0, productive_share = 0.5;
+  double negotiated_relief = 0.0;
   double score = 0.0, boc_score = 0.0, federal_score = 0.0, us_score = 0.0;
   double inflation = 0.0, growth = 0.0, unemployment = 0.0;
   double debt_gdp = 0.0, housing_gap = 0.0, recession_risk = 0.0;
@@ -56,10 +57,17 @@ struct Scenario {
   std::vector<SectorImpact> sectors;
 };
 
+struct WinWinRecommendation {
+  double canada_priority = 50.0, us_priority = 50.0;
+  double risk_aversion = 50.0, cooperation_ceiling = 50.0;
+  std::string strategy_id, explanation;
+};
+
 struct Result {
   std::string regime, signal, rationale;
   double data_confidence = 0.0, neutral_rate = 0.0, policy_gap = 0.0;
   int candidates_examined = 0;
+  WinWinRecommendation recommendation;
   std::vector<Scenario> scenarios;
 };
 
