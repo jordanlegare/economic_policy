@@ -11,7 +11,8 @@ int main(){
   assert(baseline.recommendation.us_priority>0&&baseline.recommendation.us_priority<100);assert(baseline.allocations_examined==101);assert(baseline.recommendation.cooperation_ceiling>=0&&baseline.recommendation.cooperation_ceiling<=100);
   assert(baseline.recommendation.canada_priority+baseline.recommendation.us_priority==100.0);
   bool varied=false;for(size_t i=0;i<baseline.recommendation.us_sector_coverage.size();++i){const double c=baseline.recommendation.us_sector_coverage[i];assert(c>=0&&c<=100);assert(baseline.recommendation.canada_sector_coverage[i]>=0&&baseline.recommendation.canada_sector_coverage[i]<=100);if(c<100)varied=true;}assert(varied);
-  for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
+  for(const auto&s:baseline.scenarios){assert(s.inflation>0);assert(s.rates.size()==12);assert(s.us_growth_path.size()==12);assert(s.recession_risk>=0&&s.recession_risk<=100);assert(s.us_score>0);assert(s.debt_stress_p90>=s.debt_gdp);assert(s.sectors.size()==20);}
+  assert(baseline.scenarios.front().sustained_bilateral_growth);assert(baseline.scenarios.front().bilateral_growth_floor>0);
   cad::Economy shock;shock.us_tariff_canada=60;shock.canada_retaliatory_tariff=25;auto stressed=engine.evaluate(shock);
   assert(stressed.recommendation.canada_priority+stressed.recommendation.us_priority==100.0);
   auto find=[](const cad::Result&r,const char*id)->const cad::Scenario&{for(const auto&s:r.scenarios)if(s.id==id)return s;assert(false);return r.scenarios[0];};
@@ -29,5 +30,6 @@ int main(){
   auto json=cad::to_json(stressed);assert(json.find("\"usScore\"")!=std::string::npos);assert(json.find("\"costOfLiving\"")!=std::string::npos);assert(json.find("\"candidatesExamined\":144")!=std::string::npos);assert(json.find("\"allocationsExamined\":101")!=std::string::npos);assert(json.find("\"recommendation\":{")!=std::string::npos);assert(json.find("\"sectors\":[")!=std::string::npos);assert(json.find("Manufacturing")!=std::string::npos);
   assert(json.find("\"usSectorCoverage\":[")!=std::string::npos);assert(json.find("\"usSectorOutput\":[")!=std::string::npos);
   assert(json.find("\"canadaSectorCoverage\":[")!=std::string::npos);assert(json.find("\"canadaSectorValue\":[")!=std::string::npos);
+  assert(json.find("\"usGrowthPath\":[")!=std::string::npos);assert(json.find("\"sustainedBilateralGrowth\":true")!=std::string::npos);
   std::cout<<"policy engine tests passed\n";
 }
