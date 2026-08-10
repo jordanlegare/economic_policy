@@ -18,14 +18,16 @@ struct Economy {
   double global_growth = 2.8, inflation_expectations = 2.2;
   // Bilateral trade assumptions. Tariffs are effective, trade-weighted rates.
   double us_growth = 2.0, us_inflation = 2.7;
-  double us_tariff_canada = 10.0, canada_retaliatory_tariff = 5.0;
+  // The opening briefing is deliberately a 50% stress baseline. The browser
+  // and direct engine users therefore begin from the same tariff assumption.
+  double us_tariff_canada = 50.0, canada_retaliatory_tariff = 5.0;
   double exports_to_us_share = 75.0, imports_from_us_share = 49.0;
   double exports_gdp = 25.0, import_content_consumption = 22.0;
   double trade_elasticity = 0.65, border_friction = 2.0;
   double tariff_relief = 0.0, trade_diversification = 0.0;
   // User decision preferences. These change ranking, not the economic baseline.
   double canada_priority = 50.0, us_priority = 50.0;
-  double risk_aversion = 50.0, cooperation_ceiling = 85.0;
+  double risk_aversion = 50.0, cooperation_ceiling = 50.0;
 };
 
 // The complete two-digit NAICS economy, grouped into its 20 standard sectors.
