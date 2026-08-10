@@ -121,6 +121,17 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   return s;
 }
 
+double opening_allocation_score(const Scenario& s, const Economy& e, double canada_priority) {
+  const double canada=std::sqrt(std::max(.01,s.boc_score)*std::max(.01,s.federal_score));
+  const double canada_points=canada*canada_priority/100.0;
+  const double us_points=s.us_score*(100.0-canada_priority)/100.0;
+  const double safety=clamp(e.risk_aversion/100.0,0.0,1.0);
+  const double tail_penalty=safety*(.10*s.recession_risk+.35*std::max(0.0,s.inflation_stress_p90-3.0)+.08*std::max(0.0,s.debt_stress_p90-e.federal_debt_gdp-5.0));
+  // Maximize the weaker party's allocated points first; the small aggregate
+  // term breaks near-ties in favour of a larger combined bilateral result.
+  return std::min(canada_points,us_points)+.01*(canada_points+us_points)-.05*tail_penalty;
+}
+
 std::string esc(const std::string& x){std::string o;for(char c:x){if(c=='"'||c=='\\')o+='\\';o+=c;}return o;}
 template<size_t N> void array_json(std::ostringstream& o,const std::array<double,N>& a){o<<'[';for(size_t i=0;i<N;++i){if(i)o<<',';o<<a[i];}o<<']';}
 }
@@ -165,25 +176,14 @@ Result PolicyEngine::evaluate(const Economy& e) const {
     <<", "<<std::setprecision(2)<<custom.fiscal_impulse<<"% fiscal impulse, and negotiated tariff relief within your cooperation limit.";
   custom.description=custom_description.str();
   r.scenarios.push_back(std::move(custom));
-  // Establish the opening offer from Mr. Greer's side: maximize the U.S.
-  // trade/price score, then reward Canadian viability so the proposal remains
-  // negotiable rather than manufacturing an advantage by ignoring Canada.
-  const auto opening_value=[](const Scenario& s){
-    const double canada=std::sqrt(std::max(.01,s.boc_score)*std::max(.01,s.federal_score));
-    const double us=std::max(.01,s.us_score);
-    const double compound=std::exp(.70*std::log(us)+.30*std::log(canada));
-    const double canada_floor=1.35*std::max(0.0,35.0-canada);
-    return compound-canada_floor-.08*s.recession_risk-.30*std::max(0.0,s.inflation_stress_p90-3.0)
-        -.06*std::max(0.0,s.debt_stress_p90-s.debt_gdp);
-  };
-  const auto fair=std::max_element(r.scenarios.begin(),r.scenarios.end(),[&](const auto&a,const auto&b){return opening_value(a)<opening_value(b);});
-  const double ca_welfare=std::sqrt(std::max(.01,fair->boc_score)*std::max(.01,fair->federal_score));
-  const double us_welfare=std::max(.01,fair->us_score);
-  // Keep the initial search U.S.-advantage seeking (60--80% U.S.) while the
-  // Canadian share adjusts upward when its modeled welfare is comparatively
-  // weak. This remains one bounded 100% allocation.
-  r.recommendation.us_priority=std::round(clamp(70.0+.20*(ca_welfare-us_welfare),60.0,80.0));
-  r.recommendation.canada_priority=100.0-r.recommendation.us_priority;
+  // Test every whole-percentage allocation against every displayed strategy
+  // instead of imposing a 30/70 opening mandate. The score's fairness floor
+  // prevents one party's high result from hiding a weak counterparty.
+  size_t fair_index=0; double opening_best=-1e100;
+  for(int canada=0;canada<=100;++canada){++r.allocations_examined;
+    for(size_t i=0;i<r.scenarios.size();++i){const double value=opening_allocation_score(r.scenarios[i],e,canada);
+      if(value>opening_best+1e-12){opening_best=value;fair_index=i;r.recommendation.canada_priority=canada;r.recommendation.us_priority=100-canada;}}}
+  const auto fair=r.scenarios.begin()+fair_index;
   r.recommendation.risk_aversion=std::round(clamp(35.0+.45*fair->recession_risk
       +8.0*std::max(0.0,fair->inflation_stress_p90-3.0),25.0,90.0));
   r.recommendation.cooperation_ceiling=std::round(clamp(std::max(fair->negotiated_relief,
@@ -212,8 +212,8 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   std::ostringstream recommendation;
   recommendation<<"After comparing every expert strategy and all "<<candidate
     <<" generated mixes at the imposed "<<std::setprecision(3)<<e.us_tariff_canada
-    <<"% U.S. tariff, "<<fair->name<<" is the strongest U.S.-advantage opening offer that clears the Canadian viability floor. "
-    <<"Mr. Greer's 60--80% outcome mandate drives the search. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically, maximizing modeled U.S. advantage while charging counterparty harm to preserve a bilateral win-win.";
+    <<"% U.S. tariff, "<<fair->name<<" produces the highest fairness-protected bilateral score. "
+    <<"The opening search tested all "<<r.allocations_examined<<" whole-percentage Canada–U.S. allocations rather than imposing a 30/70 mandate. Both delegations' sectors are searched from 100% coverage downward in one-point steps and synchronized automatically.";
   r.recommendation.explanation=recommendation.str();
   std::sort(r.scenarios.begin(),r.scenarios.end(),[](const auto&a,const auto&b){return a.score>b.score;});
   const auto& best=r.scenarios.front();
@@ -225,7 +225,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
 std::string to_json(const Result& r){
   std::ostringstream o;o<<std::fixed<<std::setprecision(3);
   o<<"{\"regime\":\""<<esc(r.regime)<<"\",\"signal\":\""<<esc(r.signal)<<"\",\"rationale\":\""<<esc(r.rationale)
-   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined
+   <<"\",\"confidence\":"<<r.data_confidence<<",\"neutralRate\":"<<r.neutral_rate<<",\"policyGap\":"<<r.policy_gap<<",\"candidatesExamined\":"<<r.candidates_examined<<",\"allocationsExamined\":"<<r.allocations_examined
    <<",\"recommendation\":{\"canadaPriority\":"<<r.recommendation.canada_priority<<",\"usPriority\":"<<r.recommendation.us_priority
    <<",\"riskAversion\":"<<r.recommendation.risk_aversion<<",\"cooperationCeiling\":"<<r.recommendation.cooperation_ceiling
    <<",\"strategyId\":\""<<esc(r.recommendation.strategy_id)<<"\",\"usSectorCoverage\":";

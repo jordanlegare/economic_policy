@@ -26,9 +26,9 @@ struct Economy {
   double trade_elasticity = 0.65, border_friction = 2.0;
   double tariff_relief = 0.0, trade_diversification = 0.0;
   // User decision preferences. These change ranking, not the economic baseline.
-  // Opening mandate: search from the U.S. offer first while preserving a
-  // meaningful Canadian viability floor. The linked shares always total 100.
-  double canada_priority = 30.0, us_priority = 70.0;
+  // Neutral bootstrap values are replaced by the opening allocation search.
+  // The linked shares always total 100.
+  double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   // Sector-specific negotiating positions, expressed as a percentage of the
   // headline tariff applied to each two-digit NAICS sector (0 = exempt).
@@ -60,7 +60,7 @@ struct Scenario {
 };
 
 struct WinWinRecommendation {
-  double canada_priority = 30.0, us_priority = 70.0;
+  double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   std::string strategy_id, explanation;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
@@ -70,7 +70,7 @@ struct WinWinRecommendation {
 struct Result {
   std::string regime, signal, rationale;
   double data_confidence = 0.0, neutral_rate = 0.0, policy_gap = 0.0;
-  int candidates_examined = 0;
+  int candidates_examined = 0, allocations_examined = 0;
   WinWinRecommendation recommendation;
   std::vector<Scenario> scenarios;
 };
