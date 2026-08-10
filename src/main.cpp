@@ -24,6 +24,9 @@ cad::Economy parse(const std::string& b){cad::Economy e;
   FIELD("housingGap",housing_gap);FIELD("householdDebt",household_debt_income);FIELD("fiscalBalance",fiscal_balance_gdp);
   FIELD("federalDebt",federal_debt_gdp);FIELD("programGrowth",program_growth);FIELD("taxImpulse",tax_impulse);
   FIELD("infrastructure",infrastructure_impulse);FIELD("globalGrowth",global_growth);FIELD("expectations",inflation_expectations);
+  FIELD("usGrowth",us_growth);FIELD("usInflation",us_inflation);FIELD("usTariff",us_tariff_canada);FIELD("retaliatoryTariff",canada_retaliatory_tariff);
+  FIELD("exportsUs",exports_to_us_share);FIELD("importsUs",imports_from_us_share);FIELD("exportsGdp",exports_gdp);FIELD("importContent",import_content_consumption);
+  FIELD("tradeElasticity",trade_elasticity);FIELD("borderFriction",border_friction);FIELD("tariffRelief",tariff_relief);FIELD("diversification",trade_diversification);
 #undef FIELD
   return e;
 }
