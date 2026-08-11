@@ -85,3 +85,200 @@
   function start(){inject();const cards=document.querySelector('#cards');if(cards)new MutationObserver(render).observe(cards,{childList:true});const brief=document.querySelector('#briefingSheet');if(brief)new MutationObserver(enhanceBriefing).observe(brief,{childList:true});render();}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 })();
+
+(() => {
+  'use strict';
+
+  const PAGE={width:612,height:792,left:54,right:54,top:738,bottom:58};
+  const contentWidth=PAGE.width-PAGE.left-PAGE.right;
+  const cp1252=new Map([[0x20ac,0x80],[0x201a,0x82],[0x0192,0x83],[0x201e,0x84],[0x2026,0x85],[0x2020,0x86],[0x2021,0x87],[0x02c6,0x88],[0x2030,0x89],[0x0160,0x8a],[0x2039,0x8b],[0x0152,0x8c],[0x017d,0x8e],[0x2018,0x91],[0x2019,0x92],[0x201c,0x93],[0x201d,0x94],[0x2022,0x95],[0x2013,0x96],[0x2014,0x97],[0x02dc,0x98],[0x2122,0x99],[0x0161,0x9a],[0x203a,0x9b],[0x0153,0x9c],[0x017e,0x9e],[0x0178,0x9f]]);
+
+  function cleanText(value){
+    return String(value??'')
+      .replace(/\u00a0/g,' ')
+      .replace(/↔/g,'<->').replace(/≠/g,'!=').replace(/≤/g,'<=').replace(/≥/g,'>=')
+      .replace(/✓/g,'PASS').replace(/⚠/g,'WARNING').replace(/→/g,'->')
+      .replace(/[\t\r]+/g,' ').replace(/ +/g,' ').trim();
+  }
+
+  function binaryText(value){
+    const text=cleanText(value);let out='';
+    for(const ch of text){
+      const code=ch.codePointAt(0);
+      if(code<=0x7f||(code>=0xa0&&code<=0xff))out+=String.fromCharCode(code);
+      else if(cp1252.has(code))out+=String.fromCharCode(cp1252.get(code));
+      else out+='?';
+    }
+    return out;
+  }
+
+  function pdfLiteral(value){
+    return `(${binaryText(value).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')})`;
+  }
+
+  function textWidth(text,size,bold=false){
+    let units=0;
+    for(const ch of cleanText(text)){
+      if(/[ ilI1.,:;!'|`]/.test(ch))units+=0.28;
+      else if(/[MW@%&QG]/.test(ch))units+=0.78;
+      else if(/[A-Z0-9]/.test(ch))units+=0.57;
+      else units+=0.50;
+    }
+    return units*size*(bold?1.035:1);
+  }
+
+  function wrapText(text,size,width,bold=false){
+    const paragraphs=String(text??'').split(/\n+/);const lines=[];
+    for(const paragraph of paragraphs){
+      const words=cleanText(paragraph).split(/\s+/).filter(Boolean);
+      if(!words.length){lines.push('');continue;}
+      let line='';
+      for(const word of words){
+        const candidate=line?`${line} ${word}`:word;
+        if(!line||textWidth(candidate,size,bold)<=width){line=candidate;continue;}
+        lines.push(line);line=word;
+        while(textWidth(line,size,bold)>width&&line.length>1){
+          let cut=line.length-1;
+          while(cut>1&&textWidth(line.slice(0,cut)+'-',size,bold)>width)cut--;
+          lines.push(line.slice(0,cut)+'-');line=line.slice(cut);
+        }
+      }
+      if(line)lines.push(line);
+    }
+    return lines;
+  }
+
+  function collectBlocks(root){
+    const blocks=[];
+    const specialClass=node=>node.classList?.contains('briefing-kicker')?'kicker':node.classList?.contains('briefing-meta')?'meta':node.classList?.contains('briefing-decision')?'callout':node.classList?.contains('briefing-warning')?'warning':node.classList?.contains('briefing-disclaimer')?'disclaimer':null;
+    function walk(node){
+      if(!node||node.nodeType!==1)return;
+      const tag=node.tagName;
+      if(tag==='H1'){blocks.push({type:'h1',text:node.innerText});return;}
+      if(tag==='H2'){blocks.push({type:'h2',text:node.innerText});return;}
+      if(tag==='H3'){blocks.push({type:'h3',text:node.innerText});return;}
+      if(tag==='P'){blocks.push({type:'p',text:node.innerText});return;}
+      if(tag==='LI'){
+        const parent=node.parentElement?.tagName;
+        const prefix=parent==='OL'?`${Array.from(node.parentElement.children).indexOf(node)+1}. `:'- ';
+        blocks.push({type:'bullet',text:prefix+node.innerText});return;
+      }
+      const special=specialClass(node);
+      if(special){blocks.push({type:special,text:node.innerText});return;}
+      Array.from(node.children).forEach(walk);
+    }
+    Array.from(root.children).forEach(walk);
+    return blocks.filter(block=>cleanText(block.text));
+  }
+
+  function blockStyle(type){
+    const styles={
+      kicker:{font:'F2',size:8.5,leading:11,before:0,after:5,indent:0},
+      meta:{font:'F1',size:8.3,leading:11,before:0,after:10,indent:0},
+      h1:{font:'F2',size:19,leading:23,before:2,after:10,indent:0},
+      h2:{font:'F2',size:13.2,leading:16,before:11,after:5,indent:0},
+      h3:{font:'F2',size:10.8,leading:14,before:8,after:3,indent:0},
+      p:{font:'F1',size:10.1,leading:13.5,before:1,after:6,indent:0},
+      bullet:{font:'F1',size:9.8,leading:13,before:0,after:2.5,indent:12},
+      callout:{font:'F2',size:10.2,leading:14,before:3,after:8,indent:10},
+      warning:{font:'F2',size:9.2,leading:12.5,before:8,after:6,indent:10},
+      disclaimer:{font:'F1',size:8.3,leading:11,before:8,after:4,indent:0}
+    };
+    return styles[type]||styles.p;
+  }
+
+  function layoutBlocks(blocks){
+    const pages=[[]];let page=pages[0],y=PAGE.top;
+    const newPage=()=>{page=[];pages.push(page);y=PAGE.top;};
+    const ensure=space=>{if(y-space<PAGE.bottom)newPage();};
+    for(const block of blocks){
+      const style=blockStyle(block.type);const bold=style.font==='F2';
+      const width=contentWidth-style.indent;const lines=wrapText(block.text,style.size,width,bold);
+      const reserve=style.before+style.leading*Math.min(lines.length,block.type.startsWith('h')?Math.max(2,lines.length):1)+style.after;
+      ensure(reserve);
+      y-=style.before;
+      for(const line of lines){
+        ensure(style.leading);
+        if(line)page.push({text:line,x:PAGE.left+style.indent,y,font:style.font,size:style.size});
+        y-=style.leading;
+      }
+      y-=style.after;
+    }
+    return pages;
+  }
+
+  function pageStream(lines,pageNumber,totalPages){
+    const commands=['0.82 G 54 754 m 558 754 l S'];
+    commands.push(`BT /F2 8 Tf 0.28 g 1 0 0 1 54 763 Tm ${pdfLiteral('CANADA-U.S. TRADE DIPLOMACY · WORKING BRIEF')} Tj ET`);
+    for(const line of lines)commands.push(`BT /${line.font} ${line.size.toFixed(2)} Tf 0 g 1 0 0 1 ${line.x.toFixed(2)} ${line.y.toFixed(2)} Tm ${pdfLiteral(line.text)} Tj ET`);
+    commands.push('0.82 G 54 42 m 558 42 l S');
+    commands.push(`BT /F1 7.8 Tf 0.38 g 1 0 0 1 54 28 Tm ${pdfLiteral('Illustrative analytical support · not an official negotiating mandate or legal position')} Tj ET`);
+    commands.push(`BT /F1 7.8 Tf 0.38 g 1 0 0 1 510 28 Tm ${pdfLiteral(`Page ${pageNumber} of ${totalPages}`)} Tj ET`);
+    return commands.join('\n');
+  }
+
+  function buildPdf(blocks,title='Canada-United States Negotiation Brief'){
+    const pages=layoutBlocks(blocks);const objects=[];
+    const pageStart=6,contentStart=pageStart+pages.length;
+    objects[1]='<< /Type /Catalog /Pages 2 0 R >>';
+    objects[2]=`<< /Type /Pages /Count ${pages.length} /Kids [${pages.map((_,i)=>`${pageStart+i} 0 R`).join(' ')}] >>`;
+    objects[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
+    objects[4]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+    const stamp=new Date().toISOString().replace(/[-:T]/g,'').slice(0,14)+'Z';
+    objects[5]=`<< /Title ${pdfLiteral(title)} /Producer ${pdfLiteral('Canada-U.S. Diplomatic Policy Studio')} /CreationDate ${pdfLiteral('D:'+stamp)} >>`;
+    pages.forEach((lines,i)=>{
+      const pageId=pageStart+i,streamId=contentStart+i,stream=pageStream(lines,i+1,pages.length);
+      objects[pageId]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE.width} ${PAGE.height}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${streamId} 0 R >>`;
+      objects[streamId]=`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+    });
+    let pdf='%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';const offsets=[0];
+    for(let i=1;i<objects.length;i++){offsets[i]=pdf.length;pdf+=`${i} 0 obj\n${objects[i]}\nendobj\n`;}
+    const xref=pdf.length;pdf+=`xref\n0 ${objects.length}\n0000000000 65535 f \n`;
+    for(let i=1;i<objects.length;i++)pdf+=`${String(offsets[i]).padStart(10,'0')} 00000 n \n`;
+    pdf+=`trailer\n<< /Size ${objects.length} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const bytes=new Uint8Array(pdf.length);for(let i=0;i<pdf.length;i++)bytes[i]=pdf.charCodeAt(i)&0xff;return bytes;
+  }
+
+  function filename(){
+    const d=new Date(),pad=v=>String(v).padStart(2,'0');
+    return `Canada-US-Negotiation-Brief_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.pdf`;
+  }
+
+  function flashSaved(){
+    const buttons=[document.querySelector('#printBriefing'),document.querySelector('#saveBriefingPdfDialog')].filter(Boolean);
+    buttons.forEach(button=>{const old=button.textContent;button.textContent='PDF saved';setTimeout(()=>button.textContent=old,1400);});
+  }
+
+  async function saveBlob(blob,name){
+    if(typeof window.showSaveFilePicker==='function'){
+      try{
+        const handle=await window.showSaveFilePicker({suggestedName:name,types:[{description:'PDF document',accept:{'application/pdf':['.pdf']}}]});
+        const writable=await handle.createWritable();await writable.write(blob);await writable.close();return true;
+      }catch(error){if(error?.name==='AbortError')return false;}
+    }
+    const url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download=name;anchor.style.display='none';document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);return true;
+  }
+
+  async function saveBriefingPdf(){
+    const sheet=document.querySelector('#briefingSheet');
+    if(!sheet||!cleanText(sheet.innerText)){
+      document.querySelector('#openBriefing')?.click();setTimeout(saveBriefingPdf,100);return;
+    }
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const blocks=collectBlocks(sheet);if(!blocks.length)return;
+    const bytes=buildPdf(blocks);const saved=await saveBlob(new Blob([bytes],{type:'application/pdf'}),filename());if(saved)flashSaved();
+  }
+
+  function relabel(){
+    const top=document.querySelector('#printBriefing');if(top)top.textContent='Save briefing PDF';
+    const dialog=document.querySelector('#diplomaticBriefing');
+    if(dialog){
+      const printButton=Array.from(dialog.querySelectorAll('.briefing-toolbar button')).find(button=>button.getAttribute('onclick')?.includes('window.print')||button.textContent.trim()==='Print');
+      if(printButton){printButton.id='saveBriefingPdfDialog';printButton.textContent='Save PDF';}
+    }
+  }
+
+  window.BriefingPdf={buildPdf,collectBlocks,save:saveBriefingPdf};
+  window.print=saveBriefingPdf;
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',relabel);else relabel();
+})();
