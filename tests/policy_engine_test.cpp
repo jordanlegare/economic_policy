@@ -91,6 +91,20 @@ int main() {
   assert(std::abs(mandate_result.recommendation.us_priority - 20.0) < 1e-9);
   assert(mandate_result.allocations_examined == 1);
 
+  // The cooperation ceiling constrains total tariff relief. With a zero
+  // ceiling, neither aggregate rate relief nor sector coverage may move.
+  cad::Economy closed = defaults;
+  closed.cooperation_ceiling = 0.0;
+  const auto closed_result = engine.evaluate(closed);
+  for (const auto& scenario : closed_result.scenarios)
+    assert(std::abs(scenario.negotiated_relief) < 1e-9);
+  for (std::size_t i = 0; i < closed.us_sector_coverage.size(); ++i) {
+    assert(std::abs(closed_result.recommendation.us_sector_coverage[i]
+        - closed.us_sector_coverage[i]) < 1e-9);
+    assert(std::abs(closed_result.recommendation.canada_sector_coverage[i]
+        - closed.canada_sector_coverage[i]) < 1e-9);
+  }
+
   // Separate directional tariff coverage must still affect the real sector
   // channels under stress, not just labels in the recommendation UI.
   cad::Economy stress = defaults;
