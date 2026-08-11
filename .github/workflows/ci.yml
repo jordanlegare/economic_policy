@@ -13,12 +13,15 @@ jobs:
       - name: Check browser JavaScript syntax
         run: |
           node --check web/app.js
+          node --check web/evaluation-controller.js
           node --check web/diplomat.js
           node --check web/negotiation-model.js
           node --check web/trade-diplomacy.js
           node --check web/calibration.js
           node --check web/robust-room.js
           node --check web/principal-briefing.js
+      - name: Verify finite evaluation controller
+        run: node tests/evaluation_controller_test.js
       - name: Check calibration tooling
         run: |
           python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py
@@ -78,6 +81,8 @@ jobs:
           grep -q 'robust-room.js' src/main.cpp
           grep -q 'principal-briefing.css' src/main.cpp
           grep -q 'principal-briefing.js' src/main.cpp
+          grep -q 'evaluation-controller.js' src/main.cpp
+          grep -q 'comparisonOnly' src/main.cpp
           grep -q 'Diplomatic decision desk' web/diplomat.js
           grep -q 'Computational negotiation support' web/negotiation-model.js
           grep -q 'Canada–U.S. trade diplomacy operations' web/trade-diplomacy.js
