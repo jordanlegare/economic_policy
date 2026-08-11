@@ -53,6 +53,8 @@ assert(model.uncertainties.some(x=>x.includes('Missing/uncertified layers')));
 assert(model.evidenceSources.some(x=>x.agency==='Statistics Canada'));
 
 const bytes=window.PrincipalBriefing.buildPdf(model);
+fs.mkdirSync('artifacts',{recursive:true});
+fs.writeFileSync('artifacts/principal-briefing-smoke.pdf',Buffer.from(bytes));
 const pdf=Buffer.from(bytes).toString('latin1');
 assert(pdf.startsWith('%PDF-1.4'));
 assert(pdf.endsWith('%%EOF\n'));
