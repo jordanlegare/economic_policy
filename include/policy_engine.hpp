@@ -71,14 +71,18 @@ struct WinWinRecommendation {
   std::array<double, 20> us_sector_output{}, canada_sector_value{};
   int sector_candidates_examined = 0;
   int sector_pareto_frontier_size = 0;
+  int sector_finalists_resimulated = 0;
+  int base_monte_carlo_draws = 700;
+  int verification_monte_carlo_draws = 2800;
   double sector_grid_step = 25.0;
   double verified_canada_score = 0.0, verified_us_score = 0.0;
   double verified_min_sector_metric = 0.0;
   bool verified_win_win = false;
+  bool growth_constraint_met = false;
   bool independent_us_trade_channel = true;
   bool trade_balance_is_objective = false;
   bool mandate_weights_fixed = true;
-  std::string sector_search_method = "Pareto dynamic program over a 25-point bilateral coverage grid, followed by stochastic re-simulation";
+  std::string sector_search_method = "Exact Pareto dynamic program over a 25-point bilateral coverage grid; top frontier packages are stochastic re-simulated";
 };
 
 struct Result {
