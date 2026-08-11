@@ -199,7 +199,11 @@ class NegotiationRoom {
       : event_log_path_(std::move(event_log_path)) {
     const std::vector<std::string> issues = {"us-tariff-relief", "canada-tariff-relief",
         "border-facilitation", "procurement", "supply-chain"};
-    for (const auto& issue : issues) mandate_[issue] = MandateRule{issue};
+    for (const auto& issue : issues) {
+      MandateRule rule;
+      rule.issue_id = issue;
+      mandate_.emplace(issue, std::move(rule));
+    }
     load();
   }
 
