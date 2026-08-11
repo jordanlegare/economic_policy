@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace cad {
@@ -46,6 +47,18 @@ inline std::vector<StructuralParameters> draw_structural_parameters(
 
     p.inflation_persistence = bounded(baseline.inflation_persistence, 0.05, 0.98);
     p.inflation_expectations_weight = bounded(baseline.inflation_expectations_weight, 0.01, 0.95);
+    // Preserve the calibrated total anchor on lagged inflation plus expectations.
+    // This lets uncertainty change persistence composition without accidentally
+    // injecting a unit-root/explosive process just because two weights were
+    // sampled independently.
+    const double baseline_anchor = baseline.inflation_persistence
+        + baseline.inflation_expectations_weight;
+    const double sampled_anchor = p.inflation_persistence + p.inflation_expectations_weight;
+    if (sampled_anchor > 1e-12) {
+      const double scale = baseline_anchor / sampled_anchor;
+      p.inflation_persistence *= scale;
+      p.inflation_expectations_weight *= scale;
+    }
     p.phillips_curve_slope = positive(baseline.phillips_curve_slope);
     p.fx_pass_through = positive(baseline.fx_pass_through);
     p.import_price_pass_through = positive(baseline.import_price_pass_through);
