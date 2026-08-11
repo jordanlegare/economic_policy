@@ -1,5 +1,6 @@
 #include "policy_engine.hpp"
 #include "negotiation_support.hpp"
+#include "trade_diplomacy_platform.hpp"
 
 #include <arpa/inet.h>
 #include <csignal>
@@ -22,9 +23,9 @@ std::string read_file(const std::string& p){std::ifstream f(p,std::ios::binary);
 std::string diplomatic_index(){
   auto html=read_file("web/index.html");
   const auto head=html.rfind("</head>");
-  if(head!=std::string::npos)html.insert(head,"<link rel=\"stylesheet\" href=\"/diplomat.css\"><link rel=\"stylesheet\" href=\"/negotiation-model.css\">");
+  if(head!=std::string::npos)html.insert(head,"<link rel=\"stylesheet\" href=\"/diplomat.css\"><link rel=\"stylesheet\" href=\"/negotiation-model.css\"><link rel=\"stylesheet\" href=\"/trade-diplomacy.css\">");
   const auto body=html.rfind("</body>");
-  if(body!=std::string::npos)html.insert(body,"<script src=\"/diplomat.js\"></script><script src=\"/negotiation-model.js\"></script>");
+  if(body!=std::string::npos)html.insert(body,"<script src=\"/diplomat.js\"></script><script src=\"/negotiation-model.js\"></script><script src=\"/trade-diplomacy.js\"></script>");
   return html;
 }
 double number(const std::string& body,const std::string& key,double fallback){
@@ -51,7 +52,10 @@ cad::Economy parse(const std::string& b){cad::Economy e;
   }
   return e;
 }
-void respond(int fd,int status,const std::string&type,const std::string&body){std::ostringstream h;h<<"HTTP/1.1 "<<status<<(status==200?" OK":" Not Found")<<"\r\nContent-Type: "<<type<<"\r\nContent-Length: "<<body.size()<<"\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n";auto out=h.str()+body;send(fd,out.data(),out.size(),0);}
+void respond(int fd,int status,const std::string&type,const std::string&body){
+  const char* text=status==200?"OK":status==400?"Bad Request":status==413?"Payload Too Large":"Not Found";
+  std::ostringstream h;h<<"HTTP/1.1 "<<status<<' '<<text<<"\r\nContent-Type: "<<type<<"\r\nContent-Length: "<<body.size()<<"\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n";auto out=h.str()+body;send(fd,out.data(),out.size(),0);
+}
 std::string download(const char* url){
   std::string cmd="curl -LfsS --max-time 4 '"+std::string(url)+"' 2>/dev/null";std::string out;char b[4096];
   if(FILE* p=popen(cmd.c_str(),"r")){while(fgets(b,sizeof(b),p))out+=b;pclose(p);}return out;
@@ -106,18 +110,30 @@ struct NegotiationState {
 
 int main(int argc,char**argv){
   std::signal(SIGPIPE,SIG_IGN);int port=argc>1?std::stoi(argv[1]):8080;
+  const bool bind_all=argc>2&&std::string(argv[2])=="--bind-all";
   int server=socket(AF_INET,SOCK_STREAM,0),yes=1;setsockopt(server,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));
-  sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons(port);
+  sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=htonl(bind_all?INADDR_ANY:INADDR_LOOPBACK);addr.sin_port=htons(port);
   if(bind(server,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))<0||listen(server,16)<0){std::cerr<<"Unable to listen on port "<<port<<"\n";return 1;}
-  std::cout<<"Canada–U.S. Diplomatic Policy Studio → http://localhost:"<<port<<"\n";
+  std::cout<<"Canada–U.S. Diplomatic Policy Studio → "<<(bind_all?"http://0.0.0.0:":"http://localhost:")<<port<<"\n";
   cad::PolicyEngine engine;
   NegotiationState negotiation;
-  while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;
-    while((n=recv(client,buf,sizeof(buf),0))>0){req.append(buf,n);auto h=req.find("\r\n\r\n");if(h!=std::string::npos){size_t len=0,p=req.find("Content-Length:");if(p!=std::string::npos)len=std::stoul(req.substr(p+15));if(req.size()>=h+4+len)break;}}
+  constexpr size_t max_request_bytes=128*1024;
+  while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;bool rejected=false;
+    while((n=recv(client,buf,sizeof(buf),0))>0){
+      req.append(buf,n);
+      if(req.size()>max_request_bytes){respond(client,413,"text/plain","Request too large");rejected=true;break;}
+      auto h=req.find("\r\n\r\n");if(h!=std::string::npos){size_t len=0,p=req.find("Content-Length:");if(p!=std::string::npos){try{len=std::stoul(req.substr(p+15));}catch(...){respond(client,400,"text/plain","Invalid Content-Length");rejected=true;break;}}
+        if(len>max_request_bytes){respond(client,413,"text/plain","Request body too large");rejected=true;break;}
+        if(req.size()>=h+4+len)break;
+      }
+    }
+    if(rejected){close(client);continue;}
     auto first=req.substr(0,req.find("\r\n"));auto split=req.find("\r\n\r\n");std::string body=split==std::string::npos?"":req.substr(split+4);
     if(first.rfind("POST /api/evaluate ",0)==0){
       const auto economy=parse(body);const auto result=engine.evaluate(economy);const auto bargaining=cad::analyze_negotiation(economy,result);
-      respond(client,200,"application/json",cad::attach_negotiation_json(cad::to_json(result),bargaining));
+      const auto platform=cad::build_trade_diplomacy_platform(economy,result,bargaining);
+      const auto with_negotiation=cad::attach_negotiation_json(cad::to_json(result),bargaining);
+      respond(client,200,"application/json",cad::attach_trade_diplomacy_json(with_negotiation,platform));
     }
     else if(first.rfind("POST /api/negotiation ",0)==0){negotiation.update(body);respond(client,200,"application/json",negotiation.json());}
     else if(first.rfind("GET /api/negotiation ",0)==0)respond(client,200,"application/json",negotiation.json());
@@ -129,6 +145,8 @@ int main(int argc,char**argv){
     else if(first.rfind("GET /diplomat.js ",0)==0)respond(client,200,"application/javascript",read_file("web/diplomat.js"));
     else if(first.rfind("GET /negotiation-model.css ",0)==0)respond(client,200,"text/css",read_file("web/negotiation-model.css"));
     else if(first.rfind("GET /negotiation-model.js ",0)==0)respond(client,200,"application/javascript",read_file("web/negotiation-model.js"));
+    else if(first.rfind("GET /trade-diplomacy.css ",0)==0)respond(client,200,"text/css",read_file("web/trade-diplomacy.css"));
+    else if(first.rfind("GET /trade-diplomacy.js ",0)==0)respond(client,200,"application/javascript",read_file("web/trade-diplomacy.js"));
     else respond(client,404,"text/plain","Not found");
     close(client);
   }
