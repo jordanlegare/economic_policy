@@ -5,6 +5,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# This application performs exact Pareto sector searches plus Monte Carlo
+# verification. An unspecified single-config build otherwise runs without the
+# optimizer flags expected for interactive use and can make the initial browser
+# evaluation appear frozen. Respect every explicitly selected build type, but
+# make the ordinary `cmake -S . -B build` path production-speed by default.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 add_library(policy_engine src/policy_engine.cpp)
 target_include_directories(policy_engine PUBLIC include)
 target_compile_options(policy_engine PRIVATE -Wall -Wextra -Wpedantic)
