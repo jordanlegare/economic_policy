@@ -16,32 +16,20 @@ struct Economy {
   double fiscal_balance_gdp = -1.2, federal_debt_gdp = 42.0;
   double program_growth = 2.0, tax_impulse = 0.0, infrastructure_impulse = 0.3;
   double global_growth = 2.8, inflation_expectations = 2.2;
-  // Bilateral trade assumptions. Tariffs are effective, trade-weighted rates.
   double us_growth = 2.0, us_inflation = 2.7;
-  // The opening briefing is deliberately a 50% stress baseline. The browser
-  // and direct engine users therefore begin from the same tariff assumption.
   double us_tariff_canada = 50.0, canada_retaliatory_tariff = 5.0;
   double exports_to_us_share = 75.0, imports_from_us_share = 49.0;
   double exports_gdp = 25.0, import_content_consumption = 22.0;
   double trade_elasticity = 0.65, border_friction = 2.0;
-  // Annual bilateral goods baseline, CAD billions. Explicit values make the
-  // resulting fiscal receipts auditable rather than inferred from a score.
   double canada_exports_to_us_cad = 596.9, canada_imports_from_us_cad = 373.7;
   double tariff_relief = 0.0, trade_diversification = 0.0;
-  // User decision preferences. These change ranking, not the economic baseline.
-  // Neutral bootstrap values are replaced by the opening allocation search.
-  // The linked shares always total 100.
   double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
-  // Sector-specific negotiating positions, expressed as a percentage of the
-  // headline tariff applied to each two-digit NAICS sector (0 = exempt).
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
 
   Economy() { us_sector_coverage.fill(100.0); canada_sector_coverage.fill(100.0); }
 };
 
-// The complete two-digit NAICS economy, grouped into its 20 standard sectors.
-// Changes are percentage differences from a no-tariff baseline at quarter 12.
 struct SectorImpact {
   std::string code, name;
   double canada_output = 0.0, canada_jobs = 0.0, canada_prices = 0.0;
@@ -89,10 +77,23 @@ struct Result {
 
 class PolicyEngine {
  public:
-  explicit PolicyEngine(std::uint64_t seed = 20260810) : seed_(seed) {}
+  explicit PolicyEngine(std::uint64_t seed = 20260810) : seed_{seed} {}
   Result evaluate(const Economy& economy) const;
+
  private:
-  std::uint64_t seed_;
+  // Policy alternatives must be evaluated under the same stochastic worlds.
+  // The engine historically used seed_ + candidate_id, which let Monte Carlo
+  // luck contaminate policy rankings. CommonSeed deliberately ignores those
+  // offsets so every candidate replays an identical shock stream (common
+  // random numbers), reducing variance in pairwise policy comparisons.
+  struct CommonSeed {
+    std::uint64_t value;
+    operator std::uint64_t() const { return value; }
+    friend CommonSeed operator+(CommonSeed seed, int) { return seed; }
+    friend CommonSeed operator+(CommonSeed seed, std::size_t) { return seed; }
+  };
+
+  CommonSeed seed_;
 };
 
 std::string to_json(const Result& result);
