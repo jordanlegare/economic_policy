@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cad {
@@ -112,6 +113,12 @@ struct RobustnessSummary {
   double score_p10 = 0.0;
   double score_p90 = 0.0;
   std::string classification = "not-evaluated";
+  std::string calibration_id = "";
+  std::string calibration_vintage = "";
+  std::string methodology = "not-evaluated";
+  bool structural_parameters_active = false;
+  bool common_random_numbers = false;
+  bool sector_packages_reoptimized = false;
 };
 
 struct WinWinRecommendation {
@@ -152,6 +159,10 @@ class PolicyEngine {
                         StructuralParameters parameters = {})
       : seed_{seed}, parameters_{std::move(parameters)} {}
   Result evaluate(const Economy& economy) const;
+  // V2 robustness evaluates the verified V1 policy/sector packages under an
+  // outer structural-parameter ensemble using common random numbers. Sector
+  // packages are intentionally held fixed within each robustness run; the
+  // summary reports this limitation explicitly.
   Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
   const StructuralParameters& parameters() const { return parameters_; }
 
@@ -168,5 +179,6 @@ class PolicyEngine {
 };
 
 std::string to_json(const Result& result);
+std::string robustness_to_json(const Result& result);
 
 }  // namespace cad
