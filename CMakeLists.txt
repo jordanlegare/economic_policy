@@ -17,3 +17,8 @@ enable_testing()
 add_executable(policy_tests tests/policy_engine_test.cpp)
 target_link_libraries(policy_tests PRIVATE policy_engine)
 add_test(NAME policy_engine COMMAND policy_tests)
+
+add_executable(negotiation_support_tests tests/negotiation_support_test.cpp)
+target_link_libraries(negotiation_support_tests PRIVATE policy_engine)
+target_compile_options(negotiation_support_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME negotiation_support COMMAND negotiation_support_tests)
