@@ -32,6 +32,7 @@ add_executable(calibration_tests tests/calibration_test.cpp)
 target_link_libraries(calibration_tests PRIVATE policy_engine)
 target_compile_options(calibration_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME calibration_integrity COMMAND calibration_tests)
+set_tests_properties(calibration_integrity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp)
 target_link_libraries(trade_diplomacy_platform_tests PRIVATE policy_engine)
