@@ -16,6 +16,29 @@ jobs:
           node --check web/diplomat.js
           node --check web/negotiation-model.js
           node --check web/trade-diplomacy.js
+      - name: Verify briefing PDF generator
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+          global.window = {};
+          global.document = {readyState:'loading', addEventListener(){}, querySelector(){return null;}};
+          global.localStorage = {getItem(){return null;}, setItem(){}};
+          global.navigator = {};
+          vm.runInThisContext(fs.readFileSync('web/trade-diplomacy.js','utf8'));
+          if (!window.BriefingPdf?.buildPdf) throw new Error('BriefingPdf builder not exposed');
+          const bytes = window.BriefingPdf.buildPdf([
+            {type:'h1', text:'Canada-United States negotiation brief'},
+            {type:'h2', text:'Decision'},
+            {type:'p', text:'Open with the robust package and preserve the bridge option.'},
+            {type:'bullet', text:'- Verify implementation before reciprocal relief.'}
+          ]);
+          const pdf = Buffer.from(bytes).toString('latin1');
+          if (!pdf.startsWith('%PDF-1.4')) throw new Error('Missing PDF header');
+          if (!pdf.includes('/Type /Catalog') || !pdf.includes('/Type /Page ')) throw new Error('Missing PDF objects');
+          if (!pdf.includes('xref') || !pdf.includes('startxref') || !pdf.endsWith('%%EOF\n')) throw new Error('Invalid PDF trailer');
+          if (bytes.length < 800) throw new Error('PDF output unexpectedly small');
+          NODE
       - name: Verify diplomatic assets are wired
         run: |
           grep -q 'diplomat.css' src/main.cpp
@@ -27,6 +50,8 @@ jobs:
           grep -q 'Diplomatic decision desk' web/diplomat.js
           grep -q 'Computational negotiation support' web/negotiation-model.js
           grep -q 'Canada–U.S. trade diplomacy operations' web/trade-diplomacy.js
+          grep -q 'application/pdf' web/trade-diplomacy.js
+          grep -q 'Save briefing PDF' web/trade-diplomacy.js
           grep -q 'analyze_negotiation' src/main.cpp
           grep -q 'build_trade_diplomacy_platform' src/main.cpp
 
