@@ -7,6 +7,48 @@
 
 namespace cad {
 
+// Structural coefficients are separated from the observed economic state so
+// calibration assumptions can be versioned, stress-tested and sampled without
+// pretending that Monte Carlo shock precision identifies the coefficients.
+struct StructuralParameters {
+  std::string calibration_id = "baseline-v1";
+  std::string calibration_vintage = "illustrative";
+
+  double neutral_rate = 2.5;
+  double inflation_target = 2.0;
+  double rate_inflation_response = 0.75;
+  double rate_output_response = 0.25;
+  double max_quarterly_rate_step = 0.25;
+
+  double output_persistence = 0.72;
+  double fiscal_demand_multiplier = 0.36;
+  double real_rate_demand_sensitivity = 0.18;
+  double productive_supply_multiplier = 0.22;
+  double global_growth_sensitivity = 0.08;
+
+  double inflation_persistence = 0.68;
+  double inflation_expectations_weight = 0.32;
+  double phillips_curve_slope = 0.12;
+  double fx_pass_through = 0.35;
+  double import_price_pass_through = 0.022;
+  double oil_inflation_sensitivity = 0.018;
+
+  double canada_trade_drag_scale = 1.0;
+  double us_retaliation_drag_scale = 1.0;
+  double tariff_revenue_elasticity_scale = 1.0;
+
+  double output_shock_sd = 0.16;
+  double inflation_shock_sd = 0.11;
+  double growth_shock_sd = 0.25;
+  double us_growth_shock_sd = 0.18;
+  double export_shock_sd = 0.35;
+  double us_export_shock_sd = 0.30;
+
+  // Multiplicative parameter uncertainty. A value of 0.10 means a one-sigma
+  // draw is approximately +/-10% around the calibrated coefficient.
+  double uncertainty_scale = 0.10;
+};
+
 struct Economy {
   double policy_rate = 2.75, inflation = 2.4, core_inflation = 2.6;
   double gdp_growth = 1.6, output_gap = -0.4, unemployment = 6.4;
@@ -62,6 +104,16 @@ struct Scenario {
   std::vector<SectorImpact> sectors;
 };
 
+struct RobustnessSummary {
+  int parameter_draws = 0;
+  int recommendation_wins = 0;
+  double recommendation_win_rate = 0.0;
+  double score_mean = 0.0;
+  double score_p10 = 0.0;
+  double score_p90 = 0.0;
+  std::string classification = "not-evaluated";
+};
+
 struct WinWinRecommendation {
   double canada_priority = 50.0, us_priority = 50.0;
   double gdp_growth_floor = 0.0;
@@ -82,6 +134,7 @@ struct WinWinRecommendation {
   bool independent_us_trade_channel = true;
   bool trade_balance_is_objective = false;
   bool mandate_weights_fixed = true;
+  RobustnessSummary robustness;
   std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; top frontier packages are stochastic re-simulated";
 };
 
@@ -95,8 +148,12 @@ struct Result {
 
 class PolicyEngine {
  public:
-  explicit PolicyEngine(std::uint64_t seed = 20260810) : seed_{seed} {}
+  explicit PolicyEngine(std::uint64_t seed = 20260810,
+                        StructuralParameters parameters = {})
+      : seed_{seed}, parameters_{std::move(parameters)} {}
   Result evaluate(const Economy& economy) const;
+  Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
+  const StructuralParameters& parameters() const { return parameters_; }
 
  private:
   struct CommonSeed {
@@ -107,6 +164,7 @@ class PolicyEngine {
   };
 
   CommonSeed seed_;
+  StructuralParameters parameters_;
 };
 
 std::string to_json(const Result& result);
