@@ -146,7 +146,8 @@ std::string live_baseline(const cad::CalibrationSnapshot& calibration) {
   const bool any_live = rate_live || fx_live || wti_live;
   std::ostringstream out;
   out << std::fixed << std::setprecision(3)
-      << "{\"status\":\"" << (any_live ? "calibrated baseline plus live BoC observations" : "calibrated snapshot; live BoC fetch unavailable")
+      << "{\"status\":\"" << (any_live ? "live" : "calibrated")
+      << "\",\"statusDetail\":\"" << (any_live ? "calibrated baseline plus live BoC observations" : "calibrated snapshot; live BoC fetch unavailable")
       << "\",\"asOf\":\"" << stamp << "\",\"settings\":{";
 #define OUT(k, v) out << "\"" k "\":" << v << ','
   OUT("policyRate", economy.policy_rate); OUT("inflation", economy.inflation);
@@ -169,6 +170,10 @@ std::string live_baseline(const cad::CalibrationSnapshot& calibration) {
   out << "\"bilateralExportsCad\":" << economy.canada_exports_to_us_cad
       << ",\"bilateralImportsCad\":" << economy.canada_imports_from_us_cad
       << ",\"diversification\":" << economy.trade_diversification << "},"
+      << "\"sources\":["
+      << "{\"name\":\"Bank of Canada policy rate\",\"fields\":\"Policy rate · Valet V39079\",\"url\":\"https://www.bankofcanada.ca/valet/\"},"
+      << "{\"name\":\"Bank of Canada USD/CAD\",\"fields\":\"Exchange rate · Valet FXUSDCAD\",\"url\":\"https://www.bankofcanada.ca/valet/\"},"
+      << "{\"name\":\"Bank of Canada WTI\",\"fields\":\"WTI oil price · Valet WTI\",\"url\":\"https://www.bankofcanada.ca/valet/\"}],"
       << "\"provenance\":{\"observedLive\":["
       << "{\"field\":\"policyRate\",\"source\":\"Bank of Canada Valet V39079\",\"live\":" << (rate_live ? "true" : "false") << "},"
       << "{\"field\":\"usdcad\",\"source\":\"Bank of Canada Valet FXUSDCAD\",\"live\":" << (fx_live ? "true" : "false") << "},"
@@ -301,17 +306,24 @@ int main(int argc, char** argv) {
     if (first.rfind("POST /api/evaluate ", 0) == 0) {
       auto economy = parse(body);
       auto result = engine.evaluate(economy);  // Mutates economy to the calibrated values actually simulated.
-      auto bargaining = cad::analyze_negotiation(economy, result);
-      cad::align_negotiation_trade_channels(economy, result, bargaining);
-      auto robustness = cad::analyze_robust_recommendations(economy, result, bargaining, engine.snapshot());
-      auto platform = cad::build_trade_diplomacy_platform(economy, result, bargaining);
-      last_bargaining = bargaining;
-      last_robustness = robustness;
-      has_evaluation = true;
-      auto with_calibration = cad::attach_calibration_json(cad::to_json(result), engine.snapshot());
-      auto with_negotiation = cad::attach_negotiation_json(with_calibration, bargaining);
-      auto with_robustness = cad::attach_robustness_json(with_negotiation, robustness);
-      respond(client, 200, "application/json", cad::attach_trade_diplomacy_json(with_robustness, platform));
+      const bool comparison_only = body.find("\"comparisonOnly\":true") != std::string::npos
+          || body.find("\"comparisonOnly\": true") != std::string::npos;
+      if (comparison_only) {
+        respond(client, 200, "application/json",
+            cad::attach_calibration_json(cad::to_json(result), engine.snapshot()));
+      } else {
+        auto bargaining = cad::analyze_negotiation(economy, result);
+        cad::align_negotiation_trade_channels(economy, result, bargaining);
+        auto robustness = cad::analyze_robust_recommendations(economy, result, bargaining, engine.snapshot());
+        auto platform = cad::build_trade_diplomacy_platform(economy, result, bargaining);
+        last_bargaining = bargaining;
+        last_robustness = robustness;
+        has_evaluation = true;
+        auto with_calibration = cad::attach_calibration_json(cad::to_json(result), engine.snapshot());
+        auto with_negotiation = cad::attach_negotiation_json(with_calibration, bargaining);
+        auto with_robustness = cad::attach_robustness_json(with_negotiation, robustness);
+        respond(client, 200, "application/json", cad::attach_trade_diplomacy_json(with_robustness, platform));
+      }
     } else if (first.rfind("POST /api/room ", 0) == 0) {
       const bool ok = room.apply_event(body,
           has_evaluation ? &last_bargaining : nullptr,
@@ -334,7 +346,7 @@ int main(int argc, char** argv) {
     } else if (first.rfind("GET / ", 0) == 0) {
       respond(client, 200, "text/html; charset=utf-8", diplomatic_index());
     } else if (first.rfind("GET /app.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/app.css"));
-    else if (first.rfind("GET /app.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/app.js"));
+    else if (first.rfind("GET /app.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/app.js") + "\n" + read_file("web/evaluation-controller.js"));
     else if (first.rfind("GET /diplomat.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/diplomat.css"));
     else if (first.rfind("GET /diplomat.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/diplomat.js"));
     else if (first.rfind("GET /negotiation-model.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/negotiation-model.css"));
