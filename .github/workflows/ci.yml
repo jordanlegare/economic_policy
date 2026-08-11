@@ -26,6 +26,26 @@ jobs:
         run: |
           cmake -S . -B build-default
           grep -q '^CMAKE_BUILD_TYPE:STRING=Release$' build-default/CMakeCache.txt
+          cmake --build build-default --target cad-policy-studio --parallel
+      - name: Smoke test real initial evaluation
+        run: |
+          ./build-default/cad-policy-studio 18080 > /tmp/cad-policy-studio.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:18080/api/room >/dev/null; then break; fi
+            sleep 0.25
+          done
+          start=$(date +%s)
+          timeout 45 curl -fsS -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{}' \
+            http://127.0.0.1:18080/api/evaluate > /tmp/initial-evaluate.json
+          elapsed=$(( $(date +%s) - start ))
+          echo "Release initial /api/evaluate completed in ${elapsed}s"
+          grep -q '"scenarios":\[' /tmp/initial-evaluate.json
+          grep -q '"robustness":{' /tmp/initial-evaluate.json
+          grep -q '"secondStageMonteCarloDraws":5000' /tmp/initial-evaluate.json
       - name: Check calibration tooling
         run: |
           python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py
