@@ -22,11 +22,14 @@ jobs:
           node --check web/principal-briefing.js
       - name: Verify finite evaluation controller
         run: node tests/evaluation_controller_test.js
-      - name: Verify optimized default build
+      - name: Verify optimized Release build and active tests
+        env:
+          CXXFLAGS: -Werror
         run: |
           cmake -S . -B build-default
           grep -q '^CMAKE_BUILD_TYPE:STRING=Release$' build-default/CMakeCache.txt
-          cmake --build build-default --target cad-policy-studio --parallel
+          cmake --build build-default --parallel
+          ctest --test-dir build-default --output-on-failure
       - name: Smoke test real initial evaluation
         run: |
           ./build-default/cad-policy-studio 18080 > /tmp/cad-policy-studio.log 2>&1 &
