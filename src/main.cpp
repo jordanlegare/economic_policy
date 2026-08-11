@@ -1,4 +1,5 @@
 #include "policy_engine.hpp"
+#include "negotiation_support.hpp"
 
 #include <arpa/inet.h>
 #include <csignal>
@@ -21,9 +22,9 @@ std::string read_file(const std::string& p){std::ifstream f(p,std::ios::binary);
 std::string diplomatic_index(){
   auto html=read_file("web/index.html");
   const auto head=html.rfind("</head>");
-  if(head!=std::string::npos)html.insert(head,"<link rel=\"stylesheet\" href=\"/diplomat.css\">");
+  if(head!=std::string::npos)html.insert(head,"<link rel=\"stylesheet\" href=\"/diplomat.css\"><link rel=\"stylesheet\" href=\"/negotiation-model.css\">");
   const auto body=html.rfind("</body>");
-  if(body!=std::string::npos)html.insert(body,"<script src=\"/diplomat.js\"></script>");
+  if(body!=std::string::npos)html.insert(body,"<script src=\"/diplomat.js\"></script><script src=\"/negotiation-model.js\"></script>");
   return html;
 }
 double number(const std::string& body,const std::string& key,double fallback){
@@ -114,7 +115,10 @@ int main(int argc,char**argv){
   while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;
     while((n=recv(client,buf,sizeof(buf),0))>0){req.append(buf,n);auto h=req.find("\r\n\r\n");if(h!=std::string::npos){size_t len=0,p=req.find("Content-Length:");if(p!=std::string::npos)len=std::stoul(req.substr(p+15));if(req.size()>=h+4+len)break;}}
     auto first=req.substr(0,req.find("\r\n"));auto split=req.find("\r\n\r\n");std::string body=split==std::string::npos?"":req.substr(split+4);
-    if(first.rfind("POST /api/evaluate ",0)==0)respond(client,200,"application/json",cad::to_json(engine.evaluate(parse(body))));
+    if(first.rfind("POST /api/evaluate ",0)==0){
+      const auto economy=parse(body);const auto result=engine.evaluate(economy);const auto bargaining=cad::analyze_negotiation(economy,result);
+      respond(client,200,"application/json",cad::attach_negotiation_json(cad::to_json(result),bargaining));
+    }
     else if(first.rfind("POST /api/negotiation ",0)==0){negotiation.update(body);respond(client,200,"application/json",negotiation.json());}
     else if(first.rfind("GET /api/negotiation ",0)==0)respond(client,200,"application/json",negotiation.json());
     else if(first.rfind("GET /api/baseline ",0)==0)respond(client,200,"application/json",live_baseline());
@@ -123,6 +127,8 @@ int main(int argc,char**argv){
     else if(first.rfind("GET /app.js ",0)==0)respond(client,200,"application/javascript",read_file("web/app.js"));
     else if(first.rfind("GET /diplomat.css ",0)==0)respond(client,200,"text/css",read_file("web/diplomat.css"));
     else if(first.rfind("GET /diplomat.js ",0)==0)respond(client,200,"application/javascript",read_file("web/diplomat.js"));
+    else if(first.rfind("GET /negotiation-model.css ",0)==0)respond(client,200,"text/css",read_file("web/negotiation-model.css"));
+    else if(first.rfind("GET /negotiation-model.js ",0)==0)respond(client,200,"application/javascript",read_file("web/negotiation-model.js"));
     else respond(client,404,"text/plain","Not found");
     close(client);
   }
