@@ -21,7 +21,7 @@ function(cad_enable_warnings target)
   endif()
 endfunction()
 
-add_library(policy_engine src/policy_engine.cpp)
+add_library(policy_engine src/policy_engine.cpp src/robustness.cpp)
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
 
@@ -111,6 +111,7 @@ cad_add_test(negotiation_room_tests tests/negotiation_room_test.cpp negotiation_
 set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
 cad_add_test(robustness_sampler_tests tests/robustness_test.cpp robustness_sampler)
+cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp robustness_integration)
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
