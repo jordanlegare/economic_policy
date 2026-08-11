@@ -40,6 +40,8 @@ std::string diplomatic_index() {
         "<link rel=\"stylesheet\" href=\"/trade-diplomacy.css\">"
         "<link rel=\"stylesheet\" href=\"/calibration.css\">"
         "<link rel=\"stylesheet\" href=\"/robust-room.css\">");
+    const auto principal_head = html.rfind("</head>");
+    html.insert(principal_head, "<style>" + read_file("web/principal-briefing.css") + "</style>");
   }
   const auto body = html.rfind("</body>");
   if (body != std::string::npos) {
@@ -49,6 +51,8 @@ std::string diplomatic_index() {
         "<script src=\"/trade-diplomacy.js\"></script>"
         "<script src=\"/calibration.js\"></script>"
         "<script src=\"/robust-room.js\"></script>");
+    const auto principal_body = html.rfind("</body>");
+    html.insert(principal_body, "<script>" + read_file("web/principal-briefing.js") + "</script>");
   }
   return html;
 }
