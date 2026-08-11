@@ -22,6 +22,10 @@ jobs:
           node --check web/principal-briefing.js
       - name: Verify finite evaluation controller
         run: node tests/evaluation_controller_test.js
+      - name: Verify optimized default build
+        run: |
+          cmake -S . -B build-default
+          grep -q '^CMAKE_BUILD_TYPE:STRING=Release$' build-default/CMakeCache.txt
       - name: Check calibration tooling
         run: |
           python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py
