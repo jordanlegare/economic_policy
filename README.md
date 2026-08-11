@@ -10,7 +10,7 @@ The model evaluates macroeconomic, financial, external, housing, fiscal and Cana
 
 ```bash
 cmake -S . -B build
-cmake --build build
+cmake --build build --parallel
 ./build/cad-policy-studio 8080
 ```
 
