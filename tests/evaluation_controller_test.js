@@ -4,7 +4,15 @@ const assert = require('assert');
 
 const elements = new Map();
 function element(id, value = '') {
-  const node = {id, value:String(value), textContent:'', hidden:true, disabled:false, firstChild:{textContent:''}};
+  const node = {
+    id,
+    value:String(value),
+    textContent:'',
+    hidden:true,
+    disabled:false,
+    firstChild:{textContent:''},
+    querySelector(){ return null; }
+  };
   elements.set('#' + id, node);
   return node;
 }
@@ -13,13 +21,14 @@ element('run');
 element('strategyLoading');
 element('signal');
 element('negotiationSync');
+element('impactGrowth');
 element('canadaPriority', 50);
 element('usPriority', 50);
 element('riskAversion', 50);
 element('cooperationCeiling', 50);
 element('retaliatoryTariff', 5);
 
-global.window = {};
+global.window = {__EVALUATION_COMPARISON_DELAY_MS:0};
 global.$ = selector => elements.get(selector) || null;
 global.settings = {policyRate:2.75, gdpGrowth:1.6};
 global.result = undefined;
@@ -31,6 +40,7 @@ global.adjustingRanges = new Set();
 global.tariff = {value:'50'};
 global.positions = {canada:Array(20).fill(100), us:Array(20).fill(100)};
 global.sameCoverage = (a,b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v,i)=>+v===+b[i]);
+global.signed = (x, suffix = '%') => (x >= 0 ? '+' : '') + Number(x).toFixed(1) + suffix;
 global.schedule = () => { throw new Error('schedule should not be called during a settled evaluation'); };
 let publishCount = 0;
 global.publishNegotiation = actor => { assert.strictEqual(actor, 'automatic'); publishCount++; };
@@ -47,18 +57,21 @@ global.applyRecommendation = () => {
 };
 
 const fullPayload = () => ({
-  scenarios:[{id:'compact',name:'Compact'}],
+  scenarios:[{id:'compact',name:'Compact',growth:1.7}],
   recommendation:{
     usSectorCoverage:Array(20).fill(50),
     canadaSectorCoverage:Array(20).fill(75)
   }
 });
-const comparisonPayload = () => ({scenarios:[{id:'compact',name:'Compact baseline'}]});
+const comparisonPayload = () => ({scenarios:[{id:'compact',name:'Compact baseline',growth:2.0}]});
 const requests = [];
+let releaseComparison;
+let comparisonGate = new Promise(resolve => { releaseComparison = resolve; });
 global.fetch = async (url, options = {}) => {
   assert.strictEqual(url, '/api/evaluate');
   const payload = JSON.parse(options.body);
   requests.push(payload);
+  if (payload.comparisonOnly) await comparisonGate;
   return {
     ok:true,
     status:200,
@@ -73,19 +86,36 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
 
 (async()=>{
   await evaluate();
-  assert.strictEqual(requests.length, 2, 'first run should make one full request and one comparison request');
-  assert.strictEqual(requests.filter(x=>x.comparisonOnly).length, 1);
-  assert.strictEqual(requests.filter(x=>!x.comparisonOnly).length, 1);
-  assert.strictEqual(publishCount, 1, 'verified recommendation should publish once without recursive evaluation');
+  assert.strictEqual(requests.length, 1,
+    'initial loading path must await only the real policy evaluation');
+  assert.strictEqual(requests[0].comparisonOnly, false);
+  assert.strictEqual(publishCount, 1,
+    'verified recommendation should publish once without recursive evaluation');
   assert.strictEqual(renderCount, 1);
-  assert.strictEqual(elements.get('#strategyLoading').hidden, true, 'loading overlay must be released');
-  assert.strictEqual(elements.get('#run').disabled, false, 'run button must be restored');
+  assert.strictEqual(elements.get('#strategyLoading').hidden, true,
+    'loading overlay must be released before the no-tariff comparator finishes');
+  assert.strictEqual(elements.get('#run').disabled, false,
+    'run button must be restored before the comparator finishes');
+  assert.strictEqual(elements.get('#impactGrowth').textContent, 'Calculating…');
   assert(global.positions.us.every(x=>x===50));
   assert(global.positions.canada.every(x=>x===75));
 
+  // Let the deferred comparison start. It is deliberately unresolved here;
+  // the full-screen loading state must already be gone.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.strictEqual(requests.length, 2);
+  assert.strictEqual(requests.filter(x=>x.comparisonOnly).length, 1);
+  assert.strictEqual(elements.get('#strategyLoading').hidden, true);
+
+  releaseComparison();
+  await window.EvaluationController.waitForComparison();
+  assert.strictEqual(elements.get('#impactGrowth').textContent, '-0.3 pp');
+
   requests.length = 0;
+  comparisonGate = Promise.resolve();
   await evaluate();
-  assert.strictEqual(requests.length, 1, 'second run should reuse cached no-tariff comparison');
+  assert.strictEqual(requests.length, 1,
+    'subsequent runs should reuse the cached no-tariff comparison');
   assert.strictEqual(requests[0].comparisonOnly, false);
   assert.strictEqual(publishCount, 1, 'unchanged auto recommendation must not republish');
   assert.strictEqual(renderCount, 2);
@@ -97,7 +127,8 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   await evaluate();
   const full = requests.find(x=>!x.comparisonOnly);
   assert(full, 'expected full evaluation request');
-  assert.strictEqual(full.usSector0, 42, 'explicit user sector edit must advance the evaluation anchor');
+  assert.strictEqual(full.usSector0, 42,
+    'explicit user sector edit must advance the evaluation anchor');
   assert.strictEqual(elements.get('#strategyLoading').hidden, true);
 
   console.log('evaluation controller test passed');

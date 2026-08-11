@@ -9,6 +9,10 @@
   let lastAutoCoverage = null;
   let comparisonCache = null;
   let comparisonCacheKey = '';
+  let comparisonTimer = null;
+  let comparisonTask = Promise.resolve();
+
+  const comparisonDelayMs = Number(window.__EVALUATION_COMPARISON_DELAY_MS ?? 900);
 
   const copyCoverage = source => ({
     canada: [...source.canada],
@@ -34,9 +38,9 @@
   }
 
   function comparisonKey(preferences) {
-    // Sector coverage and headline tariffs are intentionally omitted. The
-    // no-tariff comparator is reusable across tariff/coverage edits, but is
-    // recomputed when structural baseline or mandate/risk controls change.
+    // Sector coverage and headline tariffs are intentionally omitted. In the
+    // no-tariff world those controls have no direct tariff effect. Recompute the
+    // reference when the structural baseline or mandate/risk controls change.
     return JSON.stringify({
       settings,
       canadaPriority: preferences.canadaPriority,
@@ -79,6 +83,89 @@
     if (changed) publishNegotiation('automatic');
   }
 
+  function provisionalComparison(evaluated) {
+    return {
+      scenarios: (evaluated?.scenarios || []).map(scenario => ({
+        id: scenario.id,
+        growth: scenario.growth
+      }))
+    };
+  }
+
+  function updateGrowthDelta() {
+    const target = $('#impactGrowth');
+    const best = result?.scenarios?.[0];
+    const zero = noTariff?.scenarios?.find(s => s.id === best?.id)
+      || noTariff?.scenarios?.[0];
+    if (!target || !best || !zero || !Number.isFinite(+zero.growth)) return;
+    target.textContent = signed(best.growth - zero.growth, ' pp');
+  }
+
+  function setComparisonPending() {
+    const target = $('#impactGrowth');
+    if (target) target.textContent = 'Calculating…';
+  }
+
+  function makeRequest(preferences, rate, retaliation, comparisonOnly = false) {
+    return fetch('/api/evaluate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        ...settings,
+        ...preferences,
+        usTariff: rate,
+        retaliatoryTariff: retaliation,
+        comparisonOnly
+      })
+    }).then(response => responseJson(response,
+      comparisonOnly ? 'No-tariff comparison' : 'Policy evaluation'));
+  }
+
+  function scheduleComparison(preferences, sequence) {
+    const key = comparisonKey(preferences);
+    if (comparisonCache && comparisonCacheKey === key) {
+      noTariff = comparisonCache;
+      updateGrowthDelta();
+      return;
+    }
+
+    setComparisonPending();
+    if (comparisonTimer) clearTimeout(comparisonTimer);
+    comparisonTimer = setTimeout(() => {
+      comparisonTimer = null;
+      if (sequence !== evaluationSequence) return;
+      comparisonTask = makeRequest(preferences, 0, 0, true)
+        .then(value => {
+          if (sequence !== evaluationSequence) return;
+          comparisonCache = value;
+          comparisonCacheKey = key;
+          noTariff = value;
+          updateGrowthDelta();
+        })
+        .catch(error => {
+          console.warn('No-tariff comparison failed', error);
+          if (sequence === evaluationSequence) {
+            const target = $('#impactGrowth');
+            if (target) target.textContent = 'Unavailable';
+          }
+        });
+    }, Math.max(0, comparisonDelayMs));
+  }
+
+  function startElapsedStatus(loading) {
+    const detail = loading?.querySelector?.('small');
+    const label = loading?.querySelector?.('span');
+    const started = Date.now();
+    if (label) label.textContent = 'RUNNING VERIFIED SEARCH';
+    if (detail) detail.textContent = 'Searching 14 strategies, sector Pareto schedules and robust packages';
+    const timer = setInterval(() => {
+      if (!detail) return;
+      const seconds = Math.floor((Date.now() - started) / 1000);
+      detail.textContent = `Searching 14 strategies, sector Pareto schedules and robust packages · ${seconds}s elapsed`;
+    }, 1000);
+    return () => clearInterval(timer);
+  }
+
   evaluate = async function controlledEvaluate() {
     if (adjustingRanges.size) {
       schedule();
@@ -89,7 +176,12 @@
     const btn = $('#run');
     const loading = $('#strategyLoading');
     const signal = $('#signal');
+    if (comparisonTimer) {
+      clearTimeout(comparisonTimer);
+      comparisonTimer = null;
+    }
     if (loading) loading.hidden = false;
+    const stopElapsedStatus = startElapsedStatus(loading);
     if (btn) {
       btn.disabled = true;
       if (btn.firstChild) btn.firstChild.textContent = 'Searching verified policy and sector packages… ';
@@ -108,31 +200,12 @@
       anchor.us.forEach((value, i) => preferences['usSector' + i] = value);
       anchor.canada.forEach((value, i) => preferences['canadaSector' + i] = value);
 
-      const request = (rate, retaliation, comparisonOnly = false) => fetch('/api/evaluate', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          ...settings,
-          ...preferences,
-          usTariff: rate,
-          retaliatoryTariff: retaliation,
-          comparisonOnly
-        })
-      }).then(response => responseJson(response, comparisonOnly ? 'No-tariff comparison' : 'Policy evaluation'));
-
-      const key = comparisonKey(preferences);
-      const comparisonPromise = comparisonCache && comparisonCacheKey === key
-        ? Promise.resolve(comparisonCache)
-        : request(0, 0, true).then(value => {
-            comparisonCache = value;
-            comparisonCacheKey = key;
-            return value;
-          });
-
-      const [evaluated, comparison] = await Promise.all([
-        request(+tariff.value, preferences.retaliatoryTariff, false),
-        comparisonPromise
-      ]);
+      // Critical startup rule: await only the real policy evaluation. The old
+      // controller blocked the full-screen overlay on a second complete optimizer
+      // run for the no-tariff reference. That reference is useful for one headline
+      // delta but must never gate the whole application.
+      const evaluated = await makeRequest(
+        preferences, +tariff.value, preferences.retaliatoryTariff, false);
 
       if (sequence !== evaluationSequence) return;
       if (adjustingRanges.size) {
@@ -141,10 +214,19 @@
       }
 
       result = evaluated;
-      noTariff = comparison;
+      const key = comparisonKey(preferences);
+      noTariff = comparisonCache && comparisonCacheKey === key
+        ? comparisonCache
+        : provisionalComparison(evaluated);
       publishVerifiedRecommendation();
       selected = result.scenarios[0];
       render();
+      if (!(comparisonCache && comparisonCacheKey === key)) setComparisonPending();
+
+      // Defer the expensive no-tariff optimizer until after the real result has
+      // rendered and the loading overlay is released. It updates only the growth
+      // counterfactual when it finishes.
+      scheduleComparison(preferences, sequence);
     } catch (error) {
       console.error('Policy evaluation failed', error);
       if (sequence === evaluationSequence) {
@@ -153,6 +235,7 @@
         if (sync) sync.textContent = 'Evaluation error · controls remain available';
       }
     } finally {
+      stopElapsedStatus();
       if (sequence === evaluationSequence) {
         if (loading) loading.hidden = true;
         if (btn) {
@@ -172,10 +255,17 @@
     invalidateComparison() {
       comparisonCache = null;
       comparisonCacheKey = '';
+      if (comparisonTimer) {
+        clearTimeout(comparisonTimer);
+        comparisonTimer = null;
+      }
     },
     resetNegotiationAnchor() {
       negotiationAnchor = displayedCoverage();
       lastAutoCoverage = null;
+    },
+    waitForComparison() {
+      return comparisonTask;
     }
   };
 })();
