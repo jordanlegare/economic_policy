@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const fmt = (value, digits=1) => Number(value || 0).toFixed(digits);
   const signed = (value, suffix='') => `${Number(value || 0) >= 0 ? '+' : ''}${fmt(value)}${suffix}`;
 
@@ -71,10 +71,33 @@
     }));
   }
 
+  function appendBriefing() {
+    setTimeout(() => {
+      if (typeof result === 'undefined' || !result?.negotiation) return;
+      const sheet = document.querySelector('#briefingSheet');
+      if (!sheet || sheet.querySelector('#bargainingBriefSection')) return;
+      const model = result.negotiation, package_ = model.recommendedPackage;
+      if (!package_) return;
+      const linked = (package_.issues || []).filter(issue => Number(issue.canadaMove) > 0 || Number(issue.usMove) > 0)
+        .map(issue => `<li><b>${esc(issue.label)}</b>: Canada ${fmt(issue.canadaMove,0)} · U.S. ${fmt(issue.usMove,0)}</li>`).join('');
+      const section = `<section id="bargainingBriefSection"><h2>Bargaining analysis</h2>
+        <p><b>Outside options:</b> Canada BATNA ${fmt(model.batna.canada,1)} (${esc(model.batna.canadaStrategy)}), reservation ${fmt(model.reservation.canada,1)}. U.S. BATNA ${fmt(model.batna.us,1)} (${esc(model.batna.usStrategy)}), reservation ${fmt(model.reservation.us,1)}.</p>
+        <p><b>Recommended Pareto package:</b> ${esc(package_.strategyName)} · Canada utility ${fmt(package_.canadaUtility,1)} (${signed(package_.canadaSurplus)} over reservation) · U.S. utility ${fmt(package_.usUtility,1)} (${signed(package_.usSurplus)} over reservation) · Nash gain ${fmt(package_.nashGain,1)}.</p>
+        <p><b>Agreement stability:</b> ${package_.stable?'passes the current unilateral-deviation screen':'requires stronger enforcement architecture'}; Canada deviation gain ${signed(package_.canadaDeviationGain)}, U.S. deviation gain ${signed(package_.usDeviationGain)}, stability ${fmt(package_.stabilityScore,0)}/100.</p>
+        <p><b>Separate trade channels:</b> Canadian exports ${signed(package_.canadaExportChange,'%')} · U.S. exports ${signed(package_.usExportChange,'%')}.</p>
+        <h3>Linked concessions</h3><ul>${linked || '<li>No non-zero linked concessions in the selected package.</li>'}</ul>
+        <p><small>${Number(model.candidatesExamined).toLocaleString()} linked packages searched; ${Number(model.individuallyRationalCount).toLocaleString()} clear both reservation values; ${model.paretoFrontierSize} are non-dominated.</small></p></section>`;
+      const warning = sheet.querySelector('.briefing-warning');
+      if (warning) warning.insertAdjacentHTML('beforebegin', section); else sheet.insertAdjacentHTML('beforeend', section);
+    }, 0);
+  }
+
   function start() {
     inject();
     const cards = document.querySelector('#cards');
     if (cards) new MutationObserver(render).observe(cards, {childList:true});
+    document.querySelector('#openBriefing')?.addEventListener('click', appendBriefing);
+    document.querySelector('#printBriefing')?.addEventListener('click', appendBriefing);
     render();
   }
 
