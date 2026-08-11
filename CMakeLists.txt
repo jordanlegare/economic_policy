@@ -34,6 +34,18 @@ target_compile_options(calibration_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME calibration_integrity COMMAND calibration_tests)
 set_tests_properties(calibration_integrity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+add_executable(robust_recommendation_tests tests/robust_recommendation_test.cpp)
+target_link_libraries(robust_recommendation_tests PRIVATE policy_engine)
+target_compile_options(robust_recommendation_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME robust_recommendation COMMAND robust_recommendation_tests)
+set_tests_properties(robust_recommendation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(negotiation_room_tests tests/negotiation_room_test.cpp)
+target_link_libraries(negotiation_room_tests PRIVATE policy_engine)
+target_compile_options(negotiation_room_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME negotiation_room COMMAND negotiation_room_tests)
+set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 add_executable(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp)
 target_link_libraries(trade_diplomacy_platform_tests PRIVATE policy_engine)
 target_compile_options(trade_diplomacy_platform_tests PRIVATE -Wall -Wextra -Wpedantic)
