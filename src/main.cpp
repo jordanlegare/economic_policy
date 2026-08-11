@@ -18,6 +18,14 @@
 
 namespace {
 std::string read_file(const std::string& p){std::ifstream f(p,std::ios::binary);std::ostringstream s;s<<f.rdbuf();return s.str();}
+std::string diplomatic_index(){
+  auto html=read_file("web/index.html");
+  const auto head=html.rfind("</head>");
+  if(head!=std::string::npos)html.insert(head,"<link rel=\"stylesheet\" href=\"/diplomat.css\">");
+  const auto body=html.rfind("</body>");
+  if(body!=std::string::npos)html.insert(body,"<script src=\"/diplomat.js\"></script>");
+  return html;
+}
 double number(const std::string& body,const std::string& key,double fallback){
   auto p=body.find("\""+key+"\"");if(p==std::string::npos)return fallback;p=body.find(':',p);if(p==std::string::npos)return fallback;
   try{return std::stod(body.substr(p+1));}catch(...){return fallback;}
@@ -85,8 +93,8 @@ struct NegotiationState {
     const auto bounded=[&](const std::string& key,double fallback){return std::clamp(number(body,key,fallback),0.0,100.0);};
     risk_aversion=bounded("riskAversion",risk_aversion);
     cooperation_ceiling=bounded("cooperationCeiling",cooperation_ceiling);
-    if(canada){retaliatory_tariff=std::min(60.0,bounded("retaliatoryTariff",retaliatory_tariff));canada_priority=bounded("canadaPriority",canada_priority);us_priority=100-canada_priority;updated_by="Minister LeBlanc";}
-    if(us){us_tariff=std::min(60.0,bounded("usTariff",us_tariff));us_priority=bounded("usPriority",us_priority);canada_priority=100-us_priority;updated_by="Mr. Greer";}
+    if(canada){retaliatory_tariff=std::min(60.0,bounded("retaliatoryTariff",retaliatory_tariff));canada_priority=bounded("canadaPriority",canada_priority);us_priority=100-canada_priority;updated_by="Canada delegation";}
+    if(us){us_tariff=std::min(60.0,bounded("usTariff",us_tariff));us_priority=bounded("usPriority",us_priority);canada_priority=100-us_priority;updated_by="U.S. delegation";}
     if(automatic){us_tariff=std::min(60.0,bounded("usTariff",us_tariff));retaliatory_tariff=std::min(60.0,bounded("retaliatoryTariff",retaliatory_tariff));updated_by="automatic win-win search";}
     if(canada||automatic)for(size_t i=0;i<canada_sectors.size();++i)canada_sectors[i]=bounded("canadaSector"+std::to_string(i),canada_sectors[i]);
     if(us||automatic)for(size_t i=0;i<us_sectors.size();++i)us_sectors[i]=bounded("usSector"+std::to_string(i),us_sectors[i]);
@@ -100,7 +108,7 @@ int main(int argc,char**argv){
   int server=socket(AF_INET,SOCK_STREAM,0),yes=1;setsockopt(server,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));
   sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons(port);
   if(bind(server,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))<0||listen(server,16)<0){std::cerr<<"Unable to listen on port "<<port<<"\n";return 1;}
-  std::cout<<"Canada Policy Studio → http://localhost:"<<port<<"\n";
+  std::cout<<"Canada–U.S. Diplomatic Policy Studio → http://localhost:"<<port<<"\n";
   cad::PolicyEngine engine;
   NegotiationState negotiation;
   while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;
@@ -110,9 +118,11 @@ int main(int argc,char**argv){
     else if(first.rfind("POST /api/negotiation ",0)==0){negotiation.update(body);respond(client,200,"application/json",negotiation.json());}
     else if(first.rfind("GET /api/negotiation ",0)==0)respond(client,200,"application/json",negotiation.json());
     else if(first.rfind("GET /api/baseline ",0)==0)respond(client,200,"application/json",live_baseline());
-    else if(first.rfind("GET / ",0)==0)respond(client,200,"text/html; charset=utf-8",read_file("web/index.html"));
+    else if(first.rfind("GET / ",0)==0)respond(client,200,"text/html; charset=utf-8",diplomatic_index());
     else if(first.rfind("GET /app.css ",0)==0)respond(client,200,"text/css",read_file("web/app.css"));
     else if(first.rfind("GET /app.js ",0)==0)respond(client,200,"application/javascript",read_file("web/app.js"));
+    else if(first.rfind("GET /diplomat.css ",0)==0)respond(client,200,"text/css",read_file("web/diplomat.css"));
+    else if(first.rfind("GET /diplomat.js ",0)==0)respond(client,200,"application/javascript",read_file("web/diplomat.js"));
     else respond(client,404,"text/plain","Not found");
     close(client);
   }
