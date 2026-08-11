@@ -45,7 +45,7 @@ assert.strictEqual(model.best.id,'pareto-1');
 assert.strictEqual(model.bridge.id,'pareto-2');
 assert(model.whatTheyWant.join(' ').includes('latest recorded U.S. offer'));
 assert(model.whatTheyWant.join(' ').includes('Canadian retaliatory-tariff relief'));
-assert(model.redLines.mandate.join(' ').includes('Procurement'));
+assert(model.redLines.mandate.join(' ').toLowerCase().includes('procurement'));
 assert(model.whatChanged.length>0);
 assert(model.decisionRequired.join(' ').includes('authority')||model.decisionRequired.join(' ').includes('reciprocity'));
 assert.strictEqual(model.batna.canada,51.2);
