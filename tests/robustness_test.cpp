@@ -7,6 +7,8 @@
 int main() {
   cad::StructuralParameters baseline;
   baseline.uncertainty_scale = 0.10;
+  const double inflation_anchor = baseline.inflation_persistence
+      + baseline.inflation_expectations_weight;
 
   const auto a = cad::draw_structural_parameters(baseline, 32, 12345);
   const auto b = cad::draw_structural_parameters(baseline, 32, 12345);
@@ -22,7 +24,10 @@ int main() {
     assert(std::abs(a[i].neutral_rate - b[i].neutral_rate) < 1e-15);
     assert(std::abs(a[i].phillips_curve_slope - b[i].phillips_curve_slope) < 1e-15);
     assert(a[i].output_persistence > 0.0 && a[i].output_persistence < 1.0);
-    assert(a[i].inflation_persistence > 0.0 && a[i].inflation_persistence < 1.0);
+    assert(a[i].inflation_persistence > 0.0);
+    assert(a[i].inflation_expectations_weight > 0.0);
+    assert(std::abs((a[i].inflation_persistence + a[i].inflation_expectations_weight)
+        - inflation_anchor) < 1e-12);
     assert(a[i].output_shock_sd > 0.0);
     assert(a[i].inflation_shock_sd > 0.0);
   }
@@ -39,6 +44,9 @@ int main() {
   for (const auto& p : exact) {
     assert(std::abs(p.neutral_rate - baseline.neutral_rate) < 1e-15);
     assert(std::abs(p.output_persistence - baseline.output_persistence) < 1e-15);
+    assert(std::abs(p.inflation_persistence - baseline.inflation_persistence) < 1e-15);
+    assert(std::abs(p.inflation_expectations_weight
+        - baseline.inflation_expectations_weight) < 1e-15);
     assert(std::abs(p.phillips_curve_slope - baseline.phillips_curve_slope) < 1e-15);
   }
 
