@@ -18,6 +18,7 @@ jobs:
           node --check web/trade-diplomacy.js
           node --check web/calibration.js
           node --check web/robust-room.js
+          node --check web/principal-briefing.js
       - name: Check calibration tooling
         run: |
           python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py
@@ -50,6 +51,8 @@ jobs:
           if (!pdf.includes('xref') || !pdf.includes('startxref') || !pdf.endsWith('%%EOF\n')) throw new Error('Invalid PDF trailer');
           if (bytes.length < 800) throw new Error('PDF output unexpectedly small');
           NODE
+      - name: Verify principal briefing
+        run: node tests/principal_briefing_test.js
       - name: Verify diplomatic assets are wired
         run: |
           grep -q 'diplomat.css' src/main.cpp
@@ -62,11 +65,16 @@ jobs:
           grep -q 'calibration.js' src/main.cpp
           grep -q 'robust-room.css' src/main.cpp
           grep -q 'robust-room.js' src/main.cpp
+          grep -q 'principal-briefing.css' src/main.cpp
+          grep -q 'principal-briefing.js' src/main.cpp
           grep -q 'Diplomatic decision desk' web/diplomat.js
           grep -q 'Computational negotiation support' web/negotiation-model.js
           grep -q 'Canada–U.S. trade diplomacy operations' web/trade-diplomacy.js
           grep -q 'Data provenance & calibration' web/calibration.js
           grep -q 'Uncertainty & diplomat room' web/robust-room.js
+          grep -q 'Principal Decision Brief' web/principal-briefing.js
+          grep -q 'DECISION REQUIRED TODAY' web/principal-briefing.js
+          grep -q 'EVIDENCE SOURCES' web/principal-briefing.js
           grep -q 'application/pdf' web/trade-diplomacy.js
           grep -q 'Save briefing PDF' web/trade-diplomacy.js
           grep -q 'analyze_negotiation' src/main.cpp
