@@ -53,6 +53,17 @@ jobs:
           NODE
       - name: Verify principal briefing
         run: node tests/principal_briefing_test.js
+      - name: Render principal briefing smoke PDF
+        run: |
+          command -v pdftoppm >/dev/null || (sudo apt-get update && sudo apt-get install -y poppler-utils)
+          mkdir -p artifacts/rendered
+          pdfinfo artifacts/principal-briefing-smoke.pdf | tee artifacts/pdfinfo.txt
+          pdftoppm -png -r 130 artifacts/principal-briefing-smoke.pdf artifacts/rendered/page
+          test -s artifacts/rendered/page-1.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: principal-briefing-smoke
+          path: artifacts/
       - name: Verify diplomatic assets are wired
         run: |
           grep -q 'diplomat.css' src/main.cpp
