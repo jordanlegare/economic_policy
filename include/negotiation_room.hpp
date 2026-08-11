@@ -231,7 +231,8 @@ class NegotiationRoom {
       offer.side = room_detail::json_string(body, "side", "canada");
       offer.package_id = room_detail::json_string(body, "packageId");
       offer.note = room_detail::json_string(body, "note");
-      if (offer.package_id.empty() || !room_detail::find_package(negotiation, offer.package_id)) return false;
+      if (offer.package_id.empty()) return false;
+      if (negotiation && !room_detail::find_package(negotiation, offer.package_id)) return false;
       offers_.push_back(std::move(offer));
     } else if (action == "concession") {
       ConcessionRecord concession;
@@ -413,12 +414,10 @@ class NegotiationRoom {
 
  private:
   void trim_history() {
-    constexpr std::size_t limit = 500;
     auto trim = [](auto& values) {
-      constexpr std::size_t inner_limit = 500;
-      if (values.size() > inner_limit) values.erase(values.begin(), values.end() - static_cast<std::ptrdiff_t>(inner_limit));
+      constexpr std::size_t limit = 500;
+      if (values.size() > limit) values.erase(values.begin(), values.end() - static_cast<std::ptrdiff_t>(limit));
     };
-    (void)limit;
     trim(offers_); trim(concessions_); trim(playbooks_); trim(debriefs_);
   }
 
