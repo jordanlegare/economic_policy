@@ -6,28 +6,127 @@
 #include "negotiation_room.hpp"
 #include "trade_diplomacy_platform.hpp"
 
+#ifdef CAD_EMBEDDED_ASSETS
+#include "embedded_assets.hpp"
+#endif
+
 #include <algorithm>
-#include <arpa/inet.h>
 #include <array>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <netinet/in.h>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
+#ifdef _WIN32
+using socket_handle = SOCKET;
+constexpr socket_handle invalid_socket = INVALID_SOCKET;
+
+struct SocketRuntime {
+  SocketRuntime() : started_(WSAStartup(MAKEWORD(2, 2), &data_) == 0) {}
+  ~SocketRuntime() { if (started_) WSACleanup(); }
+  bool ok() const { return started_; }
+ private:
+  WSADATA data_{};
+  bool started_ = false;
+};
+
+void close_socket(socket_handle value) {
+  if (value != invalid_socket) closesocket(value);
+}
+#else
+using socket_handle = int;
+constexpr socket_handle invalid_socket = -1;
+
+struct SocketRuntime {
+  bool ok() const { return true; }
+};
+
+void close_socket(socket_handle value) {
+  if (value != invalid_socket) close(value);
+}
+#endif
+
+std::filesystem::path runtime_root() {
+#ifdef _WIN32
+  if (const char* local_app_data = std::getenv("LOCALAPPDATA")) {
+    if (*local_app_data) return std::filesystem::path(local_app_data) / "CanadaPolicyStudio";
+  }
+#endif
+  return std::filesystem::path("runtime");
+}
+
 std::string read_file(const std::string& path) {
+#ifdef CAD_EMBEDDED_ASSETS
+  if (const auto* embedded = cad::embedded::find(path)) return std::string(*embedded);
+#endif
   std::ifstream file(path, std::ios::binary);
   std::ostringstream out;
   out << file.rdbuf();
   return out.str();
+}
+
+std::string calibration_path() {
+#ifdef CAD_EMBEDDED_ASSETS
+  const std::string content = read_file("data/calibration/current.snapshot.csv");
+  if (content.empty()) throw std::runtime_error("embedded calibration snapshot is empty");
+  const auto root = runtime_root();
+  std::filesystem::create_directories(root);
+  const auto path = root / "embedded-current.snapshot.csv";
+
+  bool needs_write = true;
+  {
+    std::ifstream existing(path, std::ios::binary);
+    if (existing) {
+      std::ostringstream current;
+      current << existing.rdbuf();
+      needs_write = current.str() != content;
+    }
+  }
+  if (needs_write) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("unable to materialize embedded calibration snapshot");
+    out.write(content.data(), static_cast<std::streamsize>(content.size()));
+    if (!out) throw std::runtime_error("unable to write embedded calibration snapshot");
+  }
+  return path.string();
+#else
+  return "data/calibration/current.snapshot.csv";
+#endif
+}
+
+void open_browser(const std::string& url) {
+#ifdef _WIN32
+  const auto result = reinterpret_cast<std::intptr_t>(
+      ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+  if (result <= 32) std::cerr << "Unable to open the default browser automatically. Open " << url << " manually.\n";
+#else
+  (void)url;
+#endif
 }
 
 std::string diplomatic_index() {
@@ -96,7 +195,17 @@ cad::Economy parse(const std::string& body) {
   return economy;
 }
 
-void respond(int fd, int status, const std::string& type, const std::string& body) {
+void send_all(socket_handle fd, const std::string& output) {
+  std::size_t offset = 0;
+  while (offset < output.size()) {
+    const int chunk = static_cast<int>(std::min<std::size_t>(output.size() - offset, 1024 * 1024));
+    const auto sent = ::send(fd, output.data() + offset, chunk, 0);
+    if (sent <= 0) break;
+    offset += static_cast<std::size_t>(sent);
+  }
+}
+
+void respond(socket_handle fd, int status, const std::string& type, const std::string& body) {
   const char* text = status == 200 ? "OK" : status == 400 ? "Bad Request"
       : status == 413 ? "Payload Too Large" : "Not Found";
   std::ostringstream header;
@@ -105,17 +214,24 @@ void respond(int fd, int status, const std::string& type, const std::string& bod
          << "Content-Length: " << body.size() << "\r\n"
          << "Connection: close\r\n"
          << "Cache-Control: no-store\r\n\r\n";
-  const auto output = header.str() + body;
-  send(fd, output.data(), output.size(), 0);
+  send_all(fd, header.str() + body);
 }
 
 std::string download(const char* url) {
+#ifdef _WIN32
+  std::string command = "curl.exe -LfsS --max-time 4 \"" + std::string(url) + "\" 2>NUL";
+  auto open_pipe = _popen;
+  auto close_pipe = _pclose;
+#else
   std::string command = "curl -LfsS --max-time 4 '" + std::string(url) + "' 2>/dev/null";
+  auto open_pipe = popen;
+  auto close_pipe = pclose;
+#endif
   std::string out;
   char buffer[4096];
-  if (FILE* pipe = popen(command.c_str(), "r")) {
+  if (FILE* pipe = open_pipe(command.c_str(), "r")) {
     while (fgets(buffer, sizeof(buffer), pipe)) out += buffer;
-    pclose(pipe);
+    close_pipe(pipe);
   }
   return out;
 }
@@ -244,42 +360,101 @@ struct NegotiationState {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
   std::signal(SIGPIPE, SIG_IGN);
-  const int port = argc > 1 ? std::stoi(argv[1]) : 8080;
-  const bool bind_all = argc > 2 && std::string(argv[2]) == "--bind-all";
-  int server = socket(AF_INET, SOCK_STREAM, 0), yes = 1;
-  setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(bind_all ? INADDR_ANY : INADDR_LOOPBACK);
-  address.sin_port = htons(port);
-  if (bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0 || listen(server, 16) < 0) {
-    std::cerr << "Unable to listen on port " << port << '\n';
+#endif
+  int port = 8080;
+  bool port_set = false;
+  bool bind_all = false;
+#ifdef _WIN32
+  bool launch_browser = true;
+#else
+  bool launch_browser = false;
+#endif
+
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--bind-all") bind_all = true;
+    else if (arg == "--no-browser") launch_browser = false;
+    else if (arg == "--browser") launch_browser = true;
+    else if (!port_set) {
+      try {
+        port = std::stoi(arg);
+        port_set = true;
+      } catch (...) {
+        std::cerr << "Unknown argument: " << arg << '\n';
+        return 2;
+      }
+    } else {
+      std::cerr << "Unknown argument: " << arg << '\n';
+      return 2;
+    }
+  }
+  if (port < 1 || port > 65535) {
+    std::cerr << "Port must be between 1 and 65535\n";
+    return 2;
+  }
+
+  SocketRuntime sockets;
+  if (!sockets.ok()) {
+    std::cerr << "Unable to initialize the network stack\n";
     return 1;
   }
 
-  cad::CalibratedPolicyEngine engine("data/calibration/current.snapshot.csv");
+  socket_handle server = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (server == invalid_socket) {
+    std::cerr << "Unable to create server socket\n";
+    return 1;
+  }
+  int yes = 1;
+#ifdef _WIN32
+  setsockopt(server, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
+#else
+  setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+#endif
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(bind_all ? INADDR_ANY : INADDR_LOOPBACK);
+  address.sin_port = htons(static_cast<unsigned short>(port));
+  if (::bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 || ::listen(server, 16) != 0) {
+    std::cerr << "Unable to listen on port " << port << '\n';
+    close_socket(server);
+    return 1;
+  }
+
+  std::string calibrated_path;
+  try {
+    calibrated_path = calibration_path();
+  } catch (const std::exception& error) {
+    std::cerr << "Unable to prepare calibration data: " << error.what() << '\n';
+    close_socket(server);
+    return 1;
+  }
+  const auto room_path = (runtime_root() / "negotiation-room.events").string();
+  cad::CalibratedPolicyEngine engine(calibrated_path);
   NegotiationState negotiation;
-  cad::NegotiationRoom room("runtime/negotiation-room.events");
+  cad::NegotiationRoom room(room_path);
   cad::NegotiationAnalysis last_bargaining;
   cad::RobustRecommendationAnalysis last_robustness;
   bool has_evaluation = false;
+  const std::string local_url = "http://localhost:" + std::to_string(port);
   std::cout << "Canada–U.S. Diplomatic Policy Studio → "
             << (bind_all ? "http://0.0.0.0:" : "http://localhost:") << port << '\n'
             << "Calibration: " << engine.snapshot().grade << " ("
             << engine.snapshot().completeness << "% complete, as of " << engine.snapshot().as_of << ")\n"
-            << "Diplomat Room: local append-only persistence at runtime/negotiation-room.events\n";
+            << "Diplomat Room: local append-only persistence at " << room_path << '\n';
+  if (launch_browser) open_browser(local_url);
 
   constexpr std::size_t max_request_bytes = 128 * 1024;
   while (true) {
-    const int client = accept(server, nullptr, nullptr);
-    if (client < 0) continue;
+    const socket_handle client = ::accept(server, nullptr, nullptr);
+    if (client == invalid_socket) continue;
     std::string request;
     char buffer[8192];
-    ssize_t count;
+    int count;
     bool rejected = false;
-    while ((count = recv(client, buffer, sizeof(buffer), 0)) > 0) {
-      request.append(buffer, count);
+    while ((count = ::recv(client, buffer, static_cast<int>(sizeof(buffer)), 0)) > 0) {
+      request.append(buffer, static_cast<std::size_t>(count));
       if (request.size() > max_request_bytes) {
         respond(client, 413, "text/plain", "Request too large"); rejected = true; break;
       }
@@ -297,7 +472,7 @@ int main(int argc, char** argv) {
         if (request.size() >= headers + 4 + length) break;
       }
     }
-    if (rejected) { close(client); continue; }
+    if (rejected) { close_socket(client); continue; }
 
     const auto first = request.substr(0, request.find("\r\n"));
     const auto split = request.find("\r\n\r\n");
@@ -358,6 +533,6 @@ int main(int argc, char** argv) {
     else if (first.rfind("GET /robust-room.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/robust-room.css"));
     else if (first.rfind("GET /robust-room.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/robust-room.js"));
     else respond(client, 404, "text/plain", "Not found");
-    close(client);
+    close_socket(client);
   }
 }

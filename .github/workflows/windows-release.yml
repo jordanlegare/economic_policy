@@ -1,0 +1,92 @@
+name: Windows standalone executable
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure x64 Release build
+        run: cmake -S . -B build-windows -A x64
+
+      - name: Build standalone executable
+        run: cmake --build build-windows --config Release --parallel
+
+      - name: Run native regression tests
+        run: ctest --test-dir build-windows -C Release --output-on-failure
+
+      - name: Smoke test from an empty directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'build-windows/Release/Canada-US-Diplomatic-Policy-Studio.exe').Path
+          $standalone = Join-Path $env:RUNNER_TEMP 'cad-policy-standalone'
+          if (Test-Path $standalone) { Remove-Item -Recurse -Force $standalone }
+          New-Item -ItemType Directory -Path $standalone | Out-Null
+          $stdout = Join-Path $standalone 'server.out.log'
+          $stderr = Join-Path $standalone 'server.err.log'
+          $process = Start-Process -FilePath $exe -ArgumentList @('18080','--no-browser') `
+            -WorkingDirectory $standalone -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 80; $i++) {
+              try {
+                $room = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/api/room' -TimeoutSec 1
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 250
+              }
+            }
+            if (-not $ready) {
+              Get-Content $stdout -ErrorAction SilentlyContinue
+              Get-Content $stderr -ErrorAction SilentlyContinue
+              throw 'Standalone executable did not start listening'
+            }
+
+            $index = Invoke-WebRequest -Uri 'http://127.0.0.1:18080/' -UseBasicParsing
+            if ($index.Content -notmatch 'Canada') { throw 'Embedded index.html was not served' }
+
+            $appJs = Invoke-WebRequest -Uri 'http://127.0.0.1:18080/app.js' -UseBasicParsing
+            if ($appJs.Content.Length -lt 1000) { throw 'Embedded app.js payload is unexpectedly small' }
+
+            $calibration = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/api/calibration'
+            if (-not $calibration.loaded) { throw 'Embedded calibration snapshot was not loaded' }
+            if (-not $calibration.snapshotId) { throw 'Calibration snapshot ID is missing' }
+
+            $evaluation = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:18080/api/evaluate' `
+              -ContentType 'application/json' -Body '{}' -TimeoutSec 60
+            if (-not $evaluation.robustness) { throw 'Full robustness response is missing' }
+            if ($evaluation.robustness.secondStageMonteCarloDraws -ne 5000) {
+              throw 'Unexpected second-stage Monte Carlo draw count'
+            }
+
+            $repoFiles = Get-ChildItem -Path $standalone -Recurse -File |
+              Where-Object { $_.Name -match 'index\.html|app\.js|current\.snapshot\.csv' }
+            if ($repoFiles) { throw 'Standalone smoke test unexpectedly relied on copied repository assets' }
+          } finally {
+            if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - name: Write SHA-256 checksum
+        shell: pwsh
+        run: |
+          $exe = 'build-windows/Release/Canada-US-Diplomatic-Policy-Studio.exe'
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          "$hash  Canada-US-Diplomatic-Policy-Studio.exe" | Set-Content -NoNewline 'build-windows/Release/Canada-US-Diplomatic-Policy-Studio.exe.sha256'
+          Write-Host "SHA256 $hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Canada-US-Diplomatic-Policy-Studio-windows-x64
+          path: |
+            build-windows/Release/Canada-US-Diplomatic-Policy-Studio.exe
+            build-windows/Release/Canada-US-Diplomatic-Policy-Studio.exe.sha256
+          if-no-files-found: error
