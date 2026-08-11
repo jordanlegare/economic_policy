@@ -52,7 +52,10 @@ cad::Economy parse(const std::string& b){cad::Economy e;
   }
   return e;
 }
-void respond(int fd,int status,const std::string&type,const std::string&body){std::ostringstream h;h<<"HTTP/1.1 "<<status<<(status==200?" OK":" Not Found")<<"\r\nContent-Type: "<<type<<"\r\nContent-Length: "<<body.size()<<"\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n";auto out=h.str()+body;send(fd,out.data(),out.size(),0);}
+void respond(int fd,int status,const std::string&type,const std::string&body){
+  const char* text=status==200?"OK":status==400?"Bad Request":status==413?"Payload Too Large":"Not Found";
+  std::ostringstream h;h<<"HTTP/1.1 "<<status<<' '<<text<<"\r\nContent-Type: "<<type<<"\r\nContent-Length: "<<body.size()<<"\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n";auto out=h.str()+body;send(fd,out.data(),out.size(),0);
+}
 std::string download(const char* url){
   std::string cmd="curl -LfsS --max-time 4 '"+std::string(url)+"' 2>/dev/null";std::string out;char b[4096];
   if(FILE* p=popen(cmd.c_str(),"r")){while(fgets(b,sizeof(b),p))out+=b;pclose(p);}return out;
@@ -107,14 +110,24 @@ struct NegotiationState {
 
 int main(int argc,char**argv){
   std::signal(SIGPIPE,SIG_IGN);int port=argc>1?std::stoi(argv[1]):8080;
+  const bool bind_all=argc>2&&std::string(argv[2])=="--bind-all";
   int server=socket(AF_INET,SOCK_STREAM,0),yes=1;setsockopt(server,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));
-  sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons(port);
+  sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=htonl(bind_all?INADDR_ANY:INADDR_LOOPBACK);addr.sin_port=htons(port);
   if(bind(server,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))<0||listen(server,16)<0){std::cerr<<"Unable to listen on port "<<port<<"\n";return 1;}
-  std::cout<<"Canada–U.S. Diplomatic Policy Studio → http://localhost:"<<port<<"\n";
+  std::cout<<"Canada–U.S. Diplomatic Policy Studio → "<<(bind_all?"http://0.0.0.0:":"http://localhost:")<<port<<"\n";
   cad::PolicyEngine engine;
   NegotiationState negotiation;
-  while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;
-    while((n=recv(client,buf,sizeof(buf),0))>0){req.append(buf,n);auto h=req.find("\r\n\r\n");if(h!=std::string::npos){size_t len=0,p=req.find("Content-Length:");if(p!=std::string::npos)len=std::stoul(req.substr(p+15));if(req.size()>=h+4+len)break;}}
+  constexpr size_t max_request_bytes=128*1024;
+  while(true){int client=accept(server,nullptr,nullptr);if(client<0)continue;std::string req;char buf[8192];ssize_t n;bool rejected=false;
+    while((n=recv(client,buf,sizeof(buf),0))>0){
+      req.append(buf,n);
+      if(req.size()>max_request_bytes){respond(client,413,"text/plain","Request too large");rejected=true;break;}
+      auto h=req.find("\r\n\r\n");if(h!=std::string::npos){size_t len=0,p=req.find("Content-Length:");if(p!=std::string::npos){try{len=std::stoul(req.substr(p+15));}catch(...){respond(client,400,"text/plain","Invalid Content-Length");rejected=true;break;}}
+        if(len>max_request_bytes){respond(client,413,"text/plain","Request body too large");rejected=true;break;}
+        if(req.size()>=h+4+len)break;
+      }
+    }
+    if(rejected){close(client);continue;}
     auto first=req.substr(0,req.find("\r\n"));auto split=req.find("\r\n\r\n");std::string body=split==std::string::npos?"":req.substr(split+4);
     if(first.rfind("POST /api/evaluate ",0)==0){
       const auto economy=parse(body);const auto result=engine.evaluate(economy);const auto bargaining=cad::analyze_negotiation(economy,result);
