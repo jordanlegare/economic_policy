@@ -25,6 +25,7 @@ struct Economy {
   double tariff_relief = 0.0, trade_diversification = 0.0;
   double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
+  double minimum_bilateral_growth = 0.0;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
 
   Economy() { us_sector_coverage.fill(100.0); canada_sector_coverage.fill(100.0); }
@@ -40,13 +41,14 @@ struct SectorImpact {
 struct Scenario {
   std::string id, name, description;
   double first_move_bp = 0.0, fiscal_impulse = 0.0, productive_share = 0.5;
-  double negotiated_relief = 0.0;
+  double negotiated_relief = 0.0, targeted_relief = 0.0, diversification = 0.0;
   double score = 0.0, boc_score = 0.0, federal_score = 0.0, us_score = 0.0;
   double inflation = 0.0, growth = 0.0, unemployment = 0.0;
   double us_growth = 0.0, bilateral_growth_floor = 0.0;
   bool sustained_bilateral_growth = false;
   double debt_gdp = 0.0, housing_gap = 0.0, recession_risk = 0.0;
-  double cost_of_living = 0.0, real_income_growth = 0.0, export_change = 0.0;
+  double cost_of_living = 0.0, real_income_growth = 0.0;
+  double export_change = 0.0, us_export_change = 0.0;
   double us_tariff_revenue_usd = 0.0, us_tariff_revenue_cad = 0.0;
   double canada_tariff_revenue_cad = 0.0, canada_tariff_revenue_usd = 0.0;
   double canada_trade_balance_cad = 0.0, us_trade_balance_usd = 0.0;
@@ -54,7 +56,9 @@ struct Scenario {
   double us_export_expansion_usd = 0.0, canada_export_redirection_cad = 0.0;
   bool zero_trade_deficit = false;
   double debt_stress_p90 = 0.0, inflation_stress_p90 = 0.0;
-  std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{};
+  bool sector_verified = false;
+  std::array<double, 20> applied_us_sector_coverage{}, applied_canada_sector_coverage{};
+  std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{}, us_export_path{};
   std::vector<SectorImpact> sectors;
 };
 
@@ -65,6 +69,16 @@ struct WinWinRecommendation {
   std::string strategy_id, explanation;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
   std::array<double, 20> us_sector_output{}, canada_sector_value{};
+  int sector_candidates_examined = 0;
+  int sector_pareto_frontier_size = 0;
+  double sector_grid_step = 25.0;
+  double verified_canada_score = 0.0, verified_us_score = 0.0;
+  double verified_min_sector_metric = 0.0;
+  bool verified_win_win = false;
+  bool independent_us_trade_channel = true;
+  bool trade_balance_is_objective = false;
+  bool mandate_weights_fixed = true;
+  std::string sector_search_method = "Pareto dynamic program over a 25-point bilateral coverage grid, followed by stochastic re-simulation";
 };
 
 struct Result {
@@ -81,11 +95,6 @@ class PolicyEngine {
   Result evaluate(const Economy& economy) const;
 
  private:
-  // Policy alternatives must be evaluated under the same stochastic worlds.
-  // The engine historically used seed_ + candidate_id, which let Monte Carlo
-  // luck contaminate policy rankings. CommonSeed deliberately ignores those
-  // offsets so every candidate replays an identical shock stream (common
-  // random numbers), reducing variance in pairwise policy comparisons.
   struct CommonSeed {
     std::uint64_t value;
     operator std::uint64_t() const { return value; }
