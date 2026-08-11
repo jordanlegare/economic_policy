@@ -28,6 +28,11 @@ target_link_libraries(win_win_optimality_tests PRIVATE policy_engine)
 target_compile_options(win_win_optimality_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME win_win_optimality COMMAND win_win_optimality_tests)
 
+add_executable(calibration_tests tests/calibration_test.cpp)
+target_link_libraries(calibration_tests PRIVATE policy_engine)
+target_compile_options(calibration_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME calibration_integrity COMMAND calibration_tests)
+
 add_executable(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp)
 target_link_libraries(trade_diplomacy_platform_tests PRIVATE policy_engine)
 target_compile_options(trade_diplomacy_platform_tests PRIVATE -Wall -Wextra -Wpedantic)
