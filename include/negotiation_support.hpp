@@ -3,6 +3,7 @@
 #include "policy_engine.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -33,9 +34,14 @@ struct NegotiationPackage {
   double us_deviation_gain = 0.0;
   double canada_export_change = 0.0;
   double us_export_change = 0.0;
+  double trade_balance_gap_usd = 0.0;
   bool individually_rational = false;
   bool pareto_efficient = false;
   bool stable = false;
+  bool sector_verified = false;
+  bool verified_win_win = false;
+  std::array<double, 20> us_sector_coverage{};
+  std::array<double, 20> canada_sector_coverage{};
   std::vector<NegotiationIssueMove> issues;
 };
 
@@ -49,6 +55,13 @@ struct NegotiationAnalysis {
   int candidates_examined = 0;
   int individually_rational_count = 0;
   int pareto_frontier_size = 0;
+  int bargaining_grid_levels = 5;
+  int sector_verification_draws = 0;
+  bool independent_us_trade_channel = false;
+  bool trade_balance_is_objective = true;
+  bool mandate_weights_fixed = false;
+  bool sector_schedule_verified = false;
+  bool data_integrity_pass = false;
   NegotiationPackage recommended;
   std::vector<NegotiationPackage> frontier;
 };
@@ -90,38 +103,35 @@ inline EvaluatedTerms evaluate_terms(const Economy& e, const Scenario& scenario,
   const double canada_base = canada_payoff(scenario);
   const double us_base = scenario.us_score;
 
-  // Distinct bilateral trade channels. Canada's export channel responds to the
-  // U.S. tariff and U.S.-market access. The U.S. export channel responds to
-  // Canadian retaliation and access to the Canadian market. They are never
-  // reused as proxies for one another.
-  const double canada_tariff_exposure = e.trade_elasticity * e.us_tariff_canada
+  // The stochastic policy engine has already propagated the selected 20-sector
+  // tariff-coverage schedule through two independent trade channels. The
+  // bargaining layer therefore starts from those verified country-specific
+  // export outcomes instead of reconstructing U.S. welfare from Canadian data.
+  const double canada_relief_capacity = e.trade_elasticity * e.us_tariff_canada
       * clamp_value(e.exports_to_us_share / 100.0, 0.0, 1.0);
-  const double us_tariff_exposure = e.trade_elasticity * e.canada_retaliatory_tariff
+  const double us_relief_capacity = e.trade_elasticity * e.canada_retaliatory_tariff
       * clamp_value(e.imports_from_us_share / 100.0, 0.0, 1.0);
 
   out.canada_export_change = scenario.export_change
-      + 0.55 * canada_tariff_exposure * terms.us_tariff_relief
+      + 0.55 * canada_relief_capacity * terms.us_tariff_relief
       + 1.10 * terms.border_facilitation
       + 0.70 * terms.procurement_reciprocity
       + 0.45 * terms.supply_chain_commitment;
-
-  out.us_export_change = -0.55 * us_tariff_exposure * (1.0 - terms.canada_tariff_relief)
-      + 0.25 * (scenario.us_growth - e.us_growth)
+  out.us_export_change = scenario.us_export_change
+      + 0.55 * us_relief_capacity * terms.canada_tariff_relief
       + 0.95 * terms.border_facilitation
       + 0.95 * terms.procurement_reciprocity
       + 0.35 * terms.supply_chain_commitment;
 
-  // Issue linkage creates value when reciprocal tariff moves are paired with
-  // implementation measures rather than treated as isolated concessions.
+  const double canada_trade_gain = out.canada_export_change - scenario.export_change;
+  const double us_trade_gain = out.us_export_change - scenario.us_export_change;
+
   const double tariff_link = terms.us_tariff_relief * terms.canada_tariff_relief;
   const double implementation_link = terms.border_facilitation * terms.procurement_reciprocity;
   const double resilience_link = terms.supply_chain_commitment
       * (0.5 * terms.us_tariff_relief + 0.5 * terms.canada_tariff_relief);
-  const double linkage_bonus = 1.25 * tariff_link + 0.85 * implementation_link + 0.70 * resilience_link;
-
-  const double canada_trade_gain = out.canada_export_change - scenario.export_change;
-  const double us_trade_baseline = -0.55 * us_tariff_exposure + 0.25 * (scenario.us_growth - e.us_growth);
-  const double us_trade_gain = out.us_export_change - us_trade_baseline;
+  const double linkage_bonus = 1.25 * tariff_link + 0.85 * implementation_link
+      + 0.70 * resilience_link;
 
   const double canada_relief_cost = terms.canada_tariff_relief
       * (0.35 + 0.11 * e.canada_retaliatory_tariff);
@@ -138,7 +148,6 @@ inline EvaluatedTerms evaluate_terms(const Economy& e, const Scenario& scenario,
       + linkage_bonus
       - canada_relief_cost
       - supply_fiscal_cost, 0.0, 100.0);
-
   out.us_utility = clamp_value(us_base
       + 0.82 * us_trade_gain
       + 1.20 * terms.border_facilitation
@@ -147,11 +156,6 @@ inline EvaluatedTerms evaluate_terms(const Economy& e, const Scenario& scenario,
       + linkage_bonus
       - us_relief_cost, 0.0, 100.0);
 
-  // One-shot incentive-compatibility screen. Each side is allowed to keep the
-  // counterparty's concessions while withdrawing its own costly commitments;
-  // the model then subtracts a compact implementation/reputation penalty. A
-  // positive deviation gain is therefore a warning that the package needs
-  // stronger sequencing, verification, safeguards, or enforcement.
   const double implementation_penalty = 0.55 + 0.012 * e.cooperation_ceiling
       + 0.35 * terms.border_facilitation + 0.25 * terms.procurement_reciprocity;
   const double canada_commitment_cost = canada_relief_cost + supply_fiscal_cost
@@ -169,6 +173,15 @@ inline EvaluatedTerms evaluate_terms(const Economy& e, const Scenario& scenario,
       + std::max(0.0, out.us_deviation_gain);
   out.stability_score = clamp_value(100.0 - 14.0 * positive_deviation, 0.0, 100.0);
   return out;
+}
+
+inline double generalized_nash(double canada_surplus, double us_surplus,
+                               double canada_weight, double us_weight) {
+  if (canada_surplus <= 0.0 || us_surplus <= 0.0) return 0.0;
+  const double ca = clamp_value(canada_weight, 1.0, 100.0);
+  const double us = clamp_value(us_weight, 1.0, 100.0);
+  const double total = ca + us;
+  return std::exp((ca * std::log(canada_surplus) + us * std::log(us_surplus)) / total);
 }
 
 struct Candidate {
@@ -195,10 +208,16 @@ inline NegotiationPackage make_package(const Candidate& candidate, std::size_t r
   package.us_deviation_gain = candidate.evaluated.us_deviation_gain;
   package.canada_export_change = candidate.evaluated.canada_export_change;
   package.us_export_change = candidate.evaluated.us_export_change;
+  package.trade_balance_gap_usd = candidate.scenario->trade_balance_gap_usd;
   package.individually_rational = candidate.canada_surplus >= -1e-9 && candidate.us_surplus >= -1e-9;
   package.pareto_efficient = true;
   package.stable = candidate.evaluated.canada_deviation_gain <= 0.5
       && candidate.evaluated.us_deviation_gain <= 0.5;
+  package.sector_verified = candidate.scenario->sector_verified;
+  package.verified_win_win = package.individually_rational && package.pareto_efficient
+      && package.sector_verified;
+  package.us_sector_coverage = candidate.scenario->applied_us_sector_coverage;
+  package.canada_sector_coverage = candidate.scenario->applied_canada_sector_coverage;
   package.issues = {
       {"us-tariff-relief", "U.S. tariff relief", 0.0, 100.0 * candidate.terms.us_tariff_relief},
       {"canada-tariff-relief", "Canadian retaliatory-tariff relief", 100.0 * candidate.terms.canada_tariff_relief, 0.0},
@@ -222,6 +241,16 @@ inline std::string escape_json(const std::string& value) {
   return out;
 }
 
+template<std::size_t N>
+inline void array_json(std::ostringstream& out, const std::array<double, N>& values) {
+  out << '[';
+  for (std::size_t i = 0; i < N; ++i) {
+    if (i) out << ',';
+    out << values[i];
+  }
+  out << ']';
+}
+
 inline void package_json(std::ostringstream& out, const NegotiationPackage& package) {
   out << "{\"id\":\"" << escape_json(package.id)
       << "\",\"strategyId\":\"" << escape_json(package.strategy_id)
@@ -236,10 +265,17 @@ inline void package_json(std::ostringstream& out, const NegotiationPackage& pack
       << ",\"usDeviationGain\":" << package.us_deviation_gain
       << ",\"canadaExportChange\":" << package.canada_export_change
       << ",\"usExportChange\":" << package.us_export_change
+      << ",\"tradeBalanceGapUsd\":" << package.trade_balance_gap_usd
       << ",\"individuallyRational\":" << (package.individually_rational ? "true" : "false")
       << ",\"paretoEfficient\":" << (package.pareto_efficient ? "true" : "false")
       << ",\"stable\":" << (package.stable ? "true" : "false")
-      << ",\"issues\":[";
+      << ",\"sectorVerified\":" << (package.sector_verified ? "true" : "false")
+      << ",\"verifiedWinWin\":" << (package.verified_win_win ? "true" : "false")
+      << ",\"usSectorCoverage\":";
+  array_json(out, package.us_sector_coverage);
+  out << ",\"canadaSectorCoverage\":";
+  array_json(out, package.canada_sector_coverage);
+  out << ",\"issues\":[";
   for (std::size_t i = 0; i < package.issues.size(); ++i) {
     if (i) out << ',';
     const auto& issue = package.issues[i];
@@ -256,6 +292,10 @@ inline void package_json(std::ostringstream& out, const NegotiationPackage& pack
 inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Result& result) {
   using namespace negotiation_detail;
   NegotiationAnalysis analysis;
+  analysis.independent_us_trade_channel = result.recommendation.independent_us_trade_channel;
+  analysis.trade_balance_is_objective = result.recommendation.trade_balance_is_objective;
+  analysis.mandate_weights_fixed = result.recommendation.mandate_weights_fixed;
+  analysis.sector_verification_draws = result.recommendation.verification_monte_carlo_draws;
   if (result.scenarios.empty()) return analysis;
 
   const Scenario* canada_batna_scenario = &result.scenarios.front();
@@ -276,13 +316,16 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
   analysis.canada_batna_strategy = canada_batna_scenario->name;
   analysis.us_batna_strategy = us_batna_scenario->name;
   const double caution = clamp_value(economy.risk_aversion / 100.0, 0.0, 1.0);
-  analysis.canada_reservation = clamp_value(canada_batna + (100.0 - canada_batna) * (0.008 + 0.008 * caution), 0.0, 99.8);
-  analysis.us_reservation = clamp_value(us_batna + (100.0 - us_batna) * (0.008 + 0.008 * caution), 0.0, 99.8);
+  analysis.canada_reservation = clamp_value(canada_batna
+      + (100.0 - canada_batna) * (0.008 + 0.008 * caution), 0.0, 99.8);
+  analysis.us_reservation = clamp_value(us_batna
+      + (100.0 - us_batna) * (0.008 + 0.008 * caution), 0.0, 99.8);
 
   const double cooperation_cap = clamp_value(economy.cooperation_ceiling / 100.0, 0.0, 1.0);
-  const double levels[] = {0.0, 0.5, 1.0};
+  const double levels[] = {0.0, 0.25, 0.50, 0.75, 1.0};
+  constexpr int combinations_per_scenario = 3125;
   std::vector<Candidate> feasible;
-  feasible.reserve(result.scenarios.size() * 243);
+  feasible.reserve(result.scenarios.size() * combinations_per_scenario);
 
   for (const auto& scenario : result.scenarios) {
     for (double ur : levels) for (double cr : levels) for (double border : levels)
@@ -297,12 +340,11 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
         candidate.evaluated = evaluate_terms(economy, scenario, candidate.terms);
         candidate.canada_surplus = candidate.evaluated.canada_utility - analysis.canada_reservation;
         candidate.us_surplus = candidate.evaluated.us_utility - analysis.us_reservation;
-        candidate.nash_gain = std::sqrt(std::max(0.0, candidate.canada_surplus)
-            * std::max(0.0, candidate.us_surplus));
+        candidate.nash_gain = generalized_nash(candidate.canada_surplus, candidate.us_surplus,
+            economy.canada_priority, economy.us_priority);
         ++analysis.candidates_examined;
-        if (candidate.canada_surplus >= -1e-9 && candidate.us_surplus >= -1e-9) {
+        if (candidate.canada_surplus >= -1e-9 && candidate.us_surplus >= -1e-9)
           feasible.push_back(candidate);
-        }
       }
   }
   analysis.individually_rational_count = static_cast<int>(feasible.size());
@@ -324,10 +366,10 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
   analysis.pareto_frontier_size = static_cast<int>(frontier.size());
 
   std::sort(frontier.begin(), frontier.end(), [](const Candidate& a, const Candidate& b) {
-    const double a_score = a.nash_gain + 0.025 * a.evaluated.stability_score
-        + 0.005 * std::min(a.evaluated.canada_utility, a.evaluated.us_utility);
-    const double b_score = b.nash_gain + 0.025 * b.evaluated.stability_score
-        + 0.005 * std::min(b.evaluated.canada_utility, b.evaluated.us_utility);
+    const double a_score = a.nash_gain + 0.030 * a.evaluated.stability_score
+        + 0.080 * std::min(a.canada_surplus, a.us_surplus);
+    const double b_score = b.nash_gain + 0.030 * b.evaluated.stability_score
+        + 0.080 * std::min(b.canada_surplus, b.us_surplus);
     return a_score > b_score;
   });
 
@@ -345,6 +387,14 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
   analysis.frontier.reserve(keep);
   for (std::size_t i = 0; i < keep; ++i) analysis.frontier.push_back(make_package(frontier[i], i));
   analysis.recommended = analysis.frontier.front();
+  analysis.sector_schedule_verified = analysis.recommended.sector_verified;
+  analysis.data_integrity_pass = analysis.independent_us_trade_channel
+      && !analysis.trade_balance_is_objective
+      && analysis.mandate_weights_fixed
+      && analysis.recommended.individually_rational
+      && analysis.recommended.pareto_efficient
+      && analysis.recommended.sector_verified;
+  analysis.recommended.verified_win_win = analysis.data_integrity_pass;
   return analysis;
 }
 
@@ -355,12 +405,21 @@ inline std::string negotiation_to_json(const NegotiationAnalysis& analysis) {
   out << "{\"candidatesExamined\":" << analysis.candidates_examined
       << ",\"individuallyRationalCount\":" << analysis.individually_rational_count
       << ",\"paretoFrontierSize\":" << analysis.pareto_frontier_size
+      << ",\"bargainingGridLevels\":" << analysis.bargaining_grid_levels
       << ",\"batna\":{\"canada\":" << analysis.canada_batna
       << ",\"us\":" << analysis.us_batna
       << ",\"canadaStrategy\":\"" << escape_json(analysis.canada_batna_strategy)
       << "\",\"usStrategy\":\"" << escape_json(analysis.us_batna_strategy) << "\"}"
       << ",\"reservation\":{\"canada\":" << analysis.canada_reservation
-      << ",\"us\":" << analysis.us_reservation << "},\"recommendedPackage\":";
+      << ",\"us\":" << analysis.us_reservation << "}"
+      << ",\"trust\":{\"independentUsTradeChannel\":"
+      << (analysis.independent_us_trade_channel ? "true" : "false")
+      << ",\"tradeBalanceIsObjective\":" << (analysis.trade_balance_is_objective ? "true" : "false")
+      << ",\"mandateWeightsFixed\":" << (analysis.mandate_weights_fixed ? "true" : "false")
+      << ",\"sectorScheduleVerified\":" << (analysis.sector_schedule_verified ? "true" : "false")
+      << ",\"verificationMonteCarloDraws\":" << analysis.sector_verification_draws
+      << ",\"dataIntegrityPass\":" << (analysis.data_integrity_pass ? "true" : "false") << "}"
+      << ",\"recommendedPackage\":";
   package_json(out, analysis.recommended);
   out << ",\"frontier\":[";
   for (std::size_t i = 0; i < analysis.frontier.size(); ++i) {
