@@ -2,6 +2,8 @@
 #include "calibration.hpp"
 #include "negotiation_support.hpp"
 #include "negotiation_trade_alignment.hpp"
+#include "robust_recommendation.hpp"
+#include "negotiation_room.hpp"
 #include "trade_diplomacy_platform.hpp"
 
 #include <algorithm>
@@ -36,7 +38,8 @@ std::string diplomatic_index() {
         "<link rel=\"stylesheet\" href=\"/diplomat.css\">"
         "<link rel=\"stylesheet\" href=\"/negotiation-model.css\">"
         "<link rel=\"stylesheet\" href=\"/trade-diplomacy.css\">"
-        "<link rel=\"stylesheet\" href=\"/calibration.css\">");
+        "<link rel=\"stylesheet\" href=\"/calibration.css\">"
+        "<link rel=\"stylesheet\" href=\"/robust-room.css\">");
   }
   const auto body = html.rfind("</body>");
   if (body != std::string::npos) {
@@ -44,7 +47,8 @@ std::string diplomatic_index() {
         "<script src=\"/diplomat.js\"></script>"
         "<script src=\"/negotiation-model.js\"></script>"
         "<script src=\"/trade-diplomacy.js\"></script>"
-        "<script src=\"/calibration.js\"></script>");
+        "<script src=\"/calibration.js\"></script>"
+        "<script src=\"/robust-room.js\"></script>");
   }
   return html;
 }
@@ -247,10 +251,15 @@ int main(int argc, char** argv) {
 
   cad::CalibratedPolicyEngine engine("data/calibration/current.snapshot.csv");
   NegotiationState negotiation;
+  cad::NegotiationRoom room("runtime/negotiation-room.events");
+  cad::NegotiationAnalysis last_bargaining;
+  cad::RobustRecommendationAnalysis last_robustness;
+  bool has_evaluation = false;
   std::cout << "Canada–U.S. Diplomatic Policy Studio → "
             << (bind_all ? "http://0.0.0.0:" : "http://localhost:") << port << '\n'
             << "Calibration: " << engine.snapshot().grade << " ("
-            << engine.snapshot().completeness << "% complete, as of " << engine.snapshot().as_of << ")\n";
+            << engine.snapshot().completeness << "% complete, as of " << engine.snapshot().as_of << ")\n"
+            << "Diplomat Room: local append-only persistence at runtime/negotiation-room.events\n";
 
   constexpr std::size_t max_request_bytes = 128 * 1024;
   while (true) {
@@ -290,10 +299,26 @@ int main(int argc, char** argv) {
       auto result = engine.evaluate(economy);  // Mutates economy to the calibrated values actually simulated.
       auto bargaining = cad::analyze_negotiation(economy, result);
       cad::align_negotiation_trade_channels(economy, result, bargaining);
+      auto robustness = cad::analyze_robust_recommendations(economy, result, bargaining, engine.snapshot());
       auto platform = cad::build_trade_diplomacy_platform(economy, result, bargaining);
+      last_bargaining = bargaining;
+      last_robustness = robustness;
+      has_evaluation = true;
       auto with_calibration = cad::attach_calibration_json(cad::to_json(result), engine.snapshot());
       auto with_negotiation = cad::attach_negotiation_json(with_calibration, bargaining);
-      respond(client, 200, "application/json", cad::attach_trade_diplomacy_json(with_negotiation, platform));
+      auto with_robustness = cad::attach_robustness_json(with_negotiation, robustness);
+      respond(client, 200, "application/json", cad::attach_trade_diplomacy_json(with_robustness, platform));
+    } else if (first.rfind("POST /api/room ", 0) == 0) {
+      const bool ok = room.apply_event(body,
+          has_evaluation ? &last_bargaining : nullptr,
+          has_evaluation ? &last_robustness : nullptr);
+      respond(client, ok ? 200 : 400, "application/json",
+          room.json(has_evaluation ? &last_bargaining : nullptr,
+                    has_evaluation ? &last_robustness : nullptr));
+    } else if (first.rfind("GET /api/room ", 0) == 0) {
+      respond(client, 200, "application/json",
+          room.json(has_evaluation ? &last_bargaining : nullptr,
+                    has_evaluation ? &last_robustness : nullptr));
     } else if (first.rfind("POST /api/negotiation ", 0) == 0) {
       negotiation.update(body); respond(client, 200, "application/json", negotiation.json());
     } else if (first.rfind("GET /api/negotiation ", 0) == 0) {
@@ -314,6 +339,8 @@ int main(int argc, char** argv) {
     else if (first.rfind("GET /trade-diplomacy.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/trade-diplomacy.js"));
     else if (first.rfind("GET /calibration.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/calibration.css"));
     else if (first.rfind("GET /calibration.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/calibration.js"));
+    else if (first.rfind("GET /robust-room.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/robust-room.css"));
+    else if (first.rfind("GET /robust-room.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/robust-room.js"));
     else respond(client, 404, "text/plain", "Not found");
     close(client);
   }

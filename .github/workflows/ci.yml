@@ -17,6 +17,7 @@ jobs:
           node --check web/negotiation-model.js
           node --check web/trade-diplomacy.js
           node --check web/calibration.js
+          node --check web/robust-room.js
       - name: Check calibration tooling
         run: |
           python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py
@@ -59,16 +60,21 @@ jobs:
           grep -q 'trade-diplomacy.js' src/main.cpp
           grep -q 'calibration.css' src/main.cpp
           grep -q 'calibration.js' src/main.cpp
+          grep -q 'robust-room.css' src/main.cpp
+          grep -q 'robust-room.js' src/main.cpp
           grep -q 'Diplomatic decision desk' web/diplomat.js
           grep -q 'Computational negotiation support' web/negotiation-model.js
           grep -q 'Canada–U.S. trade diplomacy operations' web/trade-diplomacy.js
           grep -q 'Data provenance & calibration' web/calibration.js
+          grep -q 'Uncertainty & diplomat room' web/robust-room.js
           grep -q 'application/pdf' web/trade-diplomacy.js
           grep -q 'Save briefing PDF' web/trade-diplomacy.js
           grep -q 'analyze_negotiation' src/main.cpp
+          grep -q 'analyze_robust_recommendations' src/main.cpp
           grep -q 'build_trade_diplomacy_platform' src/main.cpp
           grep -q 'CalibratedPolicyEngine' src/main.cpp
           grep -q '/api/calibration' src/main.cpp
+          grep -q '/api/room' src/main.cpp
 
   build-and-test:
     strategy:
