@@ -81,7 +81,14 @@ if(WIN32)
   add_custom_target(cad_embedded_assets DEPENDS "${CAD_EMBEDDED_HEADER}")
   add_dependencies(cad-policy-studio cad_embedded_assets)
   target_include_directories(cad-policy-studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  target_compile_definitions(cad-policy-studio PRIVATE CAD_EMBEDDED_ASSETS=1)
+  target_compile_definitions(cad-policy-studio PRIVATE
+    CAD_EMBEDDED_ASSETS=1
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+  )
+  if(MSVC)
+    target_compile_definitions(cad-policy-studio PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
   target_link_libraries(cad-policy-studio PRIVATE ws2_32 shell32)
   set_target_properties(cad-policy-studio PROPERTIES OUTPUT_NAME "Canada-US-Diplomatic-Policy-Studio")
 
