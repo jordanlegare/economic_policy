@@ -14,7 +14,6 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const n = value => Number(value || 0);
   const f = (value, digits=1) => n(value).toFixed(digits);
-  const sign = (value, suffix='') => `${n(value) >= 0 ? '+' : ''}${f(value)}${suffix}`;
   const canadaScore = scenario => (n(scenario.bocScore) + n(scenario.federalScore)) / 2;
 
   function checks(scenario) {
@@ -92,6 +91,17 @@
     return points;
   }
 
+  function institutionalizeLabels() {
+    const live = document.querySelector('.party-live-strip b');
+    if (live && /LeBlanc|Greer/i.test(live.textContent)) live.innerHTML = '<i></i> Canada ↔ U.S. delegations connected';
+    const title = document.querySelector('#partyTitle');
+    if (title && /LeBlanc/i.test(title.textContent)) title.textContent = 'Canada delegation trade table';
+    else if (title && /Greer/i.test(title.textContent)) title.textContent = 'U.S. delegation trade table';
+    const delegation = document.querySelector('#delegationName');
+    if (delegation && /LeBlanc/i.test(delegation.textContent)) delegation.textContent = 'Canada delegation';
+    else if (delegation && /Greer/i.test(delegation.textContent)) delegation.textContent = 'U.S. delegation';
+  }
+
   function renderStatus(packages) {
     const scenarios = result.scenarios;
     const top = scenarios[0], next = scenarios[1];
@@ -165,7 +175,7 @@
     const concessions = concessionRows().slice(0,5);
     const notes = document.querySelector('#diplomatNotes')?.value?.trim();
     const points = talkingPoints(packages);
-    return `<div class="briefing-kicker">Restricted working brief · analytical support</div>
+    return `<div class="briefing-kicker">Working brief · analytical support</div>
       <h1>Canada–United States negotiation brief</h1>
       <div class="briefing-meta">Generated ${esc(new Date().toLocaleString())} · Current model state · Not an official negotiating instruction</div>
       <h2>Decision</h2><div class="briefing-decision"><b>Open with ${esc(best.name)}.</b><p>Keep <b>${esc(packages.bridge.name)}</b> ready as the bridge package and <b>${esc(packages.fallback.name)}</b> as the fallback.</p></div>
@@ -196,6 +206,7 @@
   function flashCopy() { const b=document.querySelector('#copyBriefing'); const old=b.textContent; b.textContent='Copied'; setTimeout(()=>b.textContent=old,1200); }
 
   function renderDiplomat() {
+    institutionalizeLabels();
     if (typeof result === 'undefined' || !result?.scenarios?.length || !document.querySelector('#diplomatCommand')) return;
     const packages = packageSet();
     renderStatus(packages); renderPackages(packages); renderRedlines(packages); renderConcessions(); renderTalkingPoints(packages); renderMatrix();
@@ -234,6 +245,7 @@
     const confidenceLabel = document.querySelector('.confidence span'); if (confidenceLabel) confidenceLabel.textContent = 'DATA COVERAGE INDICATOR';
     const canadaTab=document.querySelector('[data-negotiator="canada"]'); if(canadaTab) canadaTab.textContent='🇨🇦 Canada delegation';
     const usTab=document.querySelector('[data-negotiator="us"]'); if(usTab) usTab.textContent='🇺🇸 U.S. delegation';
+    institutionalizeLabels();
 
     const anchor = document.querySelector('.impact-strip');
     if (!anchor) return;
@@ -259,6 +271,7 @@
     document.body.appendChild(dialog);
     bind();
     const cards=document.querySelector('#cards'); if(cards) new MutationObserver(renderDiplomat).observe(cards,{childList:true});
+    const party=document.querySelector('#partyView'); if(party) new MutationObserver(institutionalizeLabels).observe(party,{childList:true,subtree:true,characterData:true});
     renderDiplomat();
   }
 
