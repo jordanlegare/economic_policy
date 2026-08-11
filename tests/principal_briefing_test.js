@@ -7,7 +7,8 @@ global.document={readyState:'loading',addEventListener(){},querySelector(){retur
 global.localStorage={getItem(){return null;},setItem(){}};
 global.navigator={};
 global.fetch=async()=>({ok:true,json:async()=>({})});
-vm.runInThisContext(fs.readFileSync('web/principal-briefing.js','utf8'));
+const principalSource=fs.readFileSync('web/principal-briefing.js','utf8');
+vm.runInThisContext(principalSource);
 
 const issue=(id,label,canadaMove,usMove)=>({id,label,canadaMove,usMove});
 const p1={id:'pareto-1',strategyId:'joint-growth',strategyName:'Joint growth compact',canadaUtility:66,usUtility:64,canadaSurplus:8,usSurplus:7,stabilityScore:91,issues:[
@@ -70,4 +71,57 @@ assert(pdf.includes('Snapshot ca-us-2026-08-11'));
 const noOffer=window.PrincipalBriefing.buildModel({result,room:{round:1,phase:'preparation',mandate:[],offers:[],debriefs:[],concessionBalance:{}},settings:{},redlines:{minCanada:45,minUs:45,maxRecession:40,minGrowth:0,maxInflation:3.5},now:'2026-08-11T12:00:00Z'});
 assert(noOffer.whatTheyWant.join(' ').includes('No U.S. package has been recorded'));
 assert(noOffer.whatTheyWant.join(' ').includes('Do not describe model-implied U.S. utility as a stated U.S. ask'));
+
+// Regression for the Firefox content-process leak: assigning textContent inside
+// a MutationObserver callback can itself enqueue another child-list mutation,
+// even when the assigned text is unchanged. The production observer must
+// disconnect around its own relabel pass and avoid no-op writes.
+{
+  let activeObserver=null,callbacks=0;
+  class FakeNode{
+    constructor(text=''){this._text=text;this.id='';}
+    get textContent(){return this._text;}
+    set textContent(value){this._text=String(value);if(activeObserver?.active){callbacks++;if(callbacks>6)throw new Error('principal briefing MutationObserver feedback loop');activeObserver.callback([{type:'childList',target:this}]);}}
+    addEventListener(){}
+    querySelectorAll(selector){return selector==='button'?[saveButton]:[];}
+    closest(){return null;}
+  }
+  class FakeMutationObserver{
+    constructor(callback){this.callback=callback;this.active=false;activeObserver=this;}
+    observe(){this.active=true;}
+    disconnect(){this.active=false;}
+  }
+  const printButton=new FakeNode('Print briefing PDF');
+  const openButton=new FakeNode('Open briefing');
+  const saveButton=new FakeNode('Print');
+  const dialog=new FakeNode('');
+  const fakeDocument={
+    readyState:'complete',
+    addEventListener(){},
+    querySelector(selector){
+      if(selector==='#printBriefing')return printButton;
+      if(selector==='#openBriefing')return openButton;
+      if(selector==='#diplomaticBriefing')return dialog;
+      if(selector==='#saveBriefingPdfDialog')return saveButton.id==='saveBriefingPdfDialog'?saveButton:null;
+      if(selector==='#copyBriefing')return null;
+      return null;
+    },
+    querySelectorAll(){return[];},
+    body:{appendChild(){}}
+  };
+  const context={
+    window:{},document:fakeDocument,localStorage:{getItem(){return null;},setItem(){}},navigator:{},
+    fetch:async()=>({ok:true,json:async()=>({})}),MutationObserver:FakeMutationObserver,
+    setTimeout,clearTimeout,URL,Blob,Uint8Array,Map,Date,Math,Number,String,Array,Object,JSON,console
+  };
+  vm.runInNewContext(principalSource,context);
+  assert.strictEqual(saveButton.textContent,'Save principal PDF');
+  assert.strictEqual(callbacks,0,'initial relabel runs before observing');
+  saveButton.textContent='Print';
+  assert.strictEqual(saveButton.textContent,'Save principal PDF');
+  assert.strictEqual(callbacks,1,'external dialog mutation must terminate after one callback');
+  saveButton.textContent='Save principal PDF';
+  assert.strictEqual(callbacks,2,'same-text mutation must not recursively re-enter observer');
+}
+
 console.log('principal briefing test passed');
