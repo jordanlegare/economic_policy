@@ -82,7 +82,7 @@ struct WinWinRecommendation {
   bool independent_us_trade_channel = true;
   bool trade_balance_is_objective = false;
   bool mandate_weights_fixed = true;
-  std::string sector_search_method = "Exact Pareto dynamic program over a 25-point bilateral coverage grid; top frontier packages are stochastic re-simulated";
+  std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; top frontier packages are stochastic re-simulated";
 };
 
 struct Result {
