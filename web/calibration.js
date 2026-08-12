@@ -3,6 +3,8 @@
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const pct = value => `${Number(value || 0).toFixed(0)}%`;
+  const ratioPct = value => `${(100 * Number(value || 0)).toFixed(1)}%`;
+  const fmt = (value, digits = 2) => Number(value ?? 0).toFixed(digits);
 
   function inject() {
     if (document.querySelector('#calibrationTrust')) return;
@@ -15,8 +17,136 @@
     anchor.insertAdjacentElement('afterend', section);
   }
 
+  function injectEvidence() {
+    if (document.querySelector('#modelEvidence')) return;
+    const anchor = document.querySelector('#calibrationTrust');
+    if (!anchor) return;
+    const section = document.createElement('section');
+    section.id = 'modelEvidence';
+    section.className = 'model-evidence';
+    section.innerHTML = `
+      <div class="calibration-head"><div><div class="eyebrow">Model evidence V2</div><h2>Does the recommendation survive assumptions, history, and preferences?</h2><p>These are separate diagnostics. Structural uncertainty, historical backtests, and delegation-preference sensitivity are not interchangeable confidence measures.</p></div><div id="evidenceGrade" class="calibration-grade">READY</div></div>
+      <div id="evidenceRegistry" class="calibration-summary"><div><span>Structural registry</span><b>Loading…</b><small>provenance and sensitivity bounds</small></div></div>
+      <div class="evidence-actions">
+        <button id="runHistoricalEvidence" type="button">Historical diagnostics</button>
+        <button id="runWelfareEvidence" type="button">Preference sensitivity</button>
+        <button id="runStructuralEvidence" type="button">Structural robustness · 6 draws</button>
+      </div>
+      <div id="evidenceNotice" class="evidence-notice">Run a diagnostic when needed. Structural and preference analyses rerun the full policy/sector optimization and can be computationally intensive.</div>
+      <div id="evidenceOutput" class="evidence-output"></div>`;
+    anchor.insertAdjacentElement('afterend', section);
+    bindEvidence();
+    loadRegistry();
+  }
+
+  async function jsonFetch(url, options) {
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error || `Request failed (${response.status})`);
+    return data;
+  }
+
+  function busy(button, active, label) {
+    if (!button) return;
+    if (active) {
+      button.dataset.label = button.textContent;
+      button.textContent = label;
+      button.disabled = true;
+    } else {
+      button.textContent = button.dataset.label || button.textContent;
+      button.disabled = false;
+    }
+  }
+
+  async function loadRegistry() {
+    try {
+      const r = await jsonFetch('/api/v2/structural-registry', {cache:'no-store'});
+      const grade = document.querySelector('#evidenceGrade');
+      if (grade) {
+        grade.textContent = r.complete ? 'V2 EVIDENCE READY' : 'REGISTRY INCOMPLETE';
+        grade.classList.toggle('certified', !!r.complete);
+      }
+      const target = document.querySelector('#evidenceRegistry');
+      if (target) target.innerHTML = `
+        <div><span>Structural registry</span><b>${esc(r.registryId || 'none')}</b><small>as of ${esc(r.asOf || 'unknown')}</small></div>
+        <div><span>Sampled coefficients</span><b>${Number(r.sampledParameterCount || 0)}</b><small>${r.complete?'complete provenance/bounds contract':'registry requires review'}</small></div>
+        <div><span>Interpretation</span><b>Sensitivity envelopes</b><small>not statistical confidence intervals</small></div>`;
+    } catch (error) {
+      const target = document.querySelector('#evidenceRegistry');
+      if (target) target.innerHTML = `<div><span>V2 evidence API</span><b>Unavailable</b><small>${esc(error.message)}</small></div>`;
+    }
+  }
+
+  function renderHistorical(data) {
+    const s = data.summary || {};
+    const episodes = data.episodes || [];
+    document.querySelector('#evidenceOutput').innerHTML = `
+      <div class="evidence-result-head"><div><div class="eyebrow">Historical vintage diagnostics</div><h3>${Number(s.validCount || 0)}/${Number(s.fixtureCount || 0)} valid episodes · ${fmt(s.meanStateCoverage,0)}% mean declared-state coverage</h3></div><span class="evidence-pill">NO-LOOK-AHEAD ${s.allValidNoLookahead?'PASS':'FAIL'}</span></div>
+      <div class="evidence-metrics">
+        <div><span>Policy direction accuracy</span><b>${ratioPct(s.policy?.directionAccuracy)}</b><small>MAE ${fmt(s.policy?.meanAbsoluteErrorBp,1)} bp</small></div>
+        <div><span>Inflation direction</span><b>${ratioPct(s.inflation?.directionAccuracy)}</b><small>MAE ${fmt(s.inflation?.meanAbsoluteError,2)}</small></div>
+        <div><span>Growth direction</span><b>${ratioPct(s.growth?.directionAccuracy)}</b><small>MAE ${fmt(s.growth?.meanAbsoluteError,2)}</small></div>
+        <div><span>Unemployment direction</span><b>${ratioPct(s.unemployment?.directionAccuracy)}</b><small>MAE ${fmt(s.unemployment?.meanAbsoluteError,2)}</small></div>
+      </div>
+      <div class="evidence-cases">${episodes.map(e=>`<article><b>${esc(e.fixtureId)}</b><span>${esc(e.decisionDate)} · ${esc(e.stateGrade)}</span><small>policy ${e.policyDirectionMatch?'direction match':'direction miss'} · predicted ${fmt(e.recommendedFirstMoveBp,0)} bp vs realized ${fmt(e.realizedFirstMoveBp,0)} bp</small></article>`).join('')}</div>
+      <p class="evidence-footnote">Three episodes permit descriptive aggregate reporting only; they do not constitute statistical validation.</p>`;
+  }
+
+  function renderWelfare(w) {
+    const alternatives = (w.alternatives || []).map(a=>`<article><b>${esc(a.strategyId)}</b><span>${ratioPct(a.winRate)} of tested profiles</span><small>${Number(a.wins || 0)} wins</small></article>`).join('');
+    document.querySelector('#evidenceOutput').innerHTML = `
+      <div class="evidence-result-head"><div><div class="eyebrow">Normative preference sensitivity</div><h3>${esc(w.classification || 'not evaluated')} · ${Number(w.profileCount || 0)} tested preference profiles</h3></div><span class="evidence-pill">MANDATE WEIGHTS ${w.allMandateWeightsFixed?'FIXED':'CHECK'}</span></div>
+      <div class="evidence-metrics">
+        <div><span>Exact control retention</span><b>${ratioPct(w.exactRecommendationRetentionRate)}</b><small>same recommended controls</small></div>
+        <div><span>Strategy-family retention</span><b>${ratioPct(w.strategyFamilyRetentionRate)}</b><small>same named strategy</small></div>
+        <div><span>Sector-package retention</span><b>${ratioPct(w.sectorPackageRetentionRate)}</b><small>same 20-sector package</small></div>
+        <div><span>Fairness range</span><b>${fmt(w.fairnessMin)}–${fmt(w.fairnessMax)}</b><small>minimum-country score</small></div>
+      </div>
+      <div class="evidence-switches"><b>Nearest tested switches:</b> priority ${w.prioritySwitchObserved?`${fmt(w.nearestPrioritySwitchPoints,0)} points`:'none in grid'} · risk ${w.riskSwitchObserved?`${fmt(w.nearestRiskSwitchPoints,0)} points`:'none in grid'}.</div>
+      <div class="evidence-cases">${alternatives}</div>
+      <p class="evidence-footnote">The 3×3 grid is a local decision-stability experiment, not a probability distribution or confidence interval.</p>`;
+  }
+
+  function renderStructural(r) {
+    document.querySelector('#evidenceOutput').innerHTML = `
+      <div class="evidence-result-head"><div><div class="eyebrow">Structural decision robustness</div><h3>${esc(r.classification || 'not evaluated')} · ${Number(r.parameterDraws || 0)} structural calibrations</h3></div><span class="evidence-pill">FULL DECISION SEARCH</span></div>
+      <div class="evidence-metrics">
+        <div><span>Exact recommendation survival</span><b>${ratioPct(r.recommendationWinRate)}</b><small>${Number(r.recommendationWins || 0)}/${Number(r.parameterDraws || 0)} draws</small></div>
+        <div><span>Strategy-family survival</span><b>${ratioPct(r.strategyFamilyWinRate)}</b><small>allows control drift</small></div>
+        <div><span>Control retention</span><b>${ratioPct(r.referencePolicyControlRetentionRate)}</b><small>288-control search rerun</small></div>
+        <div><span>Sector-package retention</span><b>${ratioPct(r.referencePackageRetentionRate)}</b><small>20-sector package reoptimized</small></div>
+      </div>
+      <div class="evidence-switches"><b>Audit:</b> ${Number(r.policyControlCandidatesExamined || 0).toLocaleString()} control candidates · ${Number(r.nestedSectorOptimizations || 0).toLocaleString()} nested sector optimizations · common random numbers ${r.commonRandomNumbers?'on':'off'}.</div>
+      <p class="evidence-footnote">The interactive 6-draw run is a fast sensitivity screen. Use 24 draws for the repository's reference V2 structural experiment.</p>`;
+  }
+
+  function bindEvidence() {
+    document.querySelector('#runHistoricalEvidence')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      busy(button, true, 'Running historical suite…');
+      try { renderHistorical(await jsonFetch('/api/v2/backtests', {cache:'no-store'})); }
+      catch (error) { document.querySelector('#evidenceOutput').innerHTML = `<div class="calibration-warning"><b>Historical diagnostics failed.</b> ${esc(error.message)}</div>`; }
+      finally { busy(button, false); }
+    });
+    document.querySelector('#runWelfareEvidence')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      busy(button, true, 'Running preference grid…');
+      try { renderWelfare(await jsonFetch('/api/v2/welfare', {method:'POST'})); }
+      catch (error) { document.querySelector('#evidenceOutput').innerHTML = `<div class="calibration-warning"><b>Preference sensitivity failed.</b> ${esc(error.message)}</div>`; }
+      finally { busy(button, false); }
+    });
+    document.querySelector('#runStructuralEvidence')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      busy(button, true, 'Running structural search…');
+      try { renderStructural(await jsonFetch('/api/v2/robustness', {method:'POST'})); }
+      catch (error) { document.querySelector('#evidenceOutput').innerHTML = `<div class="calibration-warning"><b>Structural robustness failed.</b> ${esc(error.message)}</div>`; }
+      finally { busy(button, false); }
+    });
+  }
+
   function render() {
     inject();
+    injectEvidence();
     if (typeof result === 'undefined' || !result?.calibration) return;
     const c = result.calibration;
     const certified = !!c.certifiedForEmpiricalUse;
@@ -61,6 +191,7 @@
 
   function start() {
     inject();
+    injectEvidence();
     const cards = document.querySelector('#cards');
     if (cards) new MutationObserver(render).observe(cards, {childList:true});
     document.querySelector('#openBriefing')?.addEventListener('click', appendBriefing);
