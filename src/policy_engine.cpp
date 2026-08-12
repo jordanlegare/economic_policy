@@ -69,7 +69,6 @@ TradeNetworkInput make_trade_network_input(const Economy& e, const Scenario& pol
 
 SectorImpact direct_sector_impact(const Economy& e, const Scenario& policy,
                                   std::size_t sector, double us_coverage,
-                                  double canada_coverage,
                                   const TariffIncidence& us_incidence,
                                   const TariffIncidence& canada_incidence) {
   const auto& p = sector_profiles[sector];
@@ -114,7 +113,7 @@ SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size
                              double us_coverage, double canada_coverage) {
   const auto input = make_trade_network_input(e, policy);
   const auto network = evaluate_trade_source(input, sector, us_coverage, canada_coverage);
-  const auto direct = direct_sector_impact(e, policy, sector, us_coverage, canada_coverage,
+  const auto direct = direct_sector_impact(e, policy, sector, us_coverage,
       network.us_tariff, network.canada_tariff);
 
   SectorUtility out;
@@ -173,7 +172,7 @@ void add_sector_impacts(Scenario& s, const Economy& e) {
   for (std::size_t sector = 0; sector < std::size(sector_profiles); ++sector) {
     const auto& n = network.sectors[sector];
     auto impact = direct_sector_impact(e, s, sector, e.us_sector_coverage[sector],
-        e.canada_sector_coverage[sector], n.us_tariff, n.canada_tariff);
+        n.us_tariff, n.canada_tariff);
     impact.canada_output += n.canada_indirect_output;
     impact.canada_jobs += n.canada_indirect_jobs;
     impact.canada_prices += n.canada_indirect_prices;
