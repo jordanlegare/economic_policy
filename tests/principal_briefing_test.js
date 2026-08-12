@@ -108,6 +108,9 @@ assert.strictEqual(differentInspection.batna.primary.canadaOverBatna,model.batna
 
 const preview=window.PrincipalBriefing.previewHtml(model);
 assert(preview.includes('Deal vs. walk-away (BATNA)'));
+assert(preview.includes('Canadian modeled outside option'));
+assert(preview.includes('U.S. modeled outside option'));
+assert(preview.includes('Engine scenario provenance — not a negotiating package:'));
 assert(preview.includes('Canada outside option'));
 assert(preview.includes('U.S. outside option'));
 assert(preview.includes('14.80'));
@@ -129,8 +132,9 @@ assert(pdf.includes('DEAL VS WALK-AWAY'));
 assert(pdf.includes('AGREEMENT PREMIUM OVER WALK-AWAY'));
 assert(pdf.includes('Canada walk-away benchmark'));
 assert(pdf.includes('U.S. walk-away benchmark'));
-assert(pdf.includes('Engine scenario provenance (not a negotiating package): Canada outside option'));
-assert(pdf.includes('Engine scenario provenance (not a negotiating package): U.S. outside option'));
+assert(pdf.includes('not a negotiating package'));
+assert(pdf.includes('Canada outside option'));
+assert(pdf.includes('U.S. outside option'));
 assert((pdf.match(/\/Type \/Page /g)||[]).length>=3);
 assert(pdf.includes('WORKING BRIEF - ANALYTICAL SUPPORT'));
 assert(pdf.includes('Snapshot ca-us-2026-08-11'));
@@ -190,6 +194,8 @@ assert(staleRoomModel.whatChanged.some(x=>x.includes('latest recorded bridge cou
 
 assert(principalSource.includes('function scenarioByStrategy('),'principal brief must resolve BATNA economics from the negotiation-engine strategy, not the inspected card');
 assert(principalSource.includes('function gainSummary('),'principal brief must calculate deal premiums over BATNA and reservation values');
+assert(principalSource.includes("title=isCa?'Canadian modeled outside option':'U.S. modeled outside option'"),'walk-away cards must not use legacy scenario names as their titles');
+assert(principalSource.includes('Engine scenario provenance — not a negotiating package:'),'legacy scenario labels must be explicitly demoted to provenance');
 assert(principalSource.includes('function dashboardFingerprint()'),'principal brief must fingerprint visible dashboard inputs');
 assert(principalSource.includes('async function ensureDashboardCurrent()'),'principal brief must synchronize stale controls before generation');
 assert(principalSource.includes('waitForAdjustmentCommit()'),'principal brief must wait for an active range gesture to commit');
