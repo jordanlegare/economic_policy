@@ -13,7 +13,7 @@ INPUT,canada_retaliatory_tariff,0.0,percent,2020-03-03,2020-03-03,backtest_scope
 BENCHMARK,first_move_bp,-50,basis_points,2020-03-04,2020-03-04,boc_policy_2020_03_04,observed-policy
 OUTCOME,inflation,5.2,percent_yoy,2023-02-28,2023-03-21,statcan_cpi_2023_02,observed
 OUTCOME,unemployment,5.0,percent,2023-02-28,2023-03-10,statcan_lfs_2023_02,observed
-OUTCOME,gdp_growth,0.0,percent_quarterly,2022-12-31,2023-02-28,statcan_gdp_2022_q4,observed
+OUTCOME,gdp_growth,0.0,percent_annualized,2022-12-31,2023-02-28,statcan_gdp_2022_q4,official-derived
 SOURCE,boc_policy_2020_01_22,Bank of Canada,Policy rate decision 2020-01-22,https://www.bankofcanada.ca/2020/01/fad-press-release-2020-01-22/
 SOURCE,statcan_cpi_2020_01,Statistics Canada,Consumer Price Index January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200219/dq200219a-eng.htm
 SOURCE,statcan_gdp_2019_q4,Statistics Canada,Gross domestic product fourth quarter 2019,https://www150.statcan.gc.ca/n1/daily-quotidien/200228/dq200228a-eng.htm
