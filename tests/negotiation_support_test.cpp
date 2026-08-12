@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <iostream>
 #include <string>
 
 namespace {
@@ -113,6 +114,8 @@ int main() {
   calibrated_like.us_tariff_canada = 5.0;
   calibrated_like.canada_retaliatory_tariff = 1.5;
   const auto calibrated_analysis = cad::analyze_negotiation(calibrated_like, result);
+  std::cerr << "calibrated pareto frontier size=" << calibrated_analysis.pareto_frontier_size
+            << ", visible=" << calibrated_analysis.frontier.size() << '\n';
   assert(calibrated_analysis.pareto_frontier_size >= 9);
   assert(calibrated_analysis.frontier.size() >= 9);
   for (std::size_t i = 0; i < 9; ++i) {
