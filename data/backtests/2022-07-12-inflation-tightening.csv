@@ -1,0 +1,23 @@
+# Canada Policy Studio historical backtest fixture v1
+META,fixture_id,ca-2022-07-12-inflation-tightening
+META,decision_date,2022-07-12
+META,horizon_quarters,12
+INPUT,policy_rate,1.5,percent,2022-06-01,2022-06-01,boc_policy_2022_06_01,observed
+INPUT,inflation,7.7,percent_yoy,2022-05-31,2022-06-22,statcan_cpi_2022_05,observed
+INPUT,gdp_growth,3.2,percent_annualized,2022-03-31,2022-05-31,statcan_gdp_2022_q1,official-derived
+INPUT,unemployment,4.9,percent,2022-06-30,2022-07-08,statcan_lfs_2022_06,observed
+INPUT,wage_growth,5.2,percent_yoy,2022-06-30,2022-07-08,statcan_lfs_2022_06,observed
+INPUT,us_tariff_canada,0.0,percent,2022-07-12,2022-07-12,backtest_scope,scope-control
+INPUT,canada_retaliatory_tariff,0.0,percent,2022-07-12,2022-07-12,backtest_scope,scope-control
+BENCHMARK,first_move_bp,100,basis_points,2022-07-13,2022-07-13,boc_policy_2022_07_13,observed-policy
+OUTCOME,inflation,1.7,percent_yoy,2025-07-31,2025-08-19,statcan_cpi_2025_07,observed
+OUTCOME,unemployment,6.9,percent,2025-07-31,2025-08-08,statcan_lfs_2025_07,observed
+OUTCOME,gdp_growth,-1.575,percent_annualized,2025-06-30,2025-08-29,statcan_gdp_2025_q2,official-derived
+SOURCE,boc_policy_2022_06_01,Bank of Canada,Policy rate decision 2022-06-01,https://www.bankofcanada.ca/2022/06/fad-press-release-2022-06-01/
+SOURCE,statcan_cpi_2022_05,Statistics Canada,Consumer Price Index May 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220622/dq220622a-eng.htm
+SOURCE,statcan_gdp_2022_q1,Statistics Canada,Gross domestic product first quarter 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220531/dq220531b-eng.htm
+SOURCE,statcan_lfs_2022_06,Statistics Canada,Labour Force Survey June 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220708/dq220708a-eng.htm
+SOURCE,boc_policy_2022_07_13,Bank of Canada,Policy rate decision 2022-07-13,https://www.bankofcanada.ca/2022/07/fad-press-release-2022-07-13/
+SOURCE,statcan_cpi_2025_07,Statistics Canada,Consumer Price Index July 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250819/dq250819a-eng.htm
+SOURCE,statcan_lfs_2025_07,Statistics Canada,Labour Force Survey July 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250808/dq250808a-eng.htm
+SOURCE,statcan_gdp_2025_q2,Statistics Canada,Gross domestic product second quarter 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250829/dq250829a-eng.htm
