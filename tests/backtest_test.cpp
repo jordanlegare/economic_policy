@@ -23,6 +23,7 @@ int main() {
   const auto vintage = cad::apply_backtest_fixture(base, fixture);
   assert(std::abs(vintage.policy_rate - 1.5) < 1e-12);
   assert(std::abs(vintage.inflation - 7.7) < 1e-12);
+  assert(std::abs(vintage.core_inflation - 4.15) < 1e-12);
   assert(std::abs(vintage.gdp_growth - 3.2) < 1e-12);
   assert(std::abs(vintage.unemployment - 4.9) < 1e-12);
   assert(std::abs(vintage.wage_growth - 5.2) < 1e-12);
