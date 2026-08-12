@@ -453,7 +453,8 @@ int main(int argc, char** argv) {
   cad::PolicyEngine evidence_engine(20260810, structural_parameters, structural_registry);
 
   const auto room_path = (runtime_root() / "negotiation-room.events").string();
-  cad::CalibratedPolicyEngine engine(calibrated_path);
+  cad::CalibratedPolicyEngine engine(
+      calibrated_path, 20260810, structural_parameters, structural_registry);
   NegotiationState negotiation;
   cad::NegotiationRoom room(room_path);
   cad::NegotiationAnalysis last_bargaining;

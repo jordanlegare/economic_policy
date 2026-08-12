@@ -91,7 +91,7 @@ int main() {
   const auto registry = cad::load_structural_parameter_registry(
       "data/calibration/structural_parameter_registry.csv");
   assert(registry.loaded);
-  assert(registry.registry_id == "v2-structural-2026-08-12");
+  assert(registry.registry_id == "v2-structural-quarterly-2026-08-12");
   assert(registry.as_of == "2026-08-12");
   assert(cad::structural_parameter_registry_complete(registry));
   assert(registry.entries.size() == cad::required_structural_parameter_names().size());

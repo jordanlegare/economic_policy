@@ -55,6 +55,8 @@ if(WIN32)
     data/calibration/current.snapshot.csv
     data/calibration/structural_parameter_registry.csv
     data/calibration/empirical_structural_evidence.csv
+    data/calibration/quarterly_structural_estimates.csv
+    data/calibration/quarterly_residual_covariance.csv
     data/calibration/state_measurement_registry.csv
     data/backtests/2015-01-20-oil-shock.csv
     data/backtests/2020-03-03-pandemic-onset.csv
@@ -131,6 +133,8 @@ cad_add_test(state_measurement_tests tests/state_measurement_test.cpp state_meas
 set_tests_properties(state_measurement_contract PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(empirical_calibration_tests tests/empirical_calibration_test.cpp empirical_structural_calibration)
 set_tests_properties(empirical_structural_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+cad_add_test(quarterly_empirical_calibration_tests tests/quarterly_empirical_calibration_test.cpp quarterly_empirical_calibration)
+set_tests_properties(quarterly_empirical_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
