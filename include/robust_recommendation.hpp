@@ -60,6 +60,10 @@ struct RobustRecommendationAnalysis {
   bool parameter_uncertainty_included = true;
   bool political_acceptance_probability_estimated = false;
   bool empirically_calibrated = false;
+  // True only when both the upstream joint policy/sector search and the entire
+  // retained epsilon-Pareto bargaining set were complete. The UI may promote a
+  // robust package as the primary initial recommendation only when this is true.
+  bool candidate_set_complete = false;
   std::string uncertainty_grade = "model-risk-provisional";
   std::string recommended_package_id;
   std::string selection_rule = "Reservation gate -> minimize maximum regret -> maximize joint-clear probability -> maximize worst-country CVaR surplus";
@@ -172,6 +176,8 @@ inline RobustRecommendationAnalysis analyze_robust_recommendations(
   analysis.second_stage_monte_carlo_draws = std::max(200, draws);
   analysis.seed = seed;
   analysis.empirically_calibrated = calibration.completeness >= 95.0;
+  analysis.candidate_set_complete = result.recommendation.global_search_complete
+      && negotiation.frontier_complete;
   analysis.uncertainty_grade = analysis.empirically_calibrated
       ? "empirical-parameter-uncertainty" : "model-risk-provisional";
   analysis.required_joint_clear_probability = clamp(0.65 + 0.25 * economy.risk_aversion / 100.0, 0.65, 0.90);
@@ -338,6 +344,7 @@ inline std::string robustness_to_json(const RobustRecommendationAnalysis& analys
       << ",\"parameterUncertaintyIncluded\":" << (analysis.parameter_uncertainty_included ? "true" : "false")
       << ",\"politicalAcceptanceProbabilityEstimated\":" << (analysis.political_acceptance_probability_estimated ? "true" : "false")
       << ",\"empiricallyCalibrated\":" << (analysis.empirically_calibrated ? "true" : "false")
+      << ",\"candidateSetComplete\":" << (analysis.candidate_set_complete ? "true" : "false")
       << ",\"uncertaintyGrade\":\"" << esc(analysis.uncertainty_grade)
       << "\",\"recommendedPackageId\":\"" << esc(analysis.recommended_package_id)
       << "\",\"selectionRule\":\"" << esc(analysis.selection_rule) << "\",\"parameterDistributions\":[";
@@ -372,7 +379,7 @@ inline std::string robustness_to_json(const RobustRecommendationAnalysis& analys
         << ",\"maxRegret\":" << p.max_regret << ",\"robustFloor\":" << p.robust_floor
         << ",\"clearsProbabilityGate\":" << (p.clears_probability_gate ? "true" : "false") << '}';
   }
-  out << "],\"interpretation\":\"Probabilities describe model outcomes conditional on declared uncertainty distributions; they are not estimates of political acceptance.\"}";
+  out << "],\"interpretation\":\"Probabilities describe model outcomes conditional on declared uncertainty distributions; they are not estimates of political acceptance. candidateSetComplete must be true before the robust package is described as the best package on the declared startup search grid.\"}";
   return out.str();
 }
 

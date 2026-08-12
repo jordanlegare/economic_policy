@@ -16,6 +16,7 @@ int main() {
   const auto result = engine.evaluate(economy);
   const auto negotiation = cad::analyze_negotiation(economy, result);
   assert(!negotiation.frontier.empty());
+  assert(negotiation.frontier_complete);
 
   const auto robust = cad::analyze_robust_recommendations(
       economy, result, negotiation, calibration, 600, 123456);
@@ -23,6 +24,7 @@ int main() {
   assert(robust.common_random_numbers);
   assert(robust.parameter_uncertainty_included);
   assert(!robust.political_acceptance_probability_estimated);
+  assert(!robust.candidate_set_complete);
   assert(!robust.recommended_package_id.empty());
   assert(robust.packages.size() == negotiation.frontier.size());
   assert(!robust.distributions.empty());
@@ -60,10 +62,25 @@ int main() {
     assert(std::abs(repeat.packages[i].max_regret - robust.packages[i].max_regret) < 1e-12);
   }
 
+  // Candidate-set completeness is a trust property, not an optimizer side
+  // effect. A complete upstream joint search plus complete epsilon-frontier
+  // should permit robust promotion without changing the numerical selection.
+  auto complete_result = result;
+  complete_result.recommendation.global_search_complete = true;
+  auto complete_negotiation = negotiation;
+  complete_negotiation.frontier_complete = true;
+  const auto complete_robust = cad::analyze_robust_recommendations(
+      economy, complete_result, complete_negotiation, calibration, 200, 123456);
+  assert(complete_robust.candidate_set_complete);
+  assert(!complete_robust.recommended_package_id.empty());
+
   const auto json = cad::robustness_to_json(robust);
   assert(json.find("\"secondStageMonteCarloDraws\":600") != std::string::npos);
   assert(json.find("\"politicalAcceptanceProbabilityEstimated\":false") != std::string::npos);
+  assert(json.find("\"candidateSetComplete\":false") != std::string::npos);
   assert(json.find("\"maxRegret\"") != std::string::npos);
   assert(json.find("\"canadaCvar10Surplus\"") != std::string::npos);
+  const auto complete_json = cad::robustness_to_json(complete_robust);
+  assert(complete_json.find("\"candidateSetComplete\":true") != std::string::npos);
   return 0;
 }
