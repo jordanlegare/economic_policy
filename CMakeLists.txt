@@ -128,6 +128,8 @@ cad_add_test(model_evidence_tests tests/model_evidence_test.cpp model_evidence)
 set_tests_properties(model_evidence PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(state_measurement_tests tests/state_measurement_test.cpp state_measurement_contract)
 set_tests_properties(state_measurement_contract PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+cad_add_test(empirical_calibration_tests tests/empirical_calibration_test.cpp empirical_calibration)
+set_tests_properties(empirical_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
