@@ -354,8 +354,11 @@ inline std::string attach_calibration_json(std::string base_json,
 class CalibratedPolicyEngine {
  public:
   explicit CalibratedPolicyEngine(std::string snapshot_path,
-                                  std::uint64_t seed = 20260810)
-      : base_(seed), snapshot_(load_calibration_snapshot(snapshot_path)), path_(std::move(snapshot_path)) {}
+                                  std::uint64_t seed = 20260810,
+                                  StructuralParameters structural_parameters = {},
+                                  StructuralParameterRegistry structural_registry = {})
+      : base_(seed, std::move(structural_parameters), std::move(structural_registry)),
+        snapshot_(load_calibration_snapshot(snapshot_path)), path_(std::move(snapshot_path)) {}
 
   Result evaluate(Economy& economy) const {
     economy = apply_calibration(economy, snapshot_);

@@ -16,11 +16,11 @@ int main() {
 
   const auto audit = cad::audit_empirical_structural_evidence(evidence);
   assert(audit.parameter_count == 25);
-  assert(audit.statistically_anchored_count == 7);
-  assert(audit.reference_only_count == 6);
-  assert(audit.direct_mapping_count == 1);
-  assert(std::abs(audit.statistically_anchored_coverage - 28.0) < 1e-12);
-  assert(std::abs(audit.direct_mapping_coverage - 4.0) < 1e-12);
+  assert(audit.statistically_anchored_count == 12);
+  assert(audit.reference_only_count == 9);
+  assert(audit.direct_mapping_count == 3);
+  assert(std::abs(audit.statistically_anchored_coverage - 48.0) < 1e-12);
+  assert(std::abs(audit.direct_mapping_coverage - 12.0) < 1e-12);
 
   const auto* neutral = structural.find("neutral_rate");
   assert(neutral);
@@ -38,14 +38,16 @@ int main() {
   // statistical object does not match the production equation one-for-one.
   assert(std::abs(parameters.rate_inflation_response - 0.75) < 1e-12);
   assert(std::abs(parameters.rate_output_response - 0.25) < 1e-12);
-  assert(std::abs(parameters.inflation_persistence - 0.68) < 1e-12);
+  assert(std::abs(parameters.output_persistence - 0.8802835399) < 1e-10);
+  assert(std::abs(parameters.inflation_persistence - 0.7371310581) < 1e-10);
+  assert(std::abs(parameters.inflation_expectations_weight - 0.2628689419) < 1e-10);
   assert(std::abs(parameters.fx_pass_through - 0.35) < 1e-12);
   assert(std::abs(parameters.import_price_pass_through - 0.022) < 1e-12);
 
   const auto json = cad::empirical_structural_audit_to_json(audit);
-  assert(json.find("\"statisticallyAnchoredCount\":7") != std::string::npos);
-  assert(json.find("\"statisticallyAnchoredCoverage\":28.000000") != std::string::npos);
-  assert(json.find("\"directMappingCount\":1") != std::string::npos);
+  assert(json.find("\"statisticallyAnchoredCount\":12") != std::string::npos);
+  assert(json.find("\"statisticallyAnchoredCoverage\":48.000000") != std::string::npos);
+  assert(json.find("\"directMappingCount\":3") != std::string::npos);
 
   std::cout << "empirical structural calibration tests passed\n";
   return 0;
