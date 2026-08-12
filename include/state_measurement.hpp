@@ -11,7 +11,7 @@ namespace cad {
 
 struct StateMeasurementDefinition {
   std::string name;
-  std::string concept;
+  std::string economic_concept;
   std::string unit;
   std::string preferred_source_id;
   std::string transformation;
@@ -125,7 +125,7 @@ inline bool state_measurement_contract_complete(const StateMeasurementRegistry& 
   if (!registry.loaded) return false;
   for (const auto* required : {"credit_spread", "housing_gap"}) {
     const auto* entry = registry.find(required);
-    if (!entry || entry->concept.empty() || entry->unit.empty()
+    if (!entry || entry->economic_concept.empty() || entry->unit.empty()
         || entry->preferred_source_id.empty() || entry->transformation.empty()
         || entry->status.empty() || entry->public_reproducibility.empty()) return false;
   }
@@ -195,7 +195,7 @@ inline std::string state_measurement_registry_to_json(const StateMeasurementRegi
     if (i) o << ',';
     const auto& e = registry.entries[i];
     o << "{\"name\":\"" << state_measurement_detail::esc(e.name)
-      << "\",\"concept\":\"" << state_measurement_detail::esc(e.concept)
+      << "\",\"concept\":\"" << state_measurement_detail::esc(e.economic_concept)
       << "\",\"unit\":\"" << state_measurement_detail::esc(e.unit)
       << "\",\"preferredSourceId\":\""
       << state_measurement_detail::esc(e.preferred_source_id)
