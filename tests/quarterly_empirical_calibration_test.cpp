@@ -34,21 +34,21 @@ int main() {
   const auto registry = cad::load_structural_parameter_registry(
       "data/calibration/structural_parameter_registry.csv");
   const auto completeness = cad::audit_structural_calibration_completeness(registry);
-  assert(completeness.parameter_count == 25);
-  assert(completeness.calibration_target_count == 23);
+  assert(completeness.parameter_count == 26);
+  assert(completeness.calibration_target_count == 24);
   assert(completeness.direct_empirical_count == 3);
-  assert(completeness.provisional_count == 20);
+  assert(completeness.provisional_count == 21);
   assert(completeness.shock_target_count == 6);
   assert(completeness.direct_empirical_shock_count == 0);
   assert(completeness.realized_residual_shock_count == 0);
   assert(completeness.multiplier_target_count == 11);
   assert(completeness.direct_empirical_multiplier_count == 0);
-  assert(std::abs(completeness.direct_empirical_coverage - (300.0 / 23.0)) < 1e-9);
+  assert(std::abs(completeness.direct_empirical_coverage - 12.5) < 1e-9);
   assert(completeness.grade == "mostly-provisional");
 
   const auto registry_json = cad::structural_parameter_registry_to_json(registry);
   assert(registry_json.find("\"calibrationCompleteness\":{") != std::string::npos);
-  assert(registry_json.find("\"calibrationTargetCount\":23") != std::string::npos);
+  assert(registry_json.find("\"calibrationTargetCount\":24") != std::string::npos);
   assert(registry_json.find("\"directEmpiricalCount\":3") != std::string::npos);
   assert(registry_json.find("\"directEmpiricalShockCount\":0") != std::string::npos);
   assert(registry_json.find("\"directEmpiricalMultiplierCount\":0") != std::string::npos);
@@ -59,6 +59,8 @@ int main() {
   assert(std::abs(parameters.inflation_persistence - inflation->estimate) < 1e-9);
   assert(std::abs(parameters.inflation_persistence
       + parameters.inflation_expectations_weight - 1.0) < 1e-12);
+  assert(std::abs(parameters.output_inflation_shock_correlation
+      - estimation.output_inflation_residual_correlation) < 1e-9);
 
   // The ordinary production engine must consume StructuralParameters, not only
   // the outer V2 robustness experiment.
