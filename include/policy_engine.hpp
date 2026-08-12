@@ -75,9 +75,38 @@ struct StructuralParameters {
   double export_shock_sd = 0.35;
   double us_export_shock_sd = 0.30;
 
+  // Tail/regime mechanics are explicit structural assumptions. They transform
+  // the same seeded Gaussian innovations, so common-random-number comparisons
+  // remain deterministic without pretending the tail shape is empirically
+  // identified from the short calibration sample.
+  double shock_tail_threshold = 2.0;
+  double shock_tail_scale = 1.75;
+  double stress_regime_shock_scale = 1.35;
+
   // Global multiplier for the declared per-parameter uncertainty widths.
   // 0 disables structural uncertainty; 0.10 is the reference V2 scale.
   double uncertainty_scale = 0.10;
+};
+
+// Internal loss-function coefficients are typed separately from economic
+// structural parameters and delegation priorities. Normal optimization keeps
+// them fixed. V2 welfare sensitivity may vary explicitly declared components
+// without disguising normative/model-design choices as estimated economics.
+struct DecisionLossWeights {
+  double boc_inflation = 3.8;
+  double boc_unemployment = 1.2;
+  double boc_contraction = 0.7;
+  double boc_recession = 0.018;
+
+  double federal_debt = 0.32;
+  double federal_contraction = 0.7;
+  double federal_unemployment = 0.8;
+  double federal_housing = 0.012;
+
+  double us_exports = 0.55;
+  double us_inflation = 0.8;
+  double us_growth = 0.55;
+  double us_retaliation = 0.25;
 };
 
 struct Economy {
@@ -99,6 +128,7 @@ struct Economy {
   double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   double minimum_bilateral_growth = 0.0;
+  DecisionLossWeights loss_weights{};
   // The web application's primary evaluation enables this mode after seeding
   // controls from the certified baseline. Low-level and robustness tests can
   // keep the staged mode when they are not claiming startup global optimality.
@@ -166,6 +196,9 @@ struct Scenario {
   bool sector_verified = false;
   std::array<double, 20> applied_us_sector_coverage{}, applied_canada_sector_coverage{};
   std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{}, us_export_path{};
+  // Auditable implementation profiles derived from the chosen policy amplitudes.
+  // These are deterministic policy rules, not additional optimizer dimensions.
+  std::array<double, 12> fiscal_path{}, productive_investment_path{}, negotiated_relief_path{}, targeted_relief_path{}, diversification_path{};
   std::vector<SectorImpact> sectors;
 };
 
