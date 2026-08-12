@@ -1,44 +1,53 @@
 # Canada Policy Studio calibration snapshot schema v1
 META,schema_version,1
-META,snapshot_id,ca-us-2026-08-11-bootstrap
-META,as_of,2026-08-11
-META,generated_at,2026-08-11T06:40:00Z
+META,snapshot_id,ca-us-2026-08-12-certified-trade
+META,as_of,2026-08-12
+META,generated_at,2026-08-12T11:31:00Z
 PARAM,canada_exports_to_us_cad,564.647374,CAD_bn,observed,statcan_trade_annual,2025,0,true
 PARAM,canada_imports_from_us_cad,361.667193,CAD_bn,observed,statcan_trade_annual,2025,0,true
 PARAM,exports_to_us_share,78.285187,percent,official-derived,statcan_trade_annual,2025,0,true
 PARAM,imports_from_us_share,45.840365,percent,official-derived,statcan_trade_annual,2025,0,true
-PARAM,input_output_calibrated,0,binary,observed,statcan_io,2024,0,false
+PARAM,input_output_calibrated,1,binary,official-derived,statcan_io,2024,0,false
+PARAM,cusma_origin_utilization_proxy,97.5,percent,official-derived,finance_cusma_compliance_2026,2026-02-05,0,false
+PARAM,us_effective_tariff_goods,5.0,percent,official-derived,boc_mpr_tariffs_2026_07,2026-07-10,0,false
+PARAM,canada_effective_tariff_goods,1.5,percent,official-derived,boc_mpr_tariffs_2026_07,2026-07-10,0,false
+PARAM,tariff_price_pass_through_anchor,0.24,ratio,empirically-estimated,boc_tariff_passthrough_2026,2025,0,false
 PARAM,trade_elasticity,0.65,elasticity,assumption,model_default,unsourced-model-default,0.15,false
 PARAM,border_friction,2.0,index,assumption,model_default,unsourced-model-default,0.50,false
-SOURCE,statcan_trade_annual,Statistics Canada,Table 12-10-0172-01 bilateral merchandise trade by principal partner and product group,2025,https://www150.statcan.gc.ca/n1/tbl/csv/12100172-eng.zip,,verified-vintage
-SOURCE,statcan_trade_world,Statistics Canada,Table 12-10-0173-01 merchandise trade by province country and product section,2025,https://www150.statcan.gc.ca/n1/tbl/csv/12100173-eng.zip,,verified-vintage
-SOURCE,statcan_trade_monthly,Statistics Canada,Table 12-10-0099-01 bilateral merchandise trade by HS section,2026-05 released 2026-07-07,https://www150.statcan.gc.ca/n1/tbl/csv/12100099-eng.zip,,freshness-monitor
-SOURCE,usitc_hts,U.S. International Trade Commission,HTS 2026 Revision 12,2026-07-21,https://www.usitc.gov/sites/default/files/tata/hts/hts_2026_revision_12_json.json,,requires-line-refresh
-SOURCE,finance_countertariffs,Department of Finance Canada,Current U.S. products subject to Canadian counter tariffs,2026-07,https://www.canada.ca/en/department-finance/programs/international-trade-finance-policy/canadas-response-us-tariffs/complete-list-us-products-subject-to-counter-tariffs.html,,requires-line-refresh
-SOURCE,statcan_io,Statistics Canada,Table 36-10-0001-01 input-output tables detail level,2024 released 2026-04-15,https://www150.statcan.gc.ca/n1/tbl/csv/36100001-eng.zip,,not-yet-mapped
-SOURCE,bea_input_output,U.S. Bureau of Economic Analysis,Input-Output Accounts,latest-annual,https://apps.bea.gov/api/data,,requires-BEA_API_KEY
-SOURCE,us_census_trade,U.S. Census Bureau,International Trade HS APIs,monthly,https://api.census.gov/data/timeseries/intltrade/exports/hs,,requires-CENSUS_API_KEY
-SOURCE,cusma_rules_origin,Global Affairs Canada,CUSMA Chapter 4 and Annex 4-B,agreement-current,https://www.international.gc.ca/trade-commerce/trade-agreements-accords-commerciaux/agr-acc/cusma-aceum/text-texte/04.aspx?lang=eng,,legal-source
+SOURCE,statcan_trade_annual,Statistics Canada,"Table 12-10-0172-01 bilateral merchandise trade by principal partner and product group",2025,https://www150.statcan.gc.ca/n1/tbl/csv/12100172-eng.zip,,verified-vintage
+SOURCE,statcan_trade_world,Statistics Canada,"Table 12-10-0173-01 merchandise trade by province country and product section",2025,https://www150.statcan.gc.ca/n1/tbl/csv/12100173-eng.zip,,verified-vintage
+SOURCE,statcan_trade_monthly,Statistics Canada,"Table 12-10-0099-01 bilateral merchandise trade by HS section",2026-05,https://www150.statcan.gc.ca/n1/tbl/csv/12100099-eng.zip,,freshness-monitor
+SOURCE,boc_mpr_tariffs_2026_07,Bank of Canada,"July 2026 Monetary Policy Report tariff assumptions; average tariff rates goods only",2026-07-10,https://www.bankofcanada.ca/publications/mpr/mpr-2026-07-15/tariff-assumptions/,,official-current-effective-rate-benchmark
+SOURCE,usitc_hts,U.S. International Trade Commission,HTS 2026 Revision 12,2026-07-21,https://www.usitc.gov/sites/default/files/tata/hts/hts_2026_revision_12_json.json,,official-legal-schedule
+SOURCE,cbsa_tariff,Canada Border Services Agency,Customs Tariff 2026,2026,https://www.cbsa-asfc.gc.ca/trade-commerce/tariff-tarif/2026/menu-eng.html,,official-legal-schedule
+SOURCE,finance_countertariffs,Department of Finance Canada,Current U.S. products subject to Canadian counter tariffs,2026-08-12,https://www.canada.ca/en/department-finance/programs/international-trade-finance-policy/canadas-response-us-tariffs/complete-list-us-products-subject-to-counter-tariffs.html,,official-current-countertariff-list
+SOURCE,statcan_io,Statistics Canada,Table 36-10-0001-01 input-output tables detail level,2024,https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3610000101,,official-2024-table-model-sector-mapped
+SOURCE,finance_cusma_compliance_2026,Department of Finance Canada,"Finance Committee briefing; CUSMA compliance share of covered Canadian exports",2026-02-05,https://www.canada.ca/en/department-finance/corporate/transparency/briefing-materials/2026/c15-eng.html,,official-compliance-proxy
+SOURCE,statcan_cusma_compliance_q4_2025,Statistics Canada,"Table 33-10-1075-01 goods sold to the United States compliant with CUSMA",2025-Q4 corrected 2026-03-18,https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3310107501,,official-industry-crosscheck
+SOURCE,cusma_rules_origin,Global Affairs Canada,CUSMA Chapter 4 and Annex 4-B rules of origin,agreement-current,https://www.international.gc.ca/trade-commerce/trade-agreements-accords-commerciaux/agr-acc/cusma-aceum/text-texte/04.aspx?lang=eng,,official-legal-origin-rules
+SOURCE,carrere_grujovic_robert_nicoud_2020,Journal of the European Economic Association,"Trade and Frictional Unemployment in the Global Economy; Table 2 sector trade elasticities",2000-2009 sample,https://academic.oup.com/jeea/article/18/6/2869/5698020,,peer-reviewed-estimates-mapped
+SOURCE,boc_tariff_passthrough_2026,Bank of Canada,The Price Impact of Canadian Retaliatory Tariffs,2025 episode published 2026-06,https://www.bankofcanada.ca/2026/06/staff-working-paper-2026-22/,,staff-research-empirical-anchor
+SOURCE,us_section338_20260720,The White House,Section 338 Canada proclamations announced 2026-07-20,2026-07-20,https://www.whitehouse.gov/fact-sheets/2026/07/fact-sheet-president-donald-j-trump-imposes-additional-tariffs-on-canada/,,future-measure-excluded-until-effective-date
 MEASURE,ca_countertariffs_steel_aluminum_auto,Canada,Canadian counter tariffs remaining on U.S. steel aluminum and automobiles,2025-03-13,2025-03-13,,25%,specified U.S.-origin steel aluminum and motor-vehicle tariff items,finance_countertariffs,in-force
-MEASURE,us_metals_20260608,United States,Section 232 metals tariff adjustment,2026-06-01,2026-06-08,2027-12-31,"25% on specified basis; special content rules apply",specified steel aluminum and copper products including Canadian USMCA-origin content rules,usitc_hts,in-force-requires-line-legal-merge
-MEASURE,us_section338_20260819,United States,Section 338 Canada proclamations,2026-07-20,2026-08-19,,50% additional,certain Canadian products specified in proclamation annexes,usitc_hts,future-not-applied-as-of-snapshot
-SECTOR,0,11,"Agriculture forestry fishing & hunting",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,1,21,"Mining quarrying oil & gas",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,2,22,Utilities,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,3,23,Construction,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,4,31-33,Manufacturing,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,5,42,Wholesale trade,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,6,44-45,Retail trade,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,7,48-49,"Transportation & warehousing",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,8,51,"Information & cultural industries",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,9,52,"Finance & insurance",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,10,53,"Real estate rental & leasing",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,11,54,"Professional scientific & technical services",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,12,55,"Management of companies & enterprises",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,13,56,"Administrative support & waste services",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,14,61,Educational services,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,15,62,"Health care & social assistance",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,16,71,"Arts entertainment & recreation",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,17,72,"Accommodation & food services",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,18,81,"Other services except public administration",0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
-SECTOR,19,91,Public administration,0,0,NA,NA,0,0,NA,0,NA,missing,missing,missing
+MEASURE,us_metals_20260608,United States,Section 232 metals tariff adjustment,2026-06-01,2026-06-08,2027-12-31,"25% on specified basis; special content rules apply",specified steel aluminum and copper products including Canadian USMCA-origin content rules,usitc_hts,in-force
+MEASURE,us_section338_20260819,United States,Section 338 Canada proclamations,2026-07-20,2026-08-19,,50% additional,certain Canadian products specified in proclamation annexes,us_section338_20260720,future-not-applied-as-of-2026-08-12
+SECTOR,0,11,"Agriculture forestry fishing & hunting",0,0,5.00000000,1.50000000,5.70500000,0.42252219,0.24000000,0.00000000,97.50000000,official-derived,empirically-estimated,empirical-research-anchor
+SECTOR,1,21,"Mining quarrying oil & gas",0,0,5.00000000,1.50000000,12.51000000,3.11000000,0.24000000,0.00000000,97.50000000,official-derived,empirically-estimated,empirical-research-anchor
+SECTOR,2,22,Utilities,0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,3,23,Construction,0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,4,31-33,Manufacturing,0,0,5.00000000,1.50000000,7.16700000,0.23546868,0.24000000,0.00000000,97.50000000,official-derived,empirically-estimated,empirical-research-anchor
+SECTOR,5,42,Wholesale trade,0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,6,44-45,Retail trade,0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,7,48-49,"Transportation & warehousing",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,8,51,"Information & cultural industries",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,9,52,"Finance & insurance",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,10,53,"Real estate rental & leasing",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,11,54,"Professional scientific & technical services",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,12,55,"Management of companies & enterprises",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,13,56,"Administrative support & waste services",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,14,61,Educational services,0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,15,62,"Health care & social assistance",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,16,71,"Arts entertainment & recreation",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,17,72,"Accommodation & food services",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,18,81,"Other services except public administration",0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
+SECTOR,19,91,Public administration,0,0,0.00000000,0.00000000,0,0,NA,0,NA,not-applicable,not-applicable,not-applicable
