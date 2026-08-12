@@ -58,19 +58,19 @@ Every fixture declares a `decision_date` and separates rows into:
 
 A single date violation invalidates the entire fixture with `lookahead-failed`; the engine does not silently omit the offending datum. Empirical observations also require source provenance.
 
-The shipped suite now contains three independently dated monetary-policy episodes:
+The shipped suite contains three independently dated monetary-policy episodes:
 
 - `ca-2015-01-20-oil-shock` — immediately before the Bank's January 21, 2015 oil-insurance cut;
 - `ca-2020-03-03-pandemic-onset` — immediately before the March 4, 2020 scheduled COVID cut;
 - `ca-2022-07-12-inflation-tightening` — immediately before the July 13, 2022 100-basis-point tightening move.
 
-Each fixture carries a 12-quarter ex-post outcome window and explicitly disables the bilateral tariff channel as a scope control. Headline and core inflation are distinct inputs where contemporaneous sources distinguish them.
+Historical state now has two declared coverage tiers. The original core tier preserves the existing policy/inflation/Canadian-growth/labour/tariff-scope contract. The expanded tier adds USD/CAD, WTI oil, global growth, U.S. GDP growth, U.S. inflation, federal fiscal balance/GDP, federal debt/GDP and household debt/disposable income. All three shipped fixtures are required by CI to reach 100% in both declared tiers while remaining provenance-complete and no-look-ahead clean.
 
-Per-episode diagnostics report policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, input coverage, provenance completeness and no-look-ahead status.
+The state contract intentionally does not count `credit_spread` or `housing_gap` as historically reconstructed. Those fields are model abstractions without a defined one-to-one observable series in the current engine. They retain the engine default in historical runs, and CI explicitly guards against silently substituting an arbitrary market spread or housing index.
 
-`backtest_suite.hpp` adds cross-episode diagnostics: policy-direction accuracy and mean absolute first-move error, plus direction accuracy and mean absolute terminal error for inflation, GDP growth and unemployment. Aggregate diagnostics are exposed only when at least three fixtures are valid, provenance-complete and no-look-ahead clean. That threshold permits reporting; it does **not** imply statistical validation or adequate sample size.
+Per-episode diagnostics report policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, core/expanded/combined coverage, provenance completeness and no-look-ahead status.
 
-The current fixtures intentionally reconstruct the declared core macro state rather than every possible `Economy` field. Unspecified fields retain documented engine defaults, so backtest results remain diagnostic and should not be described as fully vintage-reconstructed forecasts until state coverage is broadened.
+`backtest_suite.hpp` adds cross-episode diagnostics: policy-direction accuracy and mean absolute first-move error, direction accuracy and mean absolute terminal error for inflation/GDP/unemployment, expanded-complete fixture count, and mean/minimum historical state coverage. Aggregate diagnostics are exposed only when at least three fixtures are valid, provenance-complete and no-look-ahead clean. That threshold permits reporting; it does **not** imply statistical validation or adequate sample size.
 
 ## 5. Welfare-weight sensitivity
 
@@ -92,7 +92,7 @@ The economic model produces conditional outcome distributions. The decision engi
 
 The structural-robustness contract exposes recommendation survival, structural calibration identity, parameter provenance/bounds, common-random-number status, policy-control and sector re-optimization audit counts, retention metrics and robustness classification through `robustness_to_json()`.
 
-Historical results remain separate. `backtest_to_json()` exposes a single vintage run, while `backtest_suite_to_json()` exposes cross-episode diagnostics. Keeping these endpoints distinct prevents ex-post forecast diagnostics from being confused with forward-looking structural robustness statistics.
+Historical results remain separate. `backtest_to_json()` exposes a single vintage run, including core/expanded/combined state coverage, while `backtest_suite_to_json()` exposes cross-episode diagnostics and coverage summaries. Keeping these endpoints distinct prevents ex-post forecast diagnostics from being confused with forward-looking structural robustness statistics.
 
 A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Historical backtests address empirical diagnostic performance instead; neither layer substitutes for the other.
 
@@ -114,14 +114,15 @@ Completed or active:
 12. Source-backed 2015, 2020 and 2022 historical decision fixtures.
 13. Cross-episode direction/MAE diagnostics with a three-fixture reporting guard.
 14. Native CI contamination test that injects future information and requires rejection.
+15. Expanded historical state tier covering FX, oil, global/U.S. macro, federal fiscal state and household leverage.
 
 Next:
 
-15. Broaden historical state coverage beyond the current core macro fields.
-16. Surface structural provenance, decision robustness and historical diagnostics in the application/API.
-17. Replace provisional structural envelopes with empirical estimates where defensible.
-18. Add welfare-weight sensitivity as a separate analysis endpoint.
-19. Add later-tightening, hold/soft-landing and eventually tariff-specific historical episodes.
+16. Define defensible observable mappings for model-specific `credit_spread` and `housing_gap`, or keep them explicitly structural/defaulted.
+17. Surface structural provenance, decision robustness and historical diagnostics in the application/API.
+18. Replace provisional structural envelopes with empirical estimates where defensible.
+19. Add welfare-weight sensitivity as a separate analysis endpoint.
+20. Add later-tightening, hold/soft-landing and eventually tariff-specific historical episodes.
 
 ## Research interpretation
 
