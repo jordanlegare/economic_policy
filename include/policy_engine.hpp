@@ -108,6 +108,14 @@ struct SectorImpact {
   double canada_output = 0.0, canada_jobs = 0.0, canada_prices = 0.0;
   double us_output = 0.0, us_jobs = 0.0, us_prices = 0.0;
   double exposure = 0.0;
+  // Negotiator-facing tariff-incidence and production-network diagnostics.
+  // Tariff values are percentage points; upstream costs are sector marginal-
+  // cost pressure propagated through the 20x20 input-output bridge.
+  double us_applied_tariff = 0.0, canada_applied_tariff = 0.0;
+  double us_buyer_pass_through = 0.0, canada_buyer_pass_through = 0.0;
+  double canada_exporter_absorption = 0.0, us_exporter_absorption = 0.0;
+  double us_importer_absorption = 0.0, canada_importer_absorption = 0.0;
+  double canada_upstream_cost = 0.0, us_upstream_cost = 0.0;
 };
 
 struct Scenario {
@@ -207,6 +215,7 @@ struct WinWinRecommendation {
   bool mandate_weights_fixed = true;
   RobustnessSummary robustness;
   std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; the exact submitted posture is retained as an anchor candidate, and exhaustive startup mode verifies every retained frontier package unless the explicit safety cap binds";
+  std::string trade_network_method = "not-evaluated";
 };
 
 struct Result {
