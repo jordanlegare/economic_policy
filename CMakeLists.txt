@@ -29,14 +29,6 @@ add_library(policy_engine
   src/model_evidence.cpp)
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
-# The direct-sector adapter retains both bilateral coverage arguments so its
-# signature mirrors the optimizer decision tuple. Clang/GCC may flag the Canada
-# argument as unused inside the direct-only component; keep that warning visible
-# without letting the Release -Werror gate reject the intentional interface.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  set_source_files_properties(src/policy_engine.cpp PROPERTIES
-    COMPILE_OPTIONS "-Wno-error=unused-parameter")
-endif()
 
 add_executable(cad-policy-studio src/main.cpp)
 target_link_libraries(cad-policy-studio PRIVATE policy_engine)
