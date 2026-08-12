@@ -24,8 +24,7 @@ int main() {
   assert(robust.common_random_numbers);
   assert(robust.parameter_uncertainty_included);
   assert(!robust.political_acceptance_probability_estimated);
-  assert(!robust.candidate_set_complete,
-      "staged PolicyEngine results must never be promoted as global robust-best");
+  assert(!robust.candidate_set_complete);
   assert(!robust.recommended_package_id.empty());
   assert(robust.packages.size() == negotiation.frontier.size());
   assert(!robust.distributions.empty());
