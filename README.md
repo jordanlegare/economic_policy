@@ -40,6 +40,8 @@ ctest --test-dir build --output-on-failure
 - **Complete linked-issue bargaining frontier:** the five-issue, five-level negotiation layer retains the entire practical 0.5-point epsilon-Pareto set. The robust second stage evaluates every retained package with a bounded-memory two-pass common-random-number algorithm rather than truncating the frontier at 512 packages.
 - **Cooperation envelope:** negotiated headline-rate relief and sector-coverage relief share one bounded cooperation envelope, preventing independent concession controls from exceeding the configured ceiling.
 - **Bilateral growth constraint:** every strategy projects separate Canadian and U.S. GDP-growth paths for 12 quarters and can be rejected when either side falls below the configured minimum bilateral growth floor.
+- **Dynamic implementation paths:** optimizer controls remain finite amplitudes, but fiscal stimulus, productive investment, negotiated relief, targeted relief and diversification follow explicit 12-quarter ramp/persistence/fade rules. The realized paths are returned in every scenario for auditability.
+- **Tail and stress-regime risk:** large standardized innovations receive an explicit heavy-tail multiplier and financial/recession/high-tariff starting states amplify macro shocks. These are registered sensitivity assumptions, not estimated tail probabilities or regime-transition parameters.
 - **Risk block:** recession frequency plus 90th-percentile inflation and federal-debt stress outcomes.
 - **Decision layer:** separate BoC, Canadian federal/household and U.S. loss functions are combined through preference-weighted Nash welfare, a fairness floor and tail-risk penalties. User-supplied Canada/U.S. mandate priorities remain fixed during optimization.
 - **Generated policy search:** each request evaluates a 288-combination policy search in addition to displayed expert strategies, covering monetary, fiscal, productive-investment, negotiated-relief and diversification choices.
@@ -54,6 +56,8 @@ The production Canadian IO artifact is versioned under `data/calibration/` and g
 BEA_API_KEY=... python3 tools/build_bea_io_matrix.py --year 2024
 ```
 
+`tools/build_oecd_bilateral_io.py` accepts an OECD ICIO ZIP obtained directly from the official OECD distribution plus a reviewed fractional industry crosswalk. It generates Canada←U.S. and U.S.←Canada intermediate-input sourcing-share matrices with SHA-pinned provenance. Automated production activation remains disabled until official source bytes and the reviewed crosswalk are available; third-party mirrors are not accepted as empirical source material.
+
 The repository also carries `data/backtests/2018-section232-trade-validation.csv`, a deliberately **directional/stress** validation episode. It records the 2018 steel/aluminum legal rates and later Statistics Canada evidence on treated-product export contraction and U.S. importer tariff-cost incidence. Because those estimates concern tariffed steel/aluminum products rather than the entire 20-sector manufacturing aggregate, they are used to test sign/channel behavior and sensitivity—not force-fit as whole-manufacturing structural parameters.
 
 ## V2 model-evidence APIs
@@ -64,7 +68,7 @@ V2 keeps structural uncertainty, historical diagnostics and normative preference
 - `GET /api/v2/backtests` — the no-look-ahead 2015, 2020 and 2022 macro-policy episodes plus cross-episode diagnostics. The separate 2018 Section 232 fixture validates trade channels without pretending to be a complete 18-state macro vintage.
 - `GET /api/v2/evidence-status` — compact readiness/status summary for the structural registry and historical suite.
 - `POST /api/v2/robustness` — full nested structural decision robustness. The optional `parameterDraws` field is clamped to 1–24; the interactive default is 6. Every structural draw delegates back to the production `PolicyEngine`, so the robustness layer cannot drift into a parallel macro/trade model.
-- `POST /api/v2/welfare` — the full 3×3 delegation-preference/risk grid, rerunning the production policy and sector optimization for every profile.
+- `POST /api/v2/welfare` — the full 3×3 delegation-preference/risk grid plus six named ±20% internal-component weight profiles (BoC inflation, federal debt, U.S. inflation), rerunning production optimization for every profile while keeping the institutional mandate fixed.
 
 If a V2 POST body is empty, the server analyzes the most recently evaluated calibrated economy (or the calibrated default state before the first evaluation). The Windows standalone executable embeds the structural registry and all shipped macro backtest fixtures, so these endpoints remain available when launched from an empty directory.
 
