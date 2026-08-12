@@ -18,14 +18,15 @@ jobs:
           fetch-depth: 0
       - name: Apply exact audited substitutions
         run: python3 tools/branch_static_route_patch.py
-      - name: Commit substitutions
+      - name: Commit non-workflow substitutions
         run: |
+          git restore .github/workflows/ci.yml
           if git diff --quiet; then
-            echo 'No changes required.'
+            echo 'No non-workflow changes required.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/main.cpp .github/workflows/ci.yml data/calibration/source_registry.csv data/calibration/README.md docs/MODEL_ROBUSTNESS_V2.md
+          git add src/main.cpp data/calibration/source_registry.csv data/calibration/README.md docs/MODEL_ROBUSTNESS_V2.md
           git commit -m 'Apply static route and provenance patch'
           git push origin HEAD:agent/bilateral-trade-realism
