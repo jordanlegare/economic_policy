@@ -27,6 +27,8 @@ element('usPriority', 50);
 element('riskAversion', 50);
 element('cooperationCeiling', 50);
 element('retaliatoryTariff', 5);
+element('retaliatoryTariffValue');
+element('partyView').hidden = true;
 
 global.window = {__EVALUATION_COMPARISON_DELAY_MS:0};
 global.$ = selector => elements.get(selector) || null;
@@ -42,6 +44,10 @@ global.positions = {canada:Array(20).fill(100), us:Array(20).fill(100)};
 global.sameCoverage = (a,b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v,i)=>+v===+b[i]);
 global.signed = (x, suffix = '%') => (x >= 0 ? '+' : '') + Number(x).toFixed(1) + suffix;
 global.schedule = () => { throw new Error('schedule should not be called during a settled evaluation'); };
+global.updateTariff = () => {};
+global.updatePosition = () => {};
+global.syncPartyView = () => {};
+global.renderPartySectors = () => {};
 let publishCount = 0;
 global.publishNegotiation = actor => { assert.strictEqual(actor, 'automatic'); publishCount++; };
 let renderCount = 0;
@@ -64,10 +70,29 @@ const fullPayload = () => ({
   }
 });
 const comparisonPayload = () => ({scenarios:[{id:'compact',name:'Compact baseline',growth:2.0}]});
+const calibratedUsCoverage = Array(20).fill(0);
+const calibratedCanadaCoverage = Array(20).fill(0);
+[0,1,4].forEach(i => {
+  calibratedUsCoverage[i] = 100;
+  calibratedCanadaCoverage[i] = 100;
+});
+const calibrationPayload = () => ({
+  effectiveState:{
+    usTariff:5,
+    retaliatoryTariff:1.5,
+    usSectorCoverage:calibratedUsCoverage,
+    canadaSectorCoverage:calibratedCanadaCoverage
+  }
+});
 const requests = [];
+let calibrationFetches = 0;
 let releaseComparison;
 let comparisonGate = new Promise(resolve => { releaseComparison = resolve; });
 global.fetch = async (url, options = {}) => {
+  if (url === '/api/calibration') {
+    calibrationFetches++;
+    return {ok:true,status:200,json:async()=>calibrationPayload()};
+  }
   assert.strictEqual(url, '/api/evaluate');
   const payload = JSON.parse(options.body);
   requests.push(payload);
@@ -86,9 +111,17 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
 
 (async()=>{
   await evaluate();
+  assert.strictEqual(calibrationFetches, 1,
+    'certified tariff/sector state must seed the initial displayed evaluation exactly once');
   assert.strictEqual(requests.length, 1,
     'initial loading path must await only the real policy evaluation');
   assert.strictEqual(requests[0].comparisonOnly, false);
+  assert.strictEqual(requests[0].usTariff, 5,
+    'initial solve must use the certified U.S. tariff shown to the user');
+  assert.strictEqual(requests[0].retaliatoryTariff, 1.5,
+    'initial solve must use the certified Canadian tariff shown to the user');
+  calibratedUsCoverage.forEach((value, i) => assert.strictEqual(requests[0]['usSector'+i], value));
+  calibratedCanadaCoverage.forEach((value, i) => assert.strictEqual(requests[0]['canadaSector'+i], value));
   assert.strictEqual(publishCount, 1,
     'verified recommendation should publish once without recursive evaluation');
   assert.strictEqual(renderCount, 1);
@@ -114,9 +147,12 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   requests.length = 0;
   comparisonGate = Promise.resolve();
   await evaluate();
+  assert.strictEqual(calibrationFetches, 1, 'calibration seeding must not overwrite later user scenarios');
   assert.strictEqual(requests.length, 1,
     'subsequent runs should reuse the cached no-tariff comparison');
   assert.strictEqual(requests[0].comparisonOnly, false);
+  assert.strictEqual(requests[0].usTariff, 5);
+  assert.strictEqual(requests[0].retaliatoryTariff, 1.5);
   assert.strictEqual(publishCount, 1, 'unchanged auto recommendation must not republish');
   assert.strictEqual(renderCount, 2);
 
@@ -129,6 +165,8 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert(full, 'expected full evaluation request');
   assert.strictEqual(full.usSector0, 42,
     'explicit user sector edit must advance the evaluation anchor');
+  assert.strictEqual(calibrationFetches, 1,
+    'what-if controls must not be re-seeded from calibration after startup');
   assert.strictEqual(elements.get('#strategyLoading').hidden, true);
 
   console.log('evaluation controller test passed');
