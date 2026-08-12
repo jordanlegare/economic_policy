@@ -16,6 +16,7 @@ INPUT,us_inflation,2.5,percent_yoy,2020-01-31,2020-02-13,bls_us_cpi_2020_01,obse
 INPUT,fiscal_balance_gdp,-1.15,percent_gdp,2020-03-31,2019-12-16,finance_canada_efu_2019,official-derived
 INPUT,federal_debt_gdp,31.0,percent_gdp,2020-03-31,2019-12-16,finance_canada_efu_2019,official-forecast
 INPUT,household_debt_income,175.9,percent,2019-09-30,2019-12-13,statcan_nbs_2019_q3,observed
+INPUT,housing_gap,-1.388888888889,percent_gap,2019-09-30,2020-01-23,boc_hai_indicator,official-derived-one-sided
 INPUT,us_tariff_canada,0.0,percent,2020-03-03,2020-03-03,backtest_scope,scope-control
 INPUT,canada_retaliatory_tariff,0.0,percent,2020-03-03,2020-03-03,backtest_scope,scope-control
 BENCHMARK,first_move_bp,-50,basis_points,2020-03-04,2020-03-04,boc_policy_2020_03_04,observed-policy
@@ -33,6 +34,7 @@ SOURCE,bea_us_gdp_2019_q4,U.S. Bureau of Economic Analysis,GDP second estimate 2
 SOURCE,bls_us_cpi_2020_01,U.S. Bureau of Labor Statistics,Consumer Price Index January 2020,https://www.bls.gov/news.release/archives/cpi_02132020.htm
 SOURCE,finance_canada_efu_2019,Department of Finance Canada,Economic and Fiscal Update 2019,https://www.budget.canada.ca/efu-meb/2019/docs/statement-enonce/chap01-en.html
 SOURCE,statcan_nbs_2019_q3,Statistics Canada,National balance sheet and financial flow accounts third quarter 2019,https://www150.statcan.gc.ca/n1/daily-quotidien/191213/dq191213a-eng.htm
+SOURCE,boc_hai_indicator,Bank of Canada,Indicators of capacity and inflation pressures - Housing Affordability Index,https://www.bankofcanada.ca/rates/indicators/capacity-and-inflation-pressures/
 SOURCE,boc_policy_2020_03_04,Bank of Canada,Policy rate decision 2020-03-04,https://www.bankofcanada.ca/2020/03/fad-press-release-2020-03-04/
 SOURCE,statcan_cpi_2023_02,Statistics Canada,Consumer Price Index February 2023,https://www150.statcan.gc.ca/n1/daily-quotidien/230321/dq230321a-eng.htm
 SOURCE,statcan_lfs_2023_02,Statistics Canada,Labour Force Survey February 2023,https://www150.statcan.gc.ca/n1/daily-quotidien/230310/dq230310a-eng.htm

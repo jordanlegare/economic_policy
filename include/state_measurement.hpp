@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -44,6 +45,21 @@ struct StateMeasurementAudit {
   std::vector<std::string> unresolved_names;
 };
 
+struct HousingAffordabilityBenchmark {
+  std::string fixture_id;
+  std::string decision_date;
+  std::string source_update_date;
+  std::string hai_quarter;
+  double hai_percent = 0.0;
+  std::string benchmark_start_quarter;
+  std::string benchmark_end_quarter;
+  int benchmark_quarters = 0;
+  double benchmark_median_percent = 0.0;
+  double housing_gap_percent = 0.0;
+  std::string source_id;
+  std::string methodology;
+};
+
 namespace state_measurement_detail {
 
 inline std::string trim(std::string value) {
@@ -75,6 +91,25 @@ inline std::vector<std::string> csv_fields(const std::string& line) {
   }
   fields.push_back(trim(field));
   return fields;
+}
+
+inline double number(const std::string& value, double fallback = 0.0) {
+  try { return std::stod(value); } catch (...) { return fallback; }
+}
+
+inline int integer(const std::string& value, int fallback = 0) {
+  try { return std::stoi(value); } catch (...) { return fallback; }
+}
+
+inline bool iso_date(const std::string& value) {
+  return value.size() == 10 && value[4] == '-' && value[7] == '-';
+}
+
+inline int quarter_ordinal(const std::string& value) {
+  if (value.size() != 6 || value[4] != 'Q' || value[5] < '1' || value[5] > '4') return -1;
+  int year = 0;
+  try { year = std::stoi(value.substr(0, 4)); } catch (...) { return -1; }
+  return year * 4 + static_cast<int>(value[5] - '1');
 }
 
 inline bool unresolved(const StateMeasurementDefinition& entry) {
@@ -111,6 +146,66 @@ inline StateMeasurementRegistry load_state_measurement_registry(const std::strin
     registry.entries.push_back({f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]});
   }
   return registry;
+}
+
+inline std::vector<HousingAffordabilityBenchmark> load_housing_affordability_benchmarks(
+    const std::string& path) {
+  std::vector<HousingAffordabilityBenchmark> out;
+  std::ifstream in(path);
+  if (!in) return out;
+  std::string line;
+  bool header = true;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    if (header) { header = false; continue; }
+    const auto f = state_measurement_detail::csv_fields(line);
+    if (f.size() < 12) continue;
+    HousingAffordabilityBenchmark record;
+    record.fixture_id = f[0];
+    record.decision_date = f[1];
+    record.source_update_date = f[2];
+    record.hai_quarter = f[3];
+    record.hai_percent = state_measurement_detail::number(f[4]);
+    record.benchmark_start_quarter = f[5];
+    record.benchmark_end_quarter = f[6];
+    record.benchmark_quarters = state_measurement_detail::integer(f[7]);
+    record.benchmark_median_percent = state_measurement_detail::number(f[8]);
+    record.housing_gap_percent = state_measurement_detail::number(f[9]);
+    record.source_id = f[10];
+    record.methodology = f[11];
+    out.push_back(record);
+  }
+  return out;
+}
+
+inline double housing_affordability_gap(double hai_percent, double benchmark_median_percent) {
+  if (!(hai_percent > 0.0) || !(benchmark_median_percent > 0.0)) return 0.0;
+  return 100.0 * (hai_percent / benchmark_median_percent - 1.0);
+}
+
+inline bool housing_affordability_benchmark_valid(
+    const HousingAffordabilityBenchmark& record) {
+  const int current_quarter = state_measurement_detail::quarter_ordinal(record.hai_quarter);
+  const int benchmark_start = state_measurement_detail::quarter_ordinal(
+      record.benchmark_start_quarter);
+  const int benchmark_end = state_measurement_detail::quarter_ordinal(
+      record.benchmark_end_quarter);
+  if (record.fixture_id.empty()
+      || !state_measurement_detail::iso_date(record.decision_date)
+      || !state_measurement_detail::iso_date(record.source_update_date)
+      || record.source_update_date > record.decision_date
+      || current_quarter < 0 || benchmark_start < 0 || benchmark_end < 0
+      || benchmark_end + 1 != current_quarter
+      || benchmark_end - benchmark_start + 1 != 20
+      || record.benchmark_quarters != 20
+      || !(record.hai_percent > 0.0)
+      || !(record.benchmark_median_percent > 0.0)
+      || record.source_id != "boc_housing_affordability"
+      || record.methodology != "prior-20-quarter-median-excluding-current") return false;
+  const double derived = housing_affordability_gap(
+      record.hai_percent, record.benchmark_median_percent);
+  return std::isfinite(derived)
+      && std::abs(derived - record.housing_gap_percent) < 1e-9;
 }
 
 inline std::vector<std::string> unresolved_state_measurements(

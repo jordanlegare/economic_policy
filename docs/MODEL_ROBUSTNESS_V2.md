@@ -68,9 +68,9 @@ Historical state has two backward-compatible declared coverage tiers. The origin
 
 ### Full modeled-state measurement audit
 
-The 16-field historical contract is not the same as complete empirical reconstruction of every modeled state. `credit_spread` and `housing_gap` remain additional model-specific states, so V2 now tracks an 18-field empirical-state audit separately from the backward-compatible 16-field coverage metric.
+The 16-field historical contract is not the same as complete empirical reconstruction of every modeled state. `credit_spread` and `housing_gap` are additional model-specific states, so V2 tracks an 18-field empirical-state audit separately from the backward-compatible 16-field coverage metric.
 
-`data/calibration/state_measurement_registry.csv` defines the required concept, unit, preferred source, transformation, reproducibility status and implementation status for both unresolved fields. A historical field counts as empirically resolved only when **both** conditions hold:
+`data/calibration/state_measurement_registry.csv` defines the required concept, unit, preferred source, transformation, reproducibility status and implementation status for both fields. A historical field counts as empirically resolved only when **both** conditions hold:
 
 1. its registry status is `ready`; and
 2. the historical fixture actually supplies that measured input.
@@ -79,9 +79,15 @@ Merely adding a CSV row with the right field name cannot increase empirical cove
 
 For `credit_spread`, the canonical concept is a Canadian corporate credit spread over comparable Government of Canada debt, expressed in percentage points. Bank of Canada research provides a defensible semantic definition, but the historical broad-market implementations used in research can depend on licensed market data. The repository therefore does not substitute a bank lending rate or generic financial-conditions index and does not currently certify this field as publicly reproducible.
 
-For `housing_gap`, the preferred public concept is the Bank of Canada Housing Affordability Index, transformed into a signed pressure gap relative to a **one-sided historical benchmark**. The source concept is public, but the benchmark window and vintage reconstruction rule must be fixed before any derived values can enter historical fixtures. This avoids converting a transparent affordability level into a look-ahead-contaminated gap.
+`housing_gap` is now materialized from the Bank of Canada Housing Affordability Index. The source index is the share of household disposable income required for representative housing-related carrying costs. V2 converts that level to a signed pressure state using:
 
-Until those mappings are materialized, the shipped backtests remain 100% complete on the declared 16-field contract but only **16/18 (88.9%) empirically resolved across the modeled state audit**. Both unresolved fields continue to inherit model defaults, and CI guards against accidental promotion.
+`100 * (HAI_t / median(HAI_{t-20} ... HAI_{t-1}) - 1)`
+
+Only the 20 quarters preceding the selected HAI observation enter the benchmark; `HAI_t` is excluded. The selected observation must be available by the historical decision cutoff. `data/calibration/housing_affordability_benchmarks.csv` records each fixture's selected quarter, conservative Bank indicator-table update date, prior-only benchmark window, median and derived gap. CI recomputes the formula and rejects future-dated source updates. Public HAI history can be revised, so the mapping is explicitly described as information-window clean rather than a frozen archival real-time data vintage.
+
+The three current values are approximately +0.62% for the January 2015 episode, -1.39% for March 2020 and +23.73% for July 2022. Each value now enters the historical `Economy` state instead of inheriting the modern default.
+
+The shipped backtests therefore remain 100% complete on the declared 16-field contract and now resolve **17/18 (94.4%) of the modeled empirical-state audit**. `credit_spread` is the only unresolved modeled empirical field.
 
 Per-episode diagnostics report policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, core/expanded/combined declared coverage, provenance completeness and no-look-ahead status.
 
@@ -113,7 +119,7 @@ The structural-robustness contract exposes recommendation survival, structural c
 
 Historical results remain separate. `backtest_to_json()` exposes a single vintage run, including core/expanded/combined declared state coverage, while `backtest_suite_to_json()` exposes cross-episode diagnostics and coverage summaries. Normative preference sensitivity is exposed separately through `welfare_sensitivity_to_json()` so preference dependence cannot be confused with structural or historical uncertainty.
 
-The standalone state-measurement registry and audit contract expose the empirical-definition status of model-specific state fields without changing their simulated values prematurely.
+The standalone state-measurement registry and audit contract expose the empirical-definition status of model-specific state fields. The housing benchmark ledger provides a reproducible fixture-level derivation record without redefining the legacy declared-state coverage metric.
 
 A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Historical backtests address empirical diagnostic performance, while welfare sensitivity addresses normative preference dependence; none substitutes for the others.
 
@@ -139,10 +145,10 @@ Completed or active:
 16. Full-production normative preference grid over bilateral priority and risk aversion, with retention/switch/fairness diagnostics.
 17. V2 evidence APIs and browser panel for structural, historical and normative diagnostics.
 18. Explicit measurement contracts and 18-field empirical coverage audit for `credit_spread` and `housing_gap`.
+19. Vintage-safe one-sided Housing Affordability Index mapping with dated `housing_gap` inputs and benchmark audit ledger.
 
 Next:
 
-19. Materialize a no-look-ahead Housing Affordability Index benchmark transformation and add dated `housing_gap` values to the historical fixtures.
 20. Select or construct a genuinely open Canadian corporate-spread series before allowing `credit_spread` to leave its defaulted status.
 21. Replace provisional structural envelopes with empirical estimates where defensible.
 22. Add typed sensitivity for internal component-loss weights, explicitly separating mandate-fixed from assumed welfare coefficients.
