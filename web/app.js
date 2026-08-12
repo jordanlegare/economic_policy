@@ -38,3 +38,124 @@ function renderPartySectors(){const list=$('#partySectorSliders');list.innerHTML
 function syncPartyView(){if(!$('#partyView'))return;const isCanada=negotiator==='canada',priority=+$(isCanada?'#canadaPriority':'#usPriority').value;$('#partyPriority').value=priority;$('#partyPriorityValue').textContent=priority+'%';$('#counterpartyShare').textContent=(100-priority)+'%';$('#partyShare').textContent=`Canada ${$('#canadaPriority').value}% · USA ${$('#usPriority').value}%`;$('#partyTariff').value=isCanada?$('#retaliatoryTariff').value:tariff.value;$('#partyTariffValue').textContent=$('#partyTariff').value+'%'}
 function showView(view,updateHash=true){if(!['dashboard','canada','us'].includes(view))view='dashboard';if(updateHash)history.replaceState(null,'',view==='dashboard'?'#dashboard':'#'+view);document.querySelectorAll('.header-tabs button').forEach(b=>{const active=b.dataset.view===view;b.classList.toggle('active',active);b.setAttribute('aria-selected',active)});const dashboard=view==='dashboard';$('#dashboardView').hidden=!dashboard;$('#partyView').hidden=dashboard;if(dashboard)return;negotiator=view;const canada=view==='canada';$('#partyEyebrow').textContent=canada?'Canada negotiation room':'United States negotiation room';$('#partyTitle').textContent=canada?'Minister LeBlanc’s trade table':'Ambassador Greer’s trade table';$('#partyIntro').textContent=canada?'Explore Canada’s retaliation and sector protections with live Canada/U.S. welfare, output, jobs and price metrics; verified agreements remain the auto-applied bargaining optimum.':'Explore U.S. tariff coverage and exemptions with live U.S./Canada welfare, output, jobs and price metrics; verified agreements remain the auto-applied bargaining optimum.';$('#delegationName').textContent=canada?'Canada · LeBlanc':'USA · Greer';renderPartySectors();syncPartyView();window.scrollTo(0,0)}
 document.querySelectorAll('.header-tabs button').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('#returnDashboard').onclick=()=>showView('dashboard');bindRangeCommit($('#partyPriority'),()=>setWinWin(negotiator==='canada'?'canadaPriority':'usPriority',$('#partyPriority').value,false),()=>{publishNegotiation(negotiator);schedule()});bindRangeCommit($('#partyTariff'),()=>{if(negotiator==='canada'){$('#retaliatoryTariff').value=$('#partyTariff').value;$('#retaliatoryTariffValue').textContent=$('#partyTariff').value+'%'}else{tariff.value=$('#partyTariff').value;updateTariff()}syncPartyView();updatePosition();refreshPartySectorMetrics()},()=>{publishNegotiation(negotiator);schedule()});$('#resetSectors').onclick=()=>{positions[negotiator].fill(100);renderPartySectors();updatePosition();publishNegotiation(negotiator);schedule()};setWinWin('usPriority',50,false);updateTariff();updatePosition();showView(location.hash.slice(1),false);loadBaseline();
+
+// Delegation tariff display adapter. The engine and negotiation API continue to
+// use 0–100 sector coverage internally, but every negotiator-facing control is
+// expressed in the actual tariff percentage applied to that sector.
+;(() => {
+  const clampNumber=(value,lo,hi)=>Math.max(lo,Math.min(hi,Number(value)||0));
+  const coverageToTariff=(headline,coverage)=>Math.max(0,Number(headline)||0)*clampNumber(coverage,0,100)/100;
+  const tariffToCoverage=(headline,applied)=>Number(headline)>0?clampNumber(100*(Number(applied)||0)/Number(headline),0,100):0;
+  const headlineFor=party=>Math.max(0,Number(party==='canada'?$('#retaliatoryTariff')?.value:tariff?.value)||0);
+  const appliedFor=(party,coverage)=>coverageToTariff(headlineFor(party),coverage);
+  const tariffText=value=>compactNumber(Math.max(0,Number(value)||0))+'%';
+  const configureTariffInput=(input,party,coverage)=>{
+    const headline=headlineFor(party),applied=coverageToTariff(headline,coverage);
+    if(input){input.min='0';input.max=String(headline);input.step='0.1';input.value=String(applied);input.disabled=headline<=0;}
+    return {headline,applied};
+  };
+
+  window.DelegationTariffs={coverageToTariff,tariffToCoverage,headlineFor,appliedFor,tariffText};
+
+  function setDelegationTariffCopy(){
+    const sectorInput=$('#sectorCoverage'),label=sectorInput?.closest?.('label');
+    if(label){
+      for(const child of label.childNodes||[]){
+        if(child.nodeType===3&&String(child.textContent||'').includes('Tariff coverage for this sector')){child.textContent='Applied tariff for this sector ';break;}
+      }
+      const spans=label.querySelectorAll?.('small span')||[];
+      if(spans[0])spans[0].textContent='0% exempt';
+    }
+    const usCopy=$('#usControls')?.querySelector?.('p');
+    if(usCopy)usCopy.textContent='Headline U.S. tariff is controlled above. Sector sliders below show the actual tariff rate applied to each sector.';
+    const board=document.querySelector?.('.sector-board-head');
+    const heading=board?.querySelector?.('h2'),paragraph=board?.querySelector?.('p');
+    if(heading)heading.textContent='Sector-by-sector applied tariffs and deal metrics';
+    if(paragraph)paragraph.textContent='Both delegations see the searched bilateral deal metrics for their country. Adjust each sector directly in tariff percentage points, from 0% exemption up to the delegation’s current headline tariff.';
+    const reset=$('#resetSectors');if(reset)reset.textContent='Reset all to headline tariff';
+  }
+
+  updatePosition=function(){
+    const i=+$('#positionSector').value,coverage=positions[negotiator][i],input=$('#sectorCoverage');
+    const {headline,applied}=configureTariffInput(input,negotiator,coverage);
+    $('#sectorCoverageValue').textContent=tariffText(applied);
+    $('#positionCountry').textContent=negotiator==='canada'?'Canada position':'USA position';
+    const spans=input?.closest?.('label')?.querySelectorAll?.('small span')||[];
+    if(spans[1])spans[1].textContent=`${tariffText(headline)} headline rate`;
+    $('#positionReadout').textContent=`${tariffText(applied)} applied tariff · ${sectorNames[i]} · ${tariffText(headline)} headline`;
+  };
+
+  const basePartySectorMetric=partySectorMetric;
+  partySectorMetric=function(i){
+    const metric=basePartySectorMetric(i),live=window.EvaluationController?.sectorMetrics?.(i,positions.us[i],positions.canada[i]);
+    if(metric?.text&&live&&!live.verified){
+      const verified=live.recommendedCoverage||{};
+      const replacement=`verified tariffs CA ${tariffText(appliedFor('canada',verified.canada))} / U.S. ${tariffText(appliedFor('us',verified.us))}`;
+      metric.text=metric.text.replace(/verified CA [-\d.]+% \/ U\.S\. [-\d.]+%/,replacement);
+    }
+    return metric;
+  };
+
+  const baseRefreshPartySectorMetrics=refreshPartySectorMetrics;
+  refreshPartySectorMetrics=function(){
+    const list=$('#partySectorSliders');
+    list?.querySelectorAll?.('input[data-sector]')?.forEach(input=>{
+      const i=+input.dataset.sector,{applied}=configureTariffInput(input,negotiator,positions[negotiator][i]);
+      const output=input.parentElement?.querySelector?.('output');if(output)output.textContent=tariffText(applied);
+    });
+    baseRefreshPartySectorMetrics();
+  };
+
+  renderPartySectors=function(){
+    const list=$('#partySectorSliders');if(!list)return;
+    const headline=headlineFor(negotiator);
+    list.innerHTML=sectorNames.map((name,i)=>{
+      const metric=partySectorMetric(i),applied=coverageToTariff(headline,positions[negotiator][i]);
+      return `<label class="party-sector-control">${name}<output>${tariffText(applied)}</output><small class="sector-deal-metric ${metric.score<50?'negative':'positive'}" data-sector-metric="${i}">${metric.text}</small><input type="range" min="0" max="${headline}" step="0.1" value="${applied}" data-sector="${i}" aria-label="${name} applied tariff percentage"${headline<=0?' disabled':''}></label>`;
+    }).join('');
+    list.querySelectorAll('input').forEach(input=>bindRangeCommit(input,()=>{
+      const i=+input.dataset.sector;
+      positions[negotiator][i]=tariffToCoverage(headlineFor(negotiator),+input.value);
+      input.parentElement.querySelector('output').textContent=tariffText(input.value);
+      updatePartySectorMetric(i,input.parentElement.querySelector('.sector-deal-metric'));
+      if(+$('#positionSector').value===i)updatePosition();
+    },()=>{publishNegotiation(negotiator);schedule()}));
+  };
+
+  // Replace the sidebar sector input's original raw-coverage binding with an
+  // applied-tariff binding. Publishing still sends normalized coverage.
+  bindRangeCommit($('#sectorCoverage'),()=>{
+    const i=+$('#positionSector').value;
+    positions[negotiator][i]=tariffToCoverage(headlineFor(negotiator),+$('#sectorCoverage').value);
+    updatePosition();refreshPartySectorMetrics();
+  },()=>{publishNegotiation(negotiator);schedule()});
+
+  // Keep delegation tariff sliders synchronized when the headline rate changes.
+  bindRangeCommit($('#retaliatoryTariff'),()=>{
+    $('#retaliatoryTariffValue').textContent=$('#retaliatoryTariff').value+'%';
+    updatePosition();syncPartyView();refreshPartySectorMetrics();
+  },()=>{publishNegotiation('canada');schedule()});
+
+  const baseShowView=showView;
+  showView=function(view,updateHash=true){
+    baseShowView(view,updateHash);
+    if(view==='canada')$('#partyIntro').textContent='Explore Canada’s actual retaliatory tariff rates by sector with live Canada/U.S. welfare, output, jobs and price metrics; verified agreements remain the auto-applied bargaining optimum.';
+    else if(view==='us')$('#partyIntro').textContent='Explore the actual U.S. tariff rate applied to each sector, including exemptions and partial relief, with live U.S./Canada welfare, output, jobs and price metrics.';
+  };
+
+  const baseRender=render;
+  render=function(){
+    baseRender();
+    const rec=result?.recommendation,coverage=rec?.usSectorCoverage||positions.us;
+    if(coverage?.length){
+      const averageCoverage=coverage.reduce((a,b)=>a+Number(b||0),0)/coverage.length;
+      const averageTariff=coverageToTariff(headlineFor('us'),averageCoverage),node=$('#liveDealImpact');
+      if(node)node.textContent=node.textContent.replace(/U\.S\. equilibrium coverage [-\d.]+%\./,`U.S. average applied sector tariff ${tariffText(averageTariff)}.`);
+    }
+  };
+
+  setDelegationTariffCopy();
+  updatePosition();
+  refreshPartySectorMetrics();
+  if(!$('#partyView')?.hidden){renderPartySectors();showView(negotiator,false);}
+})();
