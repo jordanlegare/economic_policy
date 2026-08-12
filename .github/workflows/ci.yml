@@ -14,6 +14,7 @@ jobs:
         run: |
           node --check web/app.js
           node --check web/evaluation-controller.js
+          node --check web/trade-incidence.js
           node --check web/diplomat.js
           node --check web/negotiation-model.js
           node --check web/trade-diplomacy.js
@@ -52,11 +53,13 @@ jobs:
           grep -q '"scenarios":\[' /tmp/initial-evaluate.json
           grep -q '"robustness":{' /tmp/initial-evaluate.json
           grep -q '"secondStageMonteCarloDraws":5000' /tmp/initial-evaluate.json
+          curl -fsS http://127.0.0.1:18080/trade-incidence.js | grep -q 'Tariff incidence'
       - name: Check calibration tooling
         run: |
-          python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py tools/verify_trade_gate_certification.py tools/build_statcan_io_matrix.py
+          python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py tools/verify_trade_gate_certification.py tools/build_statcan_io_matrix.py tools/build_bea_io_matrix.py tools/verify_structural_promotions.py
           python3 tests/estimate_trade_response_test.py
           python3 tests/statcan_io_builder_test.py
+          python3 tools/verify_structural_promotions.py
           python3 tools/verify_trade_gate_certification.py --verify
           test -s data/calibration/source_registry.csv
           test -s data/calibration/current.snapshot.csv
@@ -65,9 +68,13 @@ jobs:
           test -s data/calibration/statcan_io_2024_matrix.csv
           test -s data/calibration/statcan_io_2024_provenance.json
           test -s include/generated/trade_io_2024.hpp
+          test -s data/backtests/2018-section232-trade-validation.csv
           grep -q 'statcan_trade_annual' data/calibration/source_registry.csv
           grep -q 'boc_mpr_tariffs_2026_07' data/calibration/source_registry.csv
           grep -q 'carrere_grujovic_robert_nicoud_2020' data/calibration/source_registry.csv
+          grep -q 'statcan_2018_tariff_export_study' data/calibration/source_registry.csv
+          grep -q 'finance_canada_2018_countermeasures' data/calibration/source_registry.csv
+          grep -q 'bea_input_output' data/calibration/source_registry.csv
           grep -q 'future-not-applied-as-of-2026-08-12' data/calibration/current.snapshot.csv
           grep -q '36-10-0001-01' data/calibration/statcan_io_2024_provenance.json
           grep -q '3c7422bce4c6ff2d5082d6ac1afb4f31610039b71ada9973126673f705f0fc22' data/calibration/statcan_io_2024_provenance.json
@@ -115,6 +122,7 @@ jobs:
           grep -q 'negotiation-model.js' src/main.cpp
           grep -q 'trade-diplomacy.css' src/main.cpp
           grep -q 'trade-diplomacy.js' src/main.cpp
+          grep -q 'trade-incidence.js' src/main.cpp
           grep -q 'calibration.css' src/main.cpp
           grep -q 'calibration.js' src/main.cpp
           grep -q 'robust-room.css' src/main.cpp
