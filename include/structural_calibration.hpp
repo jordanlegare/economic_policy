@@ -114,6 +114,7 @@ inline StructuralParameters apply_structural_parameter_registry(
   if (registry.loaded) {
     p.calibration_id = registry.registry_id;
     p.calibration_vintage = registry.as_of;
+    p.uncertainty_registry = registry;
   }
   return p;
 }
