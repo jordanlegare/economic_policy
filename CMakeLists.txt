@@ -112,6 +112,8 @@ set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURC
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
 cad_add_test(robustness_sampler_tests tests/robustness_test.cpp robustness_sampler)
 cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp robustness_integration)
+cad_add_test(backtest_tests tests/backtest_test.cpp historical_backtest)
+set_tests_properties(historical_backtest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
