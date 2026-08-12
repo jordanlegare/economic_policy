@@ -401,14 +401,13 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
     frontier.push_back(fallback);
   }
 
-  // The robust stage evaluates the retained epsilon-frontier, not only the 12
-  // cards shown in the UI. The explicit cap prevents unbounded memory use; when
-  // it binds, frontierComplete=false blocks a global-optimum claim.
-  constexpr std::size_t robust_frontier_cap = 512;
-  analysis.frontier_complete = frontier.size() <= robust_frontier_cap;
-  const std::size_t keep = std::min<std::size_t>(robust_frontier_cap, frontier.size());
-  analysis.frontier.reserve(keep);
-  for (std::size_t i = 0; i < keep; ++i) analysis.frontier.push_back(make_package(frontier[i], i));
+  // Retain the complete epsilon-Pareto set. The robust second stage uses a
+  // two-pass common-random-number evaluator with O(draws + packages) memory, so
+  // completeness no longer depends on a 512-package storage cap.
+  analysis.frontier_complete = true;
+  analysis.frontier.reserve(frontier.size());
+  for (std::size_t i = 0; i < frontier.size(); ++i)
+    analysis.frontier.push_back(make_package(frontier[i], i));
   analysis.recommended = analysis.frontier.front();
   analysis.sector_schedule_verified = analysis.recommended.sector_verified;
   analysis.data_integrity_pass = analysis.independent_us_trade_channel
