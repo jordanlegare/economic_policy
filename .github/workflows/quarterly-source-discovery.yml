@@ -16,7 +16,7 @@ jobs:
         with:
           ref: agent/v2-quarterly-estimation
       - name: Refresh public quarterly panel and estimates
-        run: python3 tools/refresh_sep_calibration.py --refresh
+        run: python3 tools/run_sep_refresh.py
       - name: Freeze generated calibration artifacts
         run: |
           git config user.name 'github-actions[bot]'
