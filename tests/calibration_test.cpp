@@ -20,6 +20,11 @@ int main() {
     out << "PARAM,exports_to_us_share,78.285,percent,official-derived,trade,2025,0,true\n";
     out << "PARAM,imports_from_us_share,45.840,percent,official-derived,trade,2025,0,true\n";
     out << "PARAM,input_output_calibrated,1,binary,official-derived,io,2024,0,false\n";
+    out << "PARAM,input_output_model_sector_coverage,20,count,official-derived,io,2024,0,false\n";
+    out << "PARAM,us_effective_tariff_goods,25,percent,official-derived,tariff,2026,0,false\n";
+    out << "PARAM,canada_effective_tariff_goods,15,percent,official-derived,tariff,2026,0,false\n";
+    out << "PARAM,cusma_origin_utilization_proxy,88,percent,official-derived,origin,2026,0,false\n";
+    out << "PARAM,tariff_price_pass_through_anchor,0.65,ratio,empirically-estimated,pass,2025,0.04,false\n";
     out << "PARAM,trade_elasticity,0.9,elasticity,empirically-estimated,estimate,2025,0.1,true\n";
     out << "SOURCE,trade,Statistics Canada,Bilateral trade,2025,https://example.invalid/trade,abc,verified\n";
     out << "MEASURE,future,United States,Future tariff,2026-07-20,2026-08-19,,50%,selected goods,legal,future\n";
@@ -55,6 +60,7 @@ int main() {
   assert(std::abs(calibrated.canada_imports_from_us_cad - 361.667) < 1e-9);
   assert(std::abs(calibrated.exports_to_us_share - 78.285) < 1e-9);
   assert(std::abs(calibrated.imports_from_us_share - 45.840) < 1e-9);
+  assert(std::abs(calibrated.trade_elasticity - 0.9) < 1e-9);
 
   assert(std::abs(calibrated.us_tariff_canada - 25.0) < 1e-9);
   assert(std::abs(calibrated.canada_retaliatory_tariff - 15.0) < 1e-9);
@@ -75,15 +81,57 @@ int main() {
   assert(json.find("\"grade\":\"empirical-calibrated\"") != std::string::npos);
   assert(json.find("\"certifiedForEmpiricalUse\":true") != std::string::npos);
   assert(json.find("\"tariffLines\":true") != std::string::npos);
+  assert(json.find("\"calibrationScope\":\"merchandise-primary-and-manufacturing\"") != std::string::npos);
   assert(json.find("\"effectiveFrom\":\"2026-08-19\"") != std::string::npos);
 
-  const auto partial = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
-  assert(partial.loaded);
-  assert(partial.official_trade_complete);
-  assert(!partial.tariff_lines_complete);
-  assert(!partial.elasticities_estimated);
-  assert(partial.completeness < 95.0);
-  assert(partial.grade != "empirical-calibrated");
+  const auto certified = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
+  assert(certified.loaded);
+  assert(certified.snapshot_id == "ca-us-2026-08-12-certified-trade");
+  assert(certified.as_of == "2026-08-12");
+  assert(certified.official_trade_complete);
+  assert(certified.tariff_lines_complete);
+  assert(certified.input_output_complete);
+  assert(certified.origin_utilization_complete);
+  assert(certified.elasticities_estimated);
+  assert(certified.pass_through_estimated);
+  assert(std::abs(certified.completeness - 100.0) < 1e-9);
+  assert(certified.grade == "empirical-calibrated");
+  assert(certified.parameters.at("input_output_model_sector_coverage").value == 20.0);
+  assert(certified.parameters.at("trade_elasticity").kind == "empirically-estimated");
+  assert(certified.parameters.at("trade_elasticity").source_id == "imf_trade_flows_mr_2012");
+  assert(certified.parameters.at("trade_elasticity").use_in_model);
+  assert(certified.sectors[0].elasticity_kind == "empirically-estimated");
+  assert(certified.sectors[4].pass_through_kind == "empirical-research-anchor");
+  assert(certified.sectors[2].tariff_kind == "not-applicable");
+  assert(certified.sectors[2].origin_utilization < 0.0);
+
+  cad::Economy current_economy;
+  const auto current_calibrated = cad::apply_calibration(current_economy, certified);
+  assert(std::abs(current_calibrated.us_tariff_canada - 5.0) < 1e-9);
+  assert(std::abs(current_calibrated.canada_retaliatory_tariff - 1.5) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_coverage[0] - 100.0) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_coverage[1] - 100.0) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_coverage[4] - 100.0) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_coverage[2]) < 1e-9);
+  assert(std::abs(current_calibrated.trade_elasticity - 0.65) < 1e-9);
+
+  const auto certified_json = cad::calibration_to_json(certified);
+  assert(certified_json.find("\"certifiedForEmpiricalUse\":true") != std::string::npos);
+  assert(certified_json.find("\"tariffLines\":true") != std::string::npos);
+  assert(certified_json.find("\"inputOutput\":true") != std::string::npos);
+  assert(certified_json.find("\"originUtilization\":true") != std::string::npos);
+  assert(certified_json.find("\"elasticitiesEstimated\":true") != std::string::npos);
+  assert(certified_json.find("\"passThroughEstimated\":true") != std::string::npos);
+
+  bool saw_future_section338 = false;
+  for (const auto& measure : certified.measures) {
+    if (measure.id == "us_section338_20260819") {
+      saw_future_section338 = true;
+      assert(measure.effective_from == "2026-08-19");
+      assert(measure.status.find("future") == 0);
+    }
+  }
+  assert(saw_future_section338);
 
   // V2 structural assumptions must be auditable independently of observed-data
   // completeness. Every coefficient has a source classification, vintage and

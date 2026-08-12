@@ -53,13 +53,17 @@ jobs:
           grep -q '"secondStageMonteCarloDraws":5000' /tmp/initial-evaluate.json
       - name: Check calibration tooling
         run: |
-          python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py
+          python3 -m py_compile tools/refresh_calibration.py tools/estimate_trade_response.py tools/verify_trade_gate_certification.py
           python3 tests/estimate_trade_response_test.py
+          python3 tools/verify_trade_gate_certification.py --verify
           test -s data/calibration/source_registry.csv
           test -s data/calibration/current.snapshot.csv
+          test -s data/calibration/trade_gate_certification.csv
+          test -s data/calibration/io_2024_model_mapping.csv
           grep -q 'statcan_trade_annual' data/calibration/source_registry.csv
-          grep -q 'usitc_hts' data/calibration/source_registry.csv
-          grep -q 'future-not-applied-as-of-snapshot' data/calibration/current.snapshot.csv
+          grep -q 'boc_mpr_tariffs_2026_07' data/calibration/source_registry.csv
+          grep -q 'carrere_grujovic_robert_nicoud_2020' data/calibration/source_registry.csv
+          grep -q 'future-not-applied-as-of-2026-08-12' data/calibration/current.snapshot.csv
       - name: Verify briefing PDF generator
         run: |
           node <<'NODE'
