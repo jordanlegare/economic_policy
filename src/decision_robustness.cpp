@@ -113,7 +113,7 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
       parameters_.uncertainty_registry);
   summary.methodology =
       "outer-structural-ensemble/production-policy-engine-rerun/"
-      "full-288-generated-control-search/production-sector-pareto-search/"
+      "full-288-policy-control-search/production-sector-pareto-search/"
       "production-trade-network/common-random-numbers";
   summary.structural_parameters_active = summary.parameter_draws > 0;
   summary.common_random_numbers = summary.parameter_draws > 0;
