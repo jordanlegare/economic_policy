@@ -1,6 +1,6 @@
 # Model Robustness V2
 
-Canada Policy Studio distinguishes simulation precision from empirical confidence. More Monte Carlo draws reduce simulation error conditional on a model; they do not validate structural coefficients. V2 therefore places a documented structural-uncertainty layer around the complete policy decision process and a separate vintage-based empirical diagnostic layer around historical episodes.
+Canada Policy Studio distinguishes simulation precision from empirical confidence. More Monte Carlo draws reduce simulation error conditional on a model; they do not validate structural coefficients. V2 therefore places a documented structural-uncertainty layer around the complete policy decision process, a vintage-based empirical diagnostic layer around historical episodes, and a separate normative-preference sensitivity layer around the decision objective.
 
 ## Current V2 status
 
@@ -23,7 +23,7 @@ Research inputs are classified conceptually as:
 - **ObservedState** — dated macroeconomic and trade observations.
 - **StructuralParameters** — elasticities, pass-through coefficients, transmission coefficients and stochastic-process parameters.
 - **PolicyControls** — monetary, fiscal, relief, diversification and tariff-policy choices.
-- **NegotiationPreferences** — Canada/U.S. priorities, risk tolerance, cooperation constraints and bilateral growth floors. These are mandates, not estimated parameters.
+- **NegotiationPreferences** — Canada/U.S. priorities, risk tolerance, cooperation constraints and bilateral growth floors. These are mandates/delegation inputs, not estimated structural parameters.
 - **CalibrationMetadata** — source, vintage, classification, sensitivity envelope and fallback status.
 
 Every V2 structural coefficient has a registry record specifying its baseline, unit, provenance kind, source ID, vintage, lower/upper bounds, distribution and whether it is sampled. Current uncertainty envelopes are sensitivity ranges, not empirical confidence intervals.
@@ -74,9 +74,13 @@ Per-episode diagnostics report policy-direction agreement, basis-point policy er
 
 ## 5. Welfare-weight sensitivity
 
-Policy rankings also depend on normative loss-function weights. V2 treats this as a separate experiment, not something the optimizer can alter opportunistically.
+Normative preference sensitivity is now an active V2 layer. It varies the explicit Canada/U.S. delegation priority weights and risk-aversion input while keeping the economic calibration, BoC mandate-loss coefficients, cooperation ceiling and bilateral growth floor fixed.
 
-For a bounded grid or sampled set of admissible weights, report recommendation retention, materially supported alternatives, switch thresholds, fairness changes and whether hard mandate constraints remain binding.
+The default local grid is centred on the submitted preferences and evaluates Canada-priority shifts of -15/0/+15 percentage points crossed with risk-aversion shifts of -25/0/+25 points. Every profile reruns the full production 288-control search, sector Pareto optimization and 700/2,800-draw verification path; this is not a score-only reranking of frozen scenarios.
+
+`evaluate_welfare_sensitivity()` reports reference-control retention, strategy-family retention, sector-package retention, supported alternative winners, fairness range and the nearest tested one-dimensional priority/risk shift that changes the control decision. `welfare_sensitivity_to_json()` exposes the standalone contract.
+
+The internal BoC/federal/U.S. component-loss coefficients remain fixed in this milestone. `mandateWeightsFixed=true` is audited across every preference profile. Sensitivity of those internal component weights is a later extension and should use a typed weight registry rather than anonymous literals.
 
 ## 6. Three-layer architecture
 
@@ -92,9 +96,9 @@ The economic model produces conditional outcome distributions. The decision engi
 
 The structural-robustness contract exposes recommendation survival, structural calibration identity, parameter provenance/bounds, common-random-number status, policy-control and sector re-optimization audit counts, retention metrics and robustness classification through `robustness_to_json()`.
 
-Historical results remain separate. `backtest_to_json()` exposes a single vintage run, including core/expanded/combined state coverage, while `backtest_suite_to_json()` exposes cross-episode diagnostics and coverage summaries. Keeping these endpoints distinct prevents ex-post forecast diagnostics from being confused with forward-looking structural robustness statistics.
+Historical results remain separate. `backtest_to_json()` exposes a single vintage run, including core/expanded/combined state coverage, while `backtest_suite_to_json()` exposes cross-episode diagnostics and coverage summaries. Normative preference sensitivity is exposed separately through `welfare_sensitivity_to_json()` so preference dependence cannot be confused with structural or historical uncertainty.
 
-A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Historical backtests address empirical diagnostic performance instead; neither layer substitutes for the other.
+A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Historical backtests address empirical diagnostic performance, while welfare sensitivity addresses normative preference dependence; none substitutes for the others.
 
 ## 8. Implementation sequence
 
@@ -115,14 +119,15 @@ Completed or active:
 13. Cross-episode direction/MAE diagnostics with a three-fixture reporting guard.
 14. Native CI contamination test that injects future information and requires rejection.
 15. Expanded historical state tier covering FX, oil, global/U.S. macro, federal fiscal state and household leverage.
+16. Full-production normative preference grid over bilateral priority and risk aversion, with retention/switch/fairness diagnostics.
 
 Next:
 
-16. Define defensible observable mappings for model-specific `credit_spread` and `housing_gap`, or keep them explicitly structural/defaulted.
-17. Surface structural provenance, decision robustness and historical diagnostics in the application/API.
-18. Replace provisional structural envelopes with empirical estimates where defensible.
-19. Add welfare-weight sensitivity as a separate analysis endpoint.
-20. Add later-tightening, hold/soft-landing and eventually tariff-specific historical episodes.
+17. Define defensible observable mappings for model-specific `credit_spread` and `housing_gap`, or keep them explicitly structural/defaulted.
+18. Surface structural provenance, decision robustness, historical diagnostics and preference sensitivity in the application/API.
+19. Replace provisional structural envelopes with empirical estimates where defensible.
+20. Add typed sensitivity for internal component-loss weights, explicitly separating mandate-fixed from assumed welfare coefficients.
+21. Add later-tightening, hold/soft-landing and eventually tariff-specific historical episodes.
 
 ## Research interpretation
 
