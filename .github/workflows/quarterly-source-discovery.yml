@@ -1,4 +1,4 @@
-name: Quarterly empirical refresh
+name: Quarterly empirical promotion
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  refresh:
+  promote:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -16,18 +16,25 @@ jobs:
         with:
           ref: agent/v2-quarterly-estimation
       - name: Refresh public quarterly panel and estimates
-        run: python3 tools/run_sep_refresh.py
-      - name: Freeze generated calibration artifacts
+        run: python3 tools/refresh_sep_calibration.py --refresh
+      - name: Promote eligible quarterly estimates
+        run: python3 tools/apply_quarterly_promotion.py
+      - name: Verify frozen quarterly calibration
+        run: python3 tools/refresh_sep_calibration.py --verify
+      - name: Build and test promoted model
         run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+      - name: Freeze promoted empirical calibration
+        run: |
+          rm -f tools/apply_quarterly_promotion.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/calibration/quarterly_estimation_panel.csv \
-                  data/calibration/quarterly_estimation_manifest.csv \
-                  data/calibration/quarterly_structural_estimates.csv \
-                  data/calibration/quarterly_residual_covariance.csv
+          git add -A
           if git diff --cached --quiet; then
-            echo 'No calibration changes to commit'
+            echo 'No promoted calibration changes to commit'
           else
-            git commit -m 'Freeze quarterly empirical calibration panel'
+            git commit -m 'Promote quarterly empirical calibration'
             git push origin HEAD:agent/v2-quarterly-estimation
           fi
