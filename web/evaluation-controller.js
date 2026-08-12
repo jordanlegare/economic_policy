@@ -7,6 +7,7 @@
   // recommendation cannot compound the cooperation envelope against itself.
   let negotiationAnchor = null;
   let lastAutoCoverage = null;
+  let lastEvaluatedControls = null;
   let comparisonCache = null;
   let comparisonCacheKey = '';
   let comparisonTimer = null;
@@ -75,11 +76,34 @@
     return copyCoverage(positions);
   }
 
+  function controlSnapshot() {
+    const value = (selector, fallback) => finite(typeof $ === 'function' ? $(selector)?.value : undefined, fallback);
+    return {
+      usTariff: finite(typeof tariff !== 'undefined' ? tariff?.value : undefined, finite(settings?.usTariff, 50)),
+      retaliatoryTariff: value('#retaliatoryTariff', finite(settings?.retaliatoryTariff, 5)),
+      canadaPriority: value('#canadaPriority', 50),
+      usPriority: value('#usPriority', 50),
+      riskAversion: value('#riskAversion', 50),
+      cooperationCeiling: value('#cooperationCeiling', 50)
+    };
+  }
+
+  function controlsEqual(a, b) {
+    if (!a || !b) return false;
+    return Object.keys(a).every(key => Math.abs(finite(a[key]) - finite(b[key])) < 1e-9);
+  }
+
   function evaluationAnchor() {
     const current = displayedCoverage();
-    // If the sliders no longer match the last automatically displayed package,
-    // treat the current values as an intentional new negotiating posture.
-    if (!negotiationAnchor || !lastAutoCoverage || !coverageEqual(current, lastAutoCoverage)) {
+    const controls = controlSnapshot();
+    const controlsChanged = !!lastEvaluatedControls && !controlsEqual(controls, lastEvaluatedControls);
+    // Any deliberate UI change starts from the package the user can currently
+    // see. Sector edits are detected directly; tariff, mandate, risk and relief
+    // edits are detected through the control snapshot. This is what lets a user
+    // iteratively steer the automatically selected package instead of snapping
+    // back to the original calibrated opening on the next search.
+    if (!negotiationAnchor || !lastAutoCoverage || !coverageEqual(current, lastAutoCoverage)
+        || controlsChanged) {
       negotiationAnchor = current;
     }
     return copyCoverage(negotiationAnchor);
@@ -244,7 +268,8 @@
 
   function policyTermsForScenario(scenario, context = economyContext()) {
     if (!scenario) return null;
-    if (scenario.id !== 'custom') return finalizeFixedTerms(fixedStrategyTerms[scenario.id], context);
+    const generated = scenario.id === 'custom' || String(scenario.id || '').startsWith('custom-');
+    if (!generated) return finalizeFixedTerms(fixedStrategyTerms[scenario.id], context);
     if (sectorPolicyCache.result === result && sectorPolicyCache.scenarioId === scenario.id
         && sectorPolicyCache.terms) return sectorPolicyCache.terms;
     const terms = inferCustomTerms(scenario, context);
@@ -329,7 +354,10 @@
         sectorParetoFrontierSize: Number(rec.sectorParetoFrontierSize || 0),
         sectorFinalistsResimulated: Number(rec.sectorFinalistsResimulated || 0),
         verifiedCanadaScore: Number(rec.verifiedCanadaScore || 0),
-        verifiedUsScore: Number(rec.verifiedUsScore || 0)
+        verifiedUsScore: Number(rec.verifiedUsScore || 0),
+        userAnchorSelectionActive: rec.userAnchorSelectionActive === true,
+        userAnchorWelfareTolerance: Number(rec.userAnchorWelfareTolerance || 0),
+        selectedTradePostureDistance: Number(rec.selectedTradePostureDistance || 0)
       }
     }));
   }
@@ -396,6 +424,7 @@
     if (partyView && !partyView.hidden && typeof renderPartySectors === 'function') renderPartySectors();
     negotiationAnchor = displayedCoverage();
     lastAutoCoverage = null;
+    lastEvaluatedControls = null;
     initialCalibrationApplied = true;
   }
 
@@ -417,12 +446,16 @@
     const completeness = rec.globalSearchComplete === true
       ? 'complete declared startup grid'
       : 'retained verified candidate set';
-    setAutoApplyStatus(`Auto-apply verified win-win agreement ON · ${completeness} · ${sectorSearchSummary(rec)} · both delegations' sector sliders now show the verified package.`);
+    const proximity = rec.userAnchorSelectionActive === true
+      ? ` · user-anchor Δtrade ${finite(rec.selectedTradePostureDistance, 0).toFixed(1)} · within ${finite(rec.userAnchorWelfareTolerance, 0.5).toFixed(1)} score point of max welfare`
+      : '';
+    setAutoApplyStatus(`Auto-apply verified win-win agreement ON · ${completeness}${proximity} · ${sectorSearchSummary(rec)} · both delegations' sector sliders now show the verified package.`);
 
     // publishNegotiation('automatic') serializes both Canada and U.S. sector
     // arrays, so the joint dashboard and either delegation view converge on the
     // same verified agreement without making that agreement a new concession
-    // anchor for another optimization pass.
+    // anchor for another optimization pass. The next deliberate UI edit promotes
+    // this visible package to the new anchor before the next solve.
     if (changed) publishNegotiation('automatic');
     announceVerifiedWinWin(rec);
   }
@@ -562,6 +595,10 @@
       }
 
       result = evaluated;
+      // Commit the submitted non-sector controls only after a successful solve.
+      // If a request fails, retrying the same UI edit still promotes the visible
+      // package to the intended new anchor.
+      lastEvaluatedControls = controlSnapshot();
       sectorPolicyCache = {result:null, scenarioId:'', terms:null};
       const key = comparisonKey(preferences);
       noTariff = comparisonCache && comparisonCacheKey === key
@@ -619,6 +656,7 @@
     resetNegotiationAnchor() {
       negotiationAnchor = displayedCoverage();
       lastAutoCoverage = null;
+      lastEvaluatedControls = controlSnapshot();
     },
     sectorMetrics,
     state() {
@@ -626,8 +664,11 @@
         searchAnchor: copyCoverage(negotiationAnchor || positions),
         displayedCoverage: displayedCoverage(),
         autoAppliedCoverage: lastAutoCoverage ? copyCoverage(lastAutoCoverage) : null,
+        lastEvaluatedControls: lastEvaluatedControls ? {...lastEvaluatedControls} : null,
         verifiedWinWin: recommendationIsVerified(result?.recommendation),
         globalSearchComplete: result?.recommendation?.globalSearchComplete === true,
+        userAnchorSelectionActive: result?.recommendation?.userAnchorSelectionActive === true,
+        selectedTradePostureDistance: finite(result?.recommendation?.selectedTradePostureDistance, 0),
         initialCalibrationApplied
       };
     },
