@@ -1,4 +1,5 @@
 #include "trade_network.hpp"
+#include "generated/trade_io_2024.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -34,49 +35,13 @@ const std::array<TradeSectorProfile, kTradeSectorCount> kProfiles{{
   {"91","Public administration",.04,.08,.62,.12}
 }};
 
-TradeInputOutputMatrix build_matrix() {
-  TradeInputOutputMatrix matrix{};
-  auto add = [&](std::size_t downstream, std::size_t upstream, double share) {
-    matrix[downstream][upstream] += share;
-  };
-
-  // Ubiquitous business-service and logistics inputs. These are intentionally
-  // conservative bridge coefficients so the network is active without being
-  // misrepresented as a direct extraction of every StatCan detail-level cell.
-  for (std::size_t downstream = 0; downstream < kTradeSectorCount; ++downstream) {
-    if (downstream != 2) add(downstream, 2, .012);   // utilities
-    if (downstream != 7) add(downstream, 7, .012);   // transportation
-    if (downstream != 8) add(downstream, 8, .010);   // information
-    if (downstream != 9) add(downstream, 9, .014);   // finance
-    if (downstream != 11) add(downstream, 11, .014); // professional services
-    if (downstream != 13) add(downstream, 13, .012); // administrative services
-  }
-
-  add(0,4,.080); add(0,2,.020); add(0,7,.030); add(0,9,.020);
-  add(1,4,.070); add(1,2,.035); add(1,3,.025); add(1,7,.035); add(1,11,.025);
-  add(2,1,.070); add(2,4,.040); add(2,11,.020);
-  add(3,4,.130); add(3,1,.040); add(3,5,.025); add(3,7,.020); add(3,9,.025); add(3,11,.035);
-  add(4,0,.035); add(4,1,.070); add(4,2,.035); add(4,4,.120); add(4,5,.035); add(4,7,.040); add(4,11,.025);
-  add(5,4,.080); add(5,7,.055); add(5,9,.020); add(5,10,.025); add(5,8,.020);
-  add(6,4,.060); add(6,5,.100); add(6,7,.035); add(6,10,.040); add(6,9,.025); add(6,8,.020);
-  add(7,1,.080); add(7,4,.065); add(7,2,.025); add(7,9,.020); add(7,11,.020);
-  add(8,2,.025); add(8,4,.030); add(8,11,.060); add(8,9,.025);
-  add(9,8,.050); add(9,10,.025); add(9,11,.055); add(9,13,.025);
-  add(10,3,.030); add(10,2,.035); add(10,9,.040); add(10,11,.025); add(10,13,.025);
-  add(11,8,.040); add(11,9,.025); add(11,10,.030); add(11,13,.030);
-  add(12,8,.030); add(12,9,.040); add(12,11,.060);
-  add(13,4,.025); add(13,7,.025); add(13,8,.025); add(13,10,.035);
-  add(14,2,.020); add(14,8,.025); add(14,10,.035); add(14,11,.020); add(14,13,.020);
-  add(15,4,.070); add(15,5,.040); add(15,2,.020); add(15,11,.025); add(15,13,.025);
-  add(16,4,.035); add(16,8,.045); add(16,10,.040); add(16,11,.020);
-  add(17,0,.070); add(17,4,.060); add(17,5,.055); add(17,2,.025); add(17,7,.020); add(17,10,.035);
-  add(18,4,.040); add(18,5,.025); add(18,2,.020); add(18,10,.035); add(18,11,.025);
-  add(19,4,.025); add(19,2,.020); add(19,8,.025); add(19,11,.040); add(19,10,.020);
-
-  return matrix;
-}
-
-const TradeInputOutputMatrix kMatrix = build_matrix();
+// Production coefficients are generated from Statistics Canada Table
+// 36-10-0001-01 (2024, Canada, basic prices). The matrix orientation is
+// [downstream][upstream] and each entry is Z_ij / X_j: domestic purchases from
+// upstream model industry i divided by downstream model-industry gross output.
+// Imports, taxes, value added and final demand are deliberately outside this
+// domestic industry-to-industry propagation matrix.
+const TradeInputOutputMatrix kMatrix = generated::kStatCanIo2024Matrix;
 
 TariffIncidence incidence(double headline, double coverage,
                           double negotiated_relief, double pass_through,
@@ -209,7 +174,7 @@ double maximum_trade_input_share() {
 }
 
 std::string trade_network_methodology() {
-  return "Linear 20-sector input-output tariff-incidence bridge mapped to the Statistics Canada 2024 sector structure. Direct tariff rates remain user/calibration inputs; the current IO coefficients are transparent provisional model coefficients, not claimed as a cell-for-cell extraction of Table 36-10-0001-01. Tariff pass-through is split between buyers, importers and exporters before downstream input-cost and upstream demand propagation.";
+  return "Empirically aggregated 20-sector direct-requirements production network from Statistics Canada Table 36-10-0001-01: 2024 Canada basic-price industry-by-industry input-output cells. Matrix entries are domestic inter-industry purchases Z_ij divided by downstream gross output X_j; 40,364 detailed transaction cells and 213 detailed gross-output rows are aggregated to the simulator sectors. Imports, taxes, value added and final demand are excluded from the domestic matrix. Canadian NAICS wholesale trade 41 is presented as model code 42, and government GS/GU 91-series industries map to public administration 91. Tariff incidence and pass-through remain separate model mechanisms.";
 }
 
 }  // namespace cad
