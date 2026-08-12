@@ -4,6 +4,7 @@ META,decision_date,2022-07-12
 META,horizon_quarters,12
 INPUT,policy_rate,1.5,percent,2022-06-01,2022-06-01,boc_policy_2022_06_01,observed
 INPUT,inflation,7.7,percent_yoy,2022-05-31,2022-06-22,statcan_cpi_2022_05,observed
+INPUT,core_inflation,4.15,percent_yoy,2022-04-30,2022-06-01,boc_policy_2022_06_01,official-derived-range-midpoint
 INPUT,gdp_growth,3.2,percent_annualized,2022-03-31,2022-05-31,statcan_gdp_2022_q1,official-derived
 INPUT,unemployment,4.9,percent,2022-06-30,2022-07-08,statcan_lfs_2022_06,observed
 INPUT,wage_growth,5.2,percent_yoy,2022-06-30,2022-07-08,statcan_lfs_2022_06,observed
