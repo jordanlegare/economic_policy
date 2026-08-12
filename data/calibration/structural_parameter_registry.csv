@@ -1,8 +1,8 @@
 # V2 structural parameter provenance and uncertainty envelope.
 # PARAM,name,baseline,unit,kind,source_id,vintage,lower_bound,upper_bound,distribution,relative_sigma,sampled,notes
-META,registry_id,v2-structural-2026-08-11
-META,as_of,2026-08-11
-PARAM,neutral_rate,2.5,percent,assumed,internal_model_design_v2,2026-08-11,1.75,3.50,normal,0.10,true,"Illustrative neutral-rate anchor; sensitivity envelope, not an empirical confidence interval."
+META,registry_id,v2-structural-2026-08-12
+META,as_of,2026-08-12
+PARAM,neutral_rate,2.75,percent,official_assessment,boc_neutral_rate_2026,2026-05,2.25,3.25,normal,0.08,true,"Direct Bank of Canada 2026 nominal-neutral-rate assessment. Baseline is the published range midpoint; bounds are the published assessment range, not a statistical confidence interval."
 PARAM,inflation_target,2.0,percent,mandate,bank_of_canada_target,2026-08-11,2.0,2.0,fixed,0,false,"Policy mandate; never sampled as a structural uncertainty parameter."
 PARAM,rate_inflation_response,0.75,coefficient,assumed,internal_model_design_v2,2026-08-11,0.50,1.50,normal,0.15,true,"Reaction-function inflation response; bounded sensitivity range."
 PARAM,rate_output_response,0.25,coefficient,assumed,internal_model_design_v2,2026-08-11,0.10,0.50,normal,0.15,true,"Reaction-function output-gap response; bounded sensitivity range."

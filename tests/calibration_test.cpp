@@ -91,11 +91,18 @@ int main() {
   const auto registry = cad::load_structural_parameter_registry(
       "data/calibration/structural_parameter_registry.csv");
   assert(registry.loaded);
-  assert(registry.registry_id == "v2-structural-2026-08-11");
+  assert(registry.registry_id == "v2-structural-2026-08-12");
+  assert(registry.as_of == "2026-08-12");
   assert(cad::structural_parameter_registry_complete(registry));
   assert(registry.entries.size() == cad::required_structural_parameter_names().size());
   assert(cad::sampled_structural_parameter_count(registry) > 0);
 
+  const auto* neutral = registry.find("neutral_rate");
+  assert(neutral && neutral->kind == "official_assessment" && neutral->sampled);
+  assert(neutral->source_id == "boc_neutral_rate_2026");
+  assert(std::abs(neutral->baseline - 2.75) < 1e-12);
+  assert(std::abs(neutral->lower_bound - 2.25) < 1e-12);
+  assert(std::abs(neutral->upper_bound - 3.25) < 1e-12);
   const auto* target = registry.find("inflation_target");
   assert(target && target->kind == "mandate" && !target->sampled);
   assert(std::abs(target->lower_bound - 2.0) < 1e-12);
@@ -112,12 +119,14 @@ int main() {
   assert(structural.calibration_id == registry.registry_id);
   assert(structural.calibration_vintage == registry.as_of);
   assert(structural.uncertainty_registry.loaded);
+  assert(std::abs(structural.neutral_rate - 2.75) < 1e-12);
   assert(std::abs(structural.import_price_pass_through - pass_through->baseline) < 1e-12);
 
   const auto registry_json = cad::structural_parameter_registry_to_json(registry);
   assert(registry_json.find("\"complete\":true") != std::string::npos);
   assert(registry_json.find("\"kind\":\"mandate\"") != std::string::npos);
   assert(registry_json.find("\"distribution\":\"derived\"") != std::string::npos);
+  assert(registry_json.find("\"sourceId\":\"boc_neutral_rate_2026\"") != std::string::npos);
   assert(registry_json.find("\"sourceId\":\"internal_model_design_v2\"") != std::string::npos);
 
   std::remove(path.c_str());
