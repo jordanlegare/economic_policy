@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the frozen observed-data trade calibration certificate.
 
-Offline verification is deterministic and is what CI runs.  --online additionally
+Offline verification is deterministic and is what CI runs. --online additionally
 checks the public source pages used to refresh the certificate; it is intentionally
 not required for every build because upstream availability is outside the model's
 control.
@@ -40,9 +40,13 @@ ONLINE_SOURCES = {
         "https://www.canada.ca/en/department-finance/corporate/transparency/briefing-materials/2026/c15-eng.html",
         ("97.5", "CUSMA"),
     ),
-    "trade_elasticities": (
+    "trade_elasticities_sector": (
         "https://academic.oup.com/jeea/article/18/6/2869/5698020",
         ("Trade Elasticities", "12.51"),
+    ),
+    "trade_elasticity_scalar": (
+        "https://www.elibrary.imf.org/view/journals/001/2012/297/article-A001-en.xml",
+        ("Canada", "0.65"),
     ),
     "boc_pass_through": (
         "https://www.bankofcanada.ca/2026/06/staff-working-paper-2026-22/",
@@ -83,6 +87,13 @@ def read_io_mapping() -> None:
         fail("IO mapping source/vintage drifted")
 
 
+def parameter_value(params: dict[str, list[str]], name: str) -> float:
+    row = params.get(name)
+    if not row:
+        fail(f"snapshot missing parameter {name}")
+    return float(row[2])
+
+
 def read_snapshot() -> None:
     meta: dict[str, str] = {}
     params: dict[str, list[str]] = {}
@@ -110,8 +121,32 @@ def read_snapshot() -> None:
         fail("snapshot must contain all 20 model sectors")
 
     io = params.get("input_output_calibrated")
+    io_coverage = params.get("input_output_model_sector_coverage")
     if not io or float(io[2]) < 0.5 or io[4] != "official-derived" or io[5] != "statcan_io":
         fail("2024 Statistics Canada IO mapping is not activated")
+    if not io_coverage or float(io_coverage[2]) < 20 or io_coverage[4] != "official-derived" or io_coverage[5] != "statcan_io":
+        fail("Statistics Canada IO mapping does not cover all 20 model sectors")
+
+    us_tariff = params.get("us_effective_tariff_goods")
+    ca_tariff = params.get("canada_effective_tariff_goods")
+    if not us_tariff or abs(float(us_tariff[2]) - 5.0) > 1e-9 or us_tariff[4] != "official-derived":
+        fail("U.S.-on-Canada goods tariff anchor drifted")
+    if not ca_tariff or abs(float(ca_tariff[2]) - 1.5) > 1e-9 or ca_tariff[4] != "official-derived":
+        fail("Canada-on-U.S. goods tariff anchor drifted")
+
+    origin = params.get("cusma_origin_utilization_proxy")
+    if not origin or abs(float(origin[2]) - 97.5) > 1e-9 or origin[4] != "official-derived":
+        fail("CUSMA compliance/origin proxy drifted")
+
+    trade_scalar = params.get("trade_elasticity")
+    if not trade_scalar or abs(float(trade_scalar[2]) - 0.65) > 1e-9:
+        fail("production trade elasticity must be 0.65")
+    if trade_scalar[4] != "empirically-estimated" or trade_scalar[5] != "imf_trade_flows_mr_2012" or trade_scalar[8].lower() != "true":
+        fail("production trade elasticity is not a direct empirical model input")
+
+    pass_anchor = params.get("tariff_price_pass_through_anchor")
+    if not pass_anchor or abs(float(pass_anchor[2]) - 0.24) > 1e-9 or pass_anchor[4] != "empirically-estimated":
+        fail("tariff price pass-through anchor drifted")
 
     for idx in RELEVANT:
         row = sectors[idx]
@@ -131,8 +166,8 @@ def read_snapshot() -> None:
     required_sources = {
         "boc_mpr_tariffs_2026_07", "statcan_io", "finance_cusma_compliance_2026",
         "statcan_cusma_compliance_q4_2025", "carrere_grujovic_robert_nicoud_2020",
-        "boc_tariff_passthrough_2026", "usitc_hts", "cbsa_tariff",
-        "finance_countertariffs", "us_section338_20260720",
+        "imf_trade_flows_mr_2012", "boc_tariff_passthrough_2026", "usitc_hts",
+        "cbsa_tariff", "finance_countertariffs", "us_section338_20260720",
     }
     missing = required_sources - sources
     if missing:
