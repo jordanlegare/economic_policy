@@ -115,6 +115,12 @@ struct Scenario {
   double first_move_bp = 0.0, fiscal_impulse = 0.0, productive_share = 0.5;
   double negotiated_relief = 0.0, targeted_relief = 0.0, diversification = 0.0;
   double score = 0.0, boc_score = 0.0, federal_score = 0.0, us_score = 0.0;
+  // Average directional effective-tariff/coverage deviation from the submitted
+  // UI posture, expressed on a 0-100 headline-equivalent distance scale.
+  double trade_posture_distance = 0.0;
+  // True when this verified scenario leaves both national welfare scores no
+  // worse than the submitted posture and satisfies the bilateral growth floor.
+  bool anchor_win_win = false;
   double inflation = 0.0, growth = 0.0, unemployment = 0.0;
   double us_growth = 0.0, bilateral_growth_floor = 0.0;
   bool sustained_bilateral_growth = false;
@@ -186,6 +192,13 @@ struct WinWinRecommendation {
   double verified_canada_score = 0.0, verified_us_score = 0.0;
   double baseline_canada_score = 0.0, baseline_us_score = 0.0;
   double verified_min_sector_metric = 0.0;
+  // User-steered selection: maximize verified welfare first, then within this
+  // practical score band choose the package closest to the submitted trade
+  // posture rather than jumping for an economically negligible score gain.
+  double user_anchor_welfare_tolerance = 0.5;
+  double best_verified_score = 0.0;
+  double selected_trade_posture_distance = 0.0;
+  bool user_anchor_selection_active = false;
   bool verified_win_win = false;
   bool global_search_complete = false;
   bool growth_constraint_met = false;
@@ -193,7 +206,7 @@ struct WinWinRecommendation {
   bool trade_balance_is_objective = false;
   bool mandate_weights_fixed = true;
   RobustnessSummary robustness;
-  std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; exhaustive startup mode verifies every retained frontier package unless the explicit safety cap binds";
+  std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; the exact submitted posture is retained as an anchor candidate, and exhaustive startup mode verifies every retained frontier package unless the explicit safety cap binds";
 };
 
 struct Result {
