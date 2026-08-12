@@ -105,6 +105,13 @@ inline bool iso_date(const std::string& value) {
   return value.size() == 10 && value[4] == '-' && value[7] == '-';
 }
 
+inline int quarter_ordinal(const std::string& value) {
+  if (value.size() != 6 || value[4] != 'Q' || value[5] < '1' || value[5] > '4') return -1;
+  int year = 0;
+  try { year = std::stoi(value.substr(0, 4)); } catch (...) { return -1; }
+  return year * 4 + static_cast<int>(value[5] - '1');
+}
+
 inline bool unresolved(const StateMeasurementDefinition& entry) {
   return entry.status != "ready";
 }
@@ -166,7 +173,7 @@ inline std::vector<HousingAffordabilityBenchmark> load_housing_affordability_ben
     record.housing_gap_percent = state_measurement_detail::number(f[9]);
     record.source_id = f[10];
     record.methodology = f[11];
-    out.push_back(std::move(record));
+    out.push_back(record);
   }
   return out;
 }
@@ -178,13 +185,18 @@ inline double housing_affordability_gap(double hai_percent, double benchmark_med
 
 inline bool housing_affordability_benchmark_valid(
     const HousingAffordabilityBenchmark& record) {
+  const int current_quarter = state_measurement_detail::quarter_ordinal(record.hai_quarter);
+  const int benchmark_start = state_measurement_detail::quarter_ordinal(
+      record.benchmark_start_quarter);
+  const int benchmark_end = state_measurement_detail::quarter_ordinal(
+      record.benchmark_end_quarter);
   if (record.fixture_id.empty()
       || !state_measurement_detail::iso_date(record.decision_date)
       || !state_measurement_detail::iso_date(record.source_update_date)
       || record.source_update_date > record.decision_date
-      || record.hai_quarter.empty()
-      || record.benchmark_start_quarter.empty()
-      || record.benchmark_end_quarter.empty()
+      || current_quarter < 0 || benchmark_start < 0 || benchmark_end < 0
+      || benchmark_end + 1 != current_quarter
+      || benchmark_end - benchmark_start + 1 != 20
       || record.benchmark_quarters != 20
       || !(record.hai_percent > 0.0)
       || !(record.benchmark_median_percent > 0.0)
