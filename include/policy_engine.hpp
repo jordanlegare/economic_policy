@@ -94,6 +94,10 @@ struct Economy {
   double canada_priority = 50.0, us_priority = 50.0;
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   double minimum_bilateral_growth = 0.0;
+  // The web application's primary evaluation enables this mode after seeding
+  // controls from the certified baseline. Low-level and robustness tests can
+  // keep the staged mode when they are not claiming startup global optimality.
+  bool exhaustive_policy_search = false;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
 
   Economy() { us_sector_coverage.fill(100.0); canada_sector_coverage.fill(100.0); }
@@ -175,18 +179,21 @@ struct WinWinRecommendation {
   int sector_candidates_examined = 0;
   int sector_pareto_frontier_size = 0;
   int sector_finalists_resimulated = 0;
+  int policy_candidates_verified = 0;
   int base_monte_carlo_draws = 700;
   int verification_monte_carlo_draws = 2800;
   double sector_grid_step = 25.0;
   double verified_canada_score = 0.0, verified_us_score = 0.0;
+  double baseline_canada_score = 0.0, baseline_us_score = 0.0;
   double verified_min_sector_metric = 0.0;
   bool verified_win_win = false;
+  bool global_search_complete = false;
   bool growth_constraint_met = false;
   bool independent_us_trade_channel = true;
   bool trade_balance_is_objective = false;
   bool mandate_weights_fixed = true;
   RobustnessSummary robustness;
-  std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; top frontier packages are stochastic re-simulated";
+  std::string sector_search_method = "Exact Pareto dynamic program at 25% increments of each side's permitted sector-relief envelope; exhaustive startup mode verifies every retained frontier package unless the explicit safety cap binds";
 };
 
 struct Result {

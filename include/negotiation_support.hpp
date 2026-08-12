@@ -58,6 +58,7 @@ struct NegotiationAnalysis {
   int bargaining_grid_levels = 5;
   int sector_verification_draws = 0;
   double pareto_utility_tolerance = 0.5;
+  bool frontier_complete = true;
   bool independent_us_trade_channel = false;
   bool trade_balance_is_objective = true;
   bool mandate_weights_fixed = false;
@@ -78,7 +79,8 @@ inline double canada_payoff(const Scenario& scenario) {
 }
 
 inline bool outside_option_candidate(const Scenario& scenario) {
-  return scenario.negotiated_relief <= 20.0 && scenario.id != "custom" && scenario.id != "balance";
+  const bool generated = scenario.id.rfind("custom-", 0) == 0 || scenario.id == "custom";
+  return scenario.negotiated_relief <= 20.0 && !generated && scenario.id != "balance";
 }
 
 struct Terms {
@@ -211,6 +213,8 @@ inline NegotiationPackage make_package(const Candidate& candidate, std::size_t r
   package.us_export_change = candidate.evaluated.us_export_change;
   package.trade_balance_gap_usd = candidate.scenario->trade_balance_gap_usd;
   package.individually_rational = candidate.canada_surplus >= -1e-9 && candidate.us_surplus >= -1e-9;
+  // This flag denotes membership in the declared 0.5-point epsilon-Pareto set,
+  // not exact mathematical non-dominance. The API exposes that definition.
   package.pareto_efficient = true;
   package.stable = candidate.evaluated.canada_deviation_gain <= 0.5
       && candidate.evaluated.us_deviation_gain <= 0.5;
@@ -356,12 +360,10 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
     return a.evaluated.us_utility > b.evaluated.us_utility;
   });
 
-  // The displayed diplomatic frontier is epsilon-Pareto rather than an exact
-  // mathematical skyline. Model utilities are 0-100 composites whose decimal
-  // differences below half a point are not economically meaningful enough to
-  // erase distinct concession bundles. A package is therefore removed only if
-  // another feasible package improves BOTH principals by more than the stated
-  // tolerance. The tolerance is exposed in the API for auditability.
+  // The diplomatic frontier is epsilon-Pareto rather than an exact mathematical
+  // skyline. Decimal differences below half a point on the 0-100 composite
+  // utility scale are treated as an indifference band, preserving materially
+  // equivalent concession architectures for the robust second stage.
   std::vector<Candidate> frontier;
   const double pareto_eps = analysis.pareto_utility_tolerance;
   std::size_t strictly_better_canada_end = 0;
@@ -399,7 +401,12 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
     frontier.push_back(fallback);
   }
 
-  const std::size_t keep = std::min<std::size_t>(12, frontier.size());
+  // The robust stage evaluates the retained epsilon-frontier, not only the 12
+  // cards shown in the UI. The explicit cap prevents unbounded memory use; when
+  // it binds, frontierComplete=false blocks a global-optimum claim.
+  constexpr std::size_t robust_frontier_cap = 512;
+  analysis.frontier_complete = frontier.size() <= robust_frontier_cap;
+  const std::size_t keep = std::min<std::size_t>(robust_frontier_cap, frontier.size());
   analysis.frontier.reserve(keep);
   for (std::size_t i = 0; i < keep; ++i) analysis.frontier.push_back(make_package(frontier[i], i));
   analysis.recommended = analysis.frontier.front();
@@ -421,7 +428,9 @@ inline std::string negotiation_to_json(const NegotiationAnalysis& analysis) {
   out << "{\"candidatesExamined\":" << analysis.candidates_examined
       << ",\"individuallyRationalCount\":" << analysis.individually_rational_count
       << ",\"paretoFrontierSize\":" << analysis.pareto_frontier_size
+      << ",\"paretoDefinition\":\"epsilon\""
       << ",\"paretoUtilityTolerance\":" << analysis.pareto_utility_tolerance
+      << ",\"frontierComplete\":" << (analysis.frontier_complete ? "true" : "false")
       << ",\"bargainingGridLevels\":" << analysis.bargaining_grid_levels
       << ",\"batna\":{\"canada\":" << analysis.canada_batna
       << ",\"us\":" << analysis.us_batna
@@ -434,6 +443,7 @@ inline std::string negotiation_to_json(const NegotiationAnalysis& analysis) {
       << ",\"tradeBalanceIsObjective\":" << (analysis.trade_balance_is_objective ? "true" : "false")
       << ",\"mandateWeightsFixed\":" << (analysis.mandate_weights_fixed ? "true" : "false")
       << ",\"sectorScheduleVerified\":" << (analysis.sector_schedule_verified ? "true" : "false")
+      << ",\"frontierComplete\":" << (analysis.frontier_complete ? "true" : "false")
       << ",\"verificationMonteCarloDraws\":" << analysis.sector_verification_draws
       << ",\"dataIntegrityPass\":" << (analysis.data_integrity_pass ? "true" : "false") << "}"
       << ",\"recommendedPackage\":";

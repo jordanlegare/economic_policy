@@ -59,6 +59,8 @@ int main() {
 
   const auto analysis = cad::analyze_negotiation(economy, result);
   assert(analysis.data_integrity_pass);
+  assert(analysis.frontier_complete);
+  assert(std::abs(analysis.pareto_utility_tolerance - 0.5) < 1e-12);
   assert(analysis.candidates_examined == static_cast<int>(result.scenarios.size()) * 3125);
 
   const double cap = cad::negotiation_detail::clamp_value(
@@ -87,21 +89,25 @@ int main() {
   }
   assert(!feasible.empty());
 
-  // Independent O(n^2) dominance check: deliberately different from the
-  // production sort-and-scan frontier construction.
+  // Independent O(n^2) epsilon-dominance check: deliberately different from
+  // the production sort-and-scan implementation. A package leaves the retained
+  // set only when another package improves BOTH modeled utilities by more than
+  // the declared indifference tolerance.
   std::vector<const BruteCandidate*> frontier;
+  const double eps = analysis.pareto_utility_tolerance;
   for (const auto& candidate : feasible) {
     bool dominated = false;
     for (const auto& other : feasible) {
-      const bool no_worse = other.evaluated.canada_utility + 1e-9 >= candidate.evaluated.canada_utility
-          && other.evaluated.us_utility + 1e-9 >= candidate.evaluated.us_utility;
-      const bool strictly_better = other.evaluated.canada_utility > candidate.evaluated.canada_utility + 1e-9
-          || other.evaluated.us_utility > candidate.evaluated.us_utility + 1e-9;
-      if (no_worse && strictly_better) { dominated = true; break; }
+      const bool better_canada = other.evaluated.canada_utility
+          > candidate.evaluated.canada_utility + eps;
+      const bool better_us = other.evaluated.us_utility
+          > candidate.evaluated.us_utility + eps;
+      if (better_canada && better_us) { dominated = true; break; }
     }
     if (!dominated) frontier.push_back(&candidate);
   }
   assert(!frontier.empty());
+  assert(static_cast<int>(frontier.size()) == analysis.pareto_frontier_size);
 
   const BruteCandidate* brute_best = nullptr;
   double best_rank = -std::numeric_limits<double>::infinity();
@@ -112,7 +118,7 @@ int main() {
   assert(brute_best != nullptr);
 
   // Production search must return the exact best package under its declared
-  // finite search grid and ranking objective.
+  // finite epsilon-Pareto search grid and ranking objective.
   assert(analysis.recommended.strategy_id == brute_best->scenario->id);
   assert(std::abs(analysis.recommended.canada_utility
       - brute_best->evaluated.canada_utility) < 1e-9);
@@ -122,6 +128,11 @@ int main() {
   assert(analysis.recommended.pareto_efficient);
   assert(analysis.recommended.individually_rational);
   assert(analysis.recommended.verified_win_win);
+
+  const auto json = cad::negotiation_to_json(analysis);
+  assert(json.find("\"paretoDefinition\":\"epsilon\"") != std::string::npos);
+  assert(json.find("\"paretoUtilityTolerance\":0.500") != std::string::npos);
+  assert(json.find("\"frontierComplete\":true") != std::string::npos);
 
   return 0;
 }

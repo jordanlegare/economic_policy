@@ -82,6 +82,9 @@ int main() {
   assert(json.find("\"certifiedForEmpiricalUse\":true") != std::string::npos);
   assert(json.find("\"tariffLines\":true") != std::string::npos);
   assert(json.find("\"calibrationScope\":\"merchandise-primary-and-manufacturing\"") != std::string::npos);
+  assert(json.find("\"effectiveState\":") != std::string::npos);
+  assert(json.find("\"usTariff\":25.0000") != std::string::npos);
+  assert(json.find("\"retaliatoryTariff\":15.0000") != std::string::npos);
   assert(json.find("\"effectiveFrom\":\"2026-08-19\"") != std::string::npos);
 
   const auto certified = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
@@ -122,6 +125,9 @@ int main() {
   assert(certified_json.find("\"originUtilization\":true") != std::string::npos);
   assert(certified_json.find("\"elasticitiesEstimated\":true") != std::string::npos);
   assert(certified_json.find("\"passThroughEstimated\":true") != std::string::npos);
+  assert(certified_json.find("\"effectiveState\":") != std::string::npos);
+  assert(certified_json.find("\"usTariff\":5.0000") != std::string::npos);
+  assert(certified_json.find("\"retaliatoryTariff\":1.5000") != std::string::npos);
 
   bool saw_future_section338 = false;
   for (const auto& measure : certified.measures) {

@@ -11,6 +11,7 @@
   let comparisonCacheKey = '';
   let comparisonTimer = null;
   let comparisonTask = Promise.resolve();
+  let initialCalibrationApplied = false;
 
   const comparisonDelayMs = Number(window.__EVALUATION_COMPARISON_DELAY_MS ?? 900);
 
@@ -47,10 +48,12 @@
   }
 
   function sectorSearchSummary(rec) {
+    const policies = Number(rec?.policyCandidatesVerified || 0);
     const candidates = Number(rec?.sectorCandidatesExamined || 0);
     const pareto = Number(rec?.sectorParetoFrontierSize || 0);
     const finalists = Number(rec?.sectorFinalistsResimulated || 0);
-    return `${candidates.toLocaleString()} sector schedules explored · ${pareto.toLocaleString()} Pareto schedules · ${finalists.toLocaleString()} finalists re-simulated`;
+    const policyText = policies ? `${policies.toLocaleString()} policy candidates verified · ` : '';
+    return `${policyText}${candidates.toLocaleString()} sector schedules explored · ${pareto.toLocaleString()} Pareto schedules · ${finalists.toLocaleString()} finalists re-simulated`;
   }
 
   function setAutoApplyStatus(text) {
@@ -65,6 +68,8 @@
         strategyId: rec.strategyId || result?.scenarios?.[0]?.id || '',
         coverage: displayedCoverage(),
         searchAnchor: copyCoverage(negotiationAnchor || positions),
+        policyCandidatesVerified: Number(rec.policyCandidatesVerified || 0),
+        globalSearchComplete: rec.globalSearchComplete === true,
         sectorCandidatesExamined: Number(rec.sectorCandidatesExamined || 0),
         sectorParetoFrontierSize: Number(rec.sectorParetoFrontierSize || 0),
         sectorFinalistsResimulated: Number(rec.sectorFinalistsResimulated || 0),
@@ -109,6 +114,36 @@
     if (asOf && baseline.asOf) asOf.textContent = 'As of ' + new Date(baseline.asOf).toLocaleString();
   }
 
+  async function applyInitialCalibrationState() {
+    if (initialCalibrationApplied) return;
+    const response = await fetch('/api/calibration', {cache: 'no-store'});
+    if (!response.ok) throw new Error(`Calibration state failed with HTTP ${response.status}`);
+    const calibration = await response.json();
+    const state = calibration?.effectiveState;
+    if (!state) throw new Error('Calibration state is missing effectiveState');
+
+    if (Number.isFinite(+state.usTariff)) tariff.value = +state.usTariff;
+    const retaliation = $('#retaliatoryTariff');
+    if (retaliation && Number.isFinite(+state.retaliatoryTariff)) {
+      retaliation.value = +state.retaliatoryTariff;
+      const readout = $('#retaliatoryTariffValue');
+      if (readout) readout.textContent = retaliation.value + '%';
+    }
+    if (Array.isArray(state.usSectorCoverage) && state.usSectorCoverage.length === positions.us.length)
+      positions.us.splice(0, positions.us.length, ...state.usSectorCoverage.map(Number));
+    if (Array.isArray(state.canadaSectorCoverage) && state.canadaSectorCoverage.length === positions.canada.length)
+      positions.canada.splice(0, positions.canada.length, ...state.canadaSectorCoverage.map(Number));
+
+    if (typeof updateTariff === 'function') updateTariff();
+    if (typeof updatePosition === 'function') updatePosition();
+    if (typeof syncPartyView === 'function') syncPartyView();
+    const partyView = $('#partyView');
+    if (partyView && !partyView.hidden && typeof renderPartySectors === 'function') renderPartySectors();
+    negotiationAnchor = displayedCoverage();
+    lastAutoCoverage = null;
+    initialCalibrationApplied = true;
+  }
+
   function publishVerifiedRecommendation() {
     const rec = result?.recommendation;
     if (!rec) return;
@@ -124,7 +159,10 @@
     const changed = applyRecommendation(false, !openingCalibrated);
     openingCalibrated = true;
     lastAutoCoverage = displayedCoverage();
-    setAutoApplyStatus(`Auto-apply verified win-win agreement ON · ${sectorSearchSummary(rec)} · both delegations' sector sliders now show the verified package.`);
+    const completeness = rec.globalSearchComplete === true
+      ? 'complete declared startup grid'
+      : 'retained verified candidate set';
+    setAutoApplyStatus(`Auto-apply verified win-win agreement ON · ${completeness} · ${sectorSearchSummary(rec)} · both delegations' sector sliders now show the verified package.`);
 
     // publishNegotiation('automatic') serializes both Canada and U.S. sector
     // arrays, so the joint dashboard and either delegation view converge on the
@@ -207,12 +245,13 @@
     const detail = loading?.querySelector?.('small');
     const label = loading?.querySelector?.('span');
     const started = Date.now();
-    if (label) label.textContent = 'RUNNING VERIFIED SEARCH';
-    if (detail) detail.textContent = 'Searching 14 strategies, sector Pareto schedules and robust packages';
+    const searchLabel = 'Searching 13 expert + 288 generated policy mixes, sector Pareto schedules and robust packages';
+    if (label) label.textContent = 'RUNNING VERIFIED GLOBAL SEARCH';
+    if (detail) detail.textContent = searchLabel;
     const timer = setInterval(() => {
       if (!detail) return;
       const seconds = Math.floor((Date.now() - started) / 1000);
-      detail.textContent = `Searching 14 strategies, sector Pareto schedules and robust packages · ${seconds}s elapsed`;
+      detail.textContent = `${searchLabel} · ${seconds}s elapsed`;
     }, 1000);
     return () => clearInterval(timer);
   }
@@ -240,6 +279,10 @@
 
     try {
       await recoverBaselineIfNeeded();
+      // app.js's legacy negotiation room starts at illustrative tariffs. Before
+      // the first real solve, replace that display state with the exact certified
+      // tariff/sector baseline the user is actually asking the engine to optimize.
+      await applyInitialCalibrationState();
       const anchor = evaluationAnchor();
       const preferences = {
         canadaPriority: +$('#canadaPriority').value,
@@ -251,10 +294,9 @@
       anchor.us.forEach((value, i) => preferences['usSector' + i] = value);
       anchor.canada.forEach((value, i) => preferences['canadaSector' + i] = value);
 
-      // Critical startup rule: await only the real policy evaluation. The old
-      // controller blocked the full-screen overlay on a second complete optimizer
-      // run for the no-tariff reference. That reference is useful for one headline
-      // delta but must never gate the whole application.
+      // Critical startup rule: await only the real policy evaluation. The
+      // no-tariff reference is useful for one headline delta but must never gate
+      // the initial best-win-win result.
       const evaluated = await makeRequest(
         preferences, +tariff.value, preferences.retaliatoryTariff, false);
 
@@ -320,7 +362,9 @@
         searchAnchor: copyCoverage(negotiationAnchor || positions),
         displayedCoverage: displayedCoverage(),
         autoAppliedCoverage: lastAutoCoverage ? copyCoverage(lastAutoCoverage) : null,
-        verifiedWinWin: recommendationIsVerified(result?.recommendation)
+        verifiedWinWin: recommendationIsVerified(result?.recommendation),
+        globalSearchComplete: result?.recommendation?.globalSearchComplete === true,
+        initialCalibrationApplied
       };
     },
     waitForComparison() {

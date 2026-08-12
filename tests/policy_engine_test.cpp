@@ -1,4 +1,7 @@
 #include "policy_engine.hpp"
+#include "calibration.hpp"
+#include "negotiation_support.hpp"
+#include "robust_recommendation.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -39,6 +42,7 @@ int main() {
   assert(baseline.recommendation.base_monte_carlo_draws == 700);
   assert(baseline.recommendation.verification_monte_carlo_draws == 2800);
   assert(baseline.recommendation.verified_win_win);
+  assert(!baseline.recommendation.global_search_complete);
   assert(baseline.recommendation.growth_constraint_met);
 
   for (std::size_t i = 0; i < baseline.recommendation.us_sector_coverage.size(); ++i) {
@@ -122,10 +126,55 @@ int main() {
   assert(json.find("\"sectorParetoFrontierSize\":") != std::string::npos);
   assert(json.find("\"verificationMonteCarloDraws\":2800") != std::string::npos);
   assert(json.find("\"verifiedWinWin\":true") != std::string::npos);
+  assert(json.find("\"globalSearchComplete\":false") != std::string::npos);
   assert(json.find("\"independentUsTradeChannel\":true") != std::string::npos);
   assert(json.find("\"tradeBalanceIsObjective\":false") != std::string::npos);
   assert(json.find("\"mandateWeightsFixed\":true") != std::string::npos);
   assert(json.find("\"allocationsExamined\":1") != std::string::npos);
+
+  // Production startup contract: on the current certified tariff baseline,
+  // carry every generated policy mix through the joint sector search. The
+  // winner must improve or preserve both national welfare scores relative to
+  // the same 2,800-draw starting posture, and the sector safety cap must not bind.
+  const auto calibration = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
+  cad::Economy startup = cad::apply_calibration(cad::Economy{}, calibration);
+  startup.exhaustive_policy_search = true;
+  const auto initial = engine.evaluate(startup);
+  assert(initial.candidates_examined == 288);
+  assert(initial.recommendation.policy_candidates_verified == 301);
+  assert(initial.scenarios.size() == 302); // 13 expert + 288 generated + baseline fallback.
+  assert(initial.recommendation.global_search_complete);
+  assert(initial.recommendation.verified_win_win);
+  assert(initial.recommendation.growth_constraint_met);
+  assert(initial.recommendation.verified_canada_score + 1e-9
+      >= initial.recommendation.baseline_canada_score);
+  assert(initial.recommendation.verified_us_score + 1e-9
+      >= initial.recommendation.baseline_us_score);
+  assert(initial.recommendation.sector_finalists_resimulated
+      == initial.recommendation.sector_pareto_frontier_size
+      || initial.recommendation.sector_pareto_frontier_size == 0);
+  const auto initial_json = cad::to_json(initial);
+  assert(initial_json.find("\"policyCandidatesVerified\":301") != std::string::npos);
+  assert(initial_json.find("\"globalSearchComplete\":true") != std::string::npos);
+  assert(initial_json.find("\"baselineCanadaScore\":") != std::string::npos);
+  assert(initial_json.find("\"baselineUsScore\":") != std::string::npos);
+
+  // Bargaining enumeration itself searches every linked-issue grid point for
+  // every verified policy/sector strategy, so the point-estimate recommendation
+  // is selected before the display/robustness retention cap is applied. If the
+  // epsilon-frontier exceeds that cap, robustness must report incompleteness
+  // rather than invalidating the point-estimate global-search guarantee.
+  const auto initial_negotiation = cad::analyze_negotiation(startup, initial);
+  assert(!initial_negotiation.frontier.empty());
+  assert(initial_negotiation.pareto_frontier_size
+      >= static_cast<int>(initial_negotiation.frontier.size()));
+  assert(initial_negotiation.recommended.id == initial_negotiation.frontier.front().id);
+  const auto initial_robust = cad::analyze_robust_recommendations(
+      startup, initial, initial_negotiation, calibration, 200, 424242);
+  assert(initial_robust.candidate_set_complete
+      == (initial.recommendation.global_search_complete && initial_negotiation.frontier_complete));
+  assert(initial_robust.packages.size() == initial_negotiation.frontier.size());
+  assert(!initial_robust.recommended_package_id.empty());
 
   std::cout << "policy engine trust tests passed\n";
   return 0;
