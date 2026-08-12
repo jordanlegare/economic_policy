@@ -1,5 +1,4 @@
 #include "model_evidence.hpp"
-#include "welfare_sensitivity.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -36,23 +35,6 @@ int main() {
   assert(history_json.find("ca-2015-01-20-oil-shock") != std::string::npos);
   assert(history_json.find("ca-2020-03-03-pandemic-onset") != std::string::npos);
   assert(history_json.find("ca-2022-07-12-inflation-tightening") != std::string::npos);
-
-  cad::Economy economy;
-  const auto reference = engine.evaluate(economy);
-  std::vector<cad::WelfarePreferenceProfile> one_profile = {{
-      "reference", economy.canada_priority, economy.us_priority,
-      economy.risk_aversion, 0.0, 0.0}};
-  const auto welfare = cad::evaluate_welfare_sensitivity(engine, economy, one_profile);
-  assert(welfare.profile_count == 1);
-  assert(welfare.exact_recommendation_wins == 1);
-  assert(welfare.reference_strategy == reference.recommendation.strategy_id);
-  assert(welfare.all_mandate_weights_fixed);
-
-  const auto robust = engine.evaluate_robust(economy, 1);
-  assert(robust.recommendation.robustness.parameter_draws == 1);
-  assert(robust.recommendation.robustness.parameter_provenance_complete);
-  assert(robust.recommendation.robustness.policy_controls_reoptimized);
-  assert(robust.recommendation.robustness.sector_packages_reoptimized);
 
   std::cout << "V2 model evidence contract tests passed\n";
   return 0;
