@@ -7,18 +7,17 @@
 #include <string>
 
 int main() {
-  const auto& matrix = cad::trade_input_output_matrix();
+  const auto& matrix = cad::canada_trade_input_output_matrix();
+  const auto& us_matrix = cad::us_trade_input_output_matrix();
 
-  // The production network is a frozen aggregation of the 2024 StatCan
-  // industry-by-industry table, not a hand-built bridge. Check several
-  // economically material cells and the aggregate row bound exactly enough to
-  // catch accidental replacement/reorientation of the generated matrix.
+  // The Canadian production network is a frozen aggregation of the 2024
+  // StatCan industry-by-industry table, not a hand-built bridge.
+  assert(cad::canada_trade_input_output_empirical());
+  assert(!cad::us_trade_input_output_empirical());
   assert(std::abs(matrix[4][4] - 0.354414317655) < 1e-12);  // manufacturing <- manufacturing
   assert(std::abs(matrix[3][4] - 0.283987709074) < 1e-12);  // construction <- manufacturing
   assert(std::abs(matrix[15][4] - 0.093370094078) < 1e-12); // health care <- manufacturing
   assert(std::abs(matrix[19][15] - 0.131880191344) < 1e-12); // public admin <- health care
-  // Individual coefficients are frozen to 12 decimals, so a 20-term row sum
-  // is compared at 1e-10 rather than against full-precision extraction output.
   assert(std::abs(cad::maximum_trade_input_share()
       - cad::generated::kStatCanIoMaximumDomesticIntermediateShare) < 1e-10);
   for (const auto& row : matrix) {
@@ -26,6 +25,13 @@ int main() {
     assert(sum > 0.17);
     assert(sum < 0.73);
   }
+
+  // Until the BEA refresh artifact is certified, the U.S. object is a separate
+  // structural proxy. It currently reproduces the Canadian cells numerically,
+  // but its provenance flag prevents them from being called U.S. observations.
+  assert(std::abs(us_matrix[4][4] - matrix[4][4]) < 1e-15);
+  assert(std::abs(cad::maximum_us_trade_input_share()
+      - cad::maximum_trade_input_share()) < 1e-15);
 
   cad::TradeNetworkInput input;
   input.us_headline_tariff = 50.0;
@@ -43,8 +49,8 @@ int main() {
   assert(manufacturing.us_tariff.exporter_absorption > 0.0);
   assert(manufacturing.us_tariff.importer_absorption > 0.0);
 
-  // A manufacturing tariff must propagate into downstream industries through
-  // the empirically aggregated direct-requirements matrix.
+  // A manufacturing tariff propagates into downstream U.S. industries through
+  // the U.S. network object and into Canadian suppliers through Canada's matrix.
   assert(network.sectors[3].us_upstream_cost > 0.0);   // construction
   assert(network.sectors[6].us_upstream_cost > 0.0);   // retail
   assert(network.sectors[15].us_upstream_cost > 0.0);  // health care
@@ -53,11 +59,23 @@ int main() {
   assert(network.sectors[3].us_indirect_jobs < 0.0);
   assert(network.us_supply_chain_drag > 0.0);
   assert(network.us_input_cost_pressure > 0.0);
-
-  // With no Canadian retaliation there is no Canadian input-cost channel from
-  // the manufacturing tariff itself, although Canadian upstream suppliers can
-  // still lose demand because U.S. buyers reduce Canadian manufacturing demand.
   assert(std::abs(network.sectors[3].canada_upstream_cost) < 1e-12);
+
+  // Directional sector overrides are independent. A U.S.-side manufacturing
+  // pass-through override changes U.S. incidence without changing Canada's
+  // retaliatory-tariff incidence mapping.
+  cad::TradeNetworkInput directional = input;
+  directional.canada_headline_tariff = 5.0;
+  directional.canada_coverage[4] = 100.0;
+  directional.us_price_pass_through[4] = 1.0;
+  directional.canada_price_pass_through[4] = 0.10;
+  directional.us_trade_elasticity[4] = 1.10;
+  directional.canada_trade_elasticity[4] = 0.40;
+  const auto directional_source = cad::evaluate_trade_source(directional, 4, 100.0, 100.0);
+  assert(std::abs(directional_source.us_tariff.buyer_pass_through - 50.0) < 1e-9);
+  assert(std::abs(directional_source.canada_tariff.buyer_pass_through - 0.5) < 1e-9);
+  assert(directional_source.us_tariff.exporter_absorption
+      < network.sectors[4].us_tariff.exporter_absorption);
 
   cad::TradeNetworkInput retaliation = input;
   retaliation.us_headline_tariff = 0.0;
@@ -79,10 +97,10 @@ int main() {
 
   const std::string methodology = cad::trade_network_methodology();
   assert(methodology.find("36-10-0001-01") != std::string::npos);
-  assert(methodology.find("2024 Canada basic-price") != std::string::npos);
-  assert(methodology.find("Z_ij") != std::string::npos);
   assert(methodology.find("40,364") != std::string::npos);
   assert(methodology.find("213") != std::string::npos);
-  assert(methodology.find("provisional") == std::string::npos);
+  assert(methodology.find("BEA") != std::string::npos);
+  assert(methodology.find("provisional") != std::string::npos);
+  assert(methodology.find("must not be described as empirical U.S.") != std::string::npos);
   return 0;
 }
