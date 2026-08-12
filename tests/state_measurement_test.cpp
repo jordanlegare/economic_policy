@@ -68,7 +68,7 @@ int main() {
   // A future measurement is counted only when both the registry marks it ready
   // and the historical fixture actually supplies that measured input.
   auto future = registry;
-  auto* future_credit = const_cast<cad::StateMeasurementDefinition*>(future.find("credit_spread"));
+  auto* future_credit = future.find("credit_spread");
   assert(future_credit);
   future_credit->status = "ready";
   auto one_ready = cad::audit_modeled_empirical_state(future, names);
