@@ -16,6 +16,7 @@ INPUT,us_inflation,8.6,percent_yoy,2022-05-31,2022-06-10,bls_us_cpi_2022_05,obse
 INPUT,fiscal_balance_gdp,-2.0,percent_gdp,2023-03-31,2022-04-07,finance_canada_budget_2022,official-forecast
 INPUT,federal_debt_gdp,45.1,percent_gdp,2023-03-31,2022-04-07,finance_canada_budget_2022,official-forecast
 INPUT,household_debt_income,182.5,percent,2022-03-31,2022-06-13,statcan_nbs_2022_q1,observed
+INPUT,housing_gap,23.731138545953,percent_gap,2022-03-31,2022-06-02,boc_hai_indicator,official-derived-one-sided
 INPUT,us_tariff_canada,0.0,percent,2022-07-12,2022-07-12,backtest_scope,scope-control
 INPUT,canada_retaliatory_tariff,0.0,percent,2022-07-12,2022-07-12,backtest_scope,scope-control
 BENCHMARK,first_move_bp,100,basis_points,2022-07-13,2022-07-13,boc_policy_2022_07_13,observed-policy
@@ -33,6 +34,7 @@ SOURCE,bea_us_gdp_2022_q1,U.S. Bureau of Economic Analysis,GDP third estimate 20
 SOURCE,bls_us_cpi_2022_05,U.S. Bureau of Labor Statistics,Consumer Price Index May 2022,https://www.bls.gov/news.release/archives/cpi_06102022.htm
 SOURCE,finance_canada_budget_2022,Department of Finance Canada,Budget 2022 Annex 1,https://www.budget.canada.ca/2022/report-rapport/anx1-en.html
 SOURCE,statcan_nbs_2022_q1,Statistics Canada,National balance sheet and financial flow accounts first quarter 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220613/dq220613a-eng.htm
+SOURCE,boc_hai_indicator,Bank of Canada,Indicators of capacity and inflation pressures - Housing Affordability Index,https://www.bankofcanada.ca/rates/indicators/capacity-and-inflation-pressures/
 SOURCE,boc_policy_2022_07_13,Bank of Canada,Policy rate decision 2022-07-13,https://www.bankofcanada.ca/2022/07/fad-press-release-2022-07-13/
 SOURCE,statcan_cpi_2025_07,Statistics Canada,Consumer Price Index July 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250819/dq250819a-eng.htm
 SOURCE,statcan_lfs_2025_07,Statistics Canada,Labour Force Survey July 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250808/dq250808a-eng.htm
