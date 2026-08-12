@@ -187,13 +187,37 @@ inline void finalize(CalibrationSnapshot& snapshot) {
     if (sector.origin_utilization >= 0.0 && sector.origin_utilization <= 100.0) ++origin_rows;
   }
   const bool scope_complete = sector_rows == 20 && relevant_rows == 3;
-  snapshot.tariff_lines_complete = scope_complete && tariff_rows == relevant_rows;
-  snapshot.elasticities_estimated = scope_complete && elasticity_rows == relevant_rows;
-  snapshot.pass_through_estimated = scope_complete && pass_rows == relevant_rows;
-  snapshot.origin_utilization_complete = scope_complete && origin_rows == relevant_rows;
+
+  const auto us_tariff = parameter(snapshot, "us_effective_tariff_goods");
+  const auto ca_tariff = parameter(snapshot, "canada_effective_tariff_goods");
+  const bool tariff_anchors = us_tariff && ca_tariff
+      && us_tariff->value >= 0.0 && ca_tariff->value >= 0.0
+      && trusted_kind(us_tariff->kind) && trusted_kind(ca_tariff->kind);
+  snapshot.tariff_lines_complete = scope_complete && tariff_rows == relevant_rows && tariff_anchors;
+
+  const auto trade_scalar = parameter(snapshot, "trade_elasticity");
+  const bool production_trade_elasticity = trade_scalar && trade_scalar->value > 0.0
+      && trade_scalar->kind == "empirically-estimated" && trade_scalar->use_in_model;
+  snapshot.elasticities_estimated = scope_complete && elasticity_rows == relevant_rows
+      && production_trade_elasticity;
+
+  const auto pass_anchor = parameter(snapshot, "tariff_price_pass_through_anchor");
+  const bool production_pass_anchor = pass_anchor && pass_anchor->value >= 0.0
+      && pass_anchor->value <= 1.0 && pass_anchor->kind == "empirically-estimated";
+  snapshot.pass_through_estimated = scope_complete && pass_rows == relevant_rows
+      && production_pass_anchor;
+
+  const auto origin_proxy = parameter(snapshot, "cusma_origin_utilization_proxy");
+  const bool production_origin_proxy = origin_proxy && origin_proxy->value >= 0.0
+      && origin_proxy->value <= 100.0 && trusted_kind(origin_proxy->kind);
+  snapshot.origin_utilization_complete = scope_complete && origin_rows == relevant_rows
+      && production_origin_proxy;
 
   const auto io_flag = parameter(snapshot, "input_output_calibrated");
-  snapshot.input_output_complete = io_flag && io_flag->value >= 0.5 && trusted_kind(io_flag->kind);
+  const auto io_coverage = parameter(snapshot, "input_output_model_sector_coverage");
+  snapshot.input_output_complete = io_flag && io_coverage
+      && io_flag->value >= 0.5 && io_coverage->value >= 20.0
+      && trusted_kind(io_flag->kind) && trusted_kind(io_coverage->kind);
 
   snapshot.completeness = 0.0;
   if (snapshot.official_trade_complete) snapshot.completeness += 25.0;
