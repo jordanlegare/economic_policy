@@ -38,7 +38,16 @@ global.document = {
 };
 global.window = {__EVALUATION_COMPARISON_DELAY_MS:0};
 global.$ = selector => elements.get(selector) || null;
-global.settings = {policyRate:2.75, gdpGrowth:1.6};
+global.settings = {
+  policyRate:2.75,
+  gdpGrowth:1.6,
+  inflation:2.4,
+  usInflation:2.7,
+  unemployment:6.4,
+  usGrowth:2.0,
+  borderFriction:2.0,
+  diversification:0
+};
 global.result = undefined;
 global.noTariff = undefined;
 global.selected = undefined;
@@ -159,6 +168,40 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert(window.EvaluationController.state().autoAppliedCoverage.us.every(x=>x===50));
   assert.deepStrictEqual(window.EvaluationController.state().searchAnchor.us, calibratedUsCoverage,
     'auto-applied winning agreement must not become a new concession anchor');
+
+  // The delegation table must expose a live bilateral response surface instead
+  // of repeating only the metric vector at the verified recommendation. Use the
+  // status-quo strategy here because its relief envelope leaves sector coverage
+  // free to move across the declared search grid.
+  const savedStrategy = global.result.recommendation.strategyId;
+  const savedScenarioId = global.result.scenarios[0].id;
+  global.result.recommendation.strategyId = 'statusquo';
+  global.result.scenarios[0].id = 'statusquo';
+  const verifiedMetric = window.EvaluationController.sectorMetrics(0, 50, 75);
+  const exploreUs = window.EvaluationController.sectorMetrics(0, 75, 75);
+  const exploreCanada = window.EvaluationController.sectorMetrics(0, 50, 50);
+  assert(verifiedMetric && exploreUs && exploreCanada,
+    'sector response model must produce metrics for the delegation table');
+  assert.strictEqual(verifiedMetric.verified, true,
+    'the auto-applied recommendation must remain visibly identifiable');
+  assert.strictEqual(exploreUs.verified, false,
+    'moving a delegation slider must switch the row into exploration mode');
+  assert.strictEqual(exploreUs.insideSearchEnvelope, true,
+    'live metrics should cover the same feasible relief envelope searched by the engine');
+  assert.notStrictEqual(exploreUs.canada.output, verifiedMetric.canada.output,
+    'U.S. coverage must immediately change the Canadian sector outcome');
+  assert.notStrictEqual(exploreUs.canada.score, verifiedMetric.canada.score,
+    'U.S. coverage must immediately change the Canadian balanced-deal score');
+  assert.notStrictEqual(exploreCanada.us.prices, verifiedMetric.us.prices,
+    'Canadian retaliation coverage must immediately change the U.S. price outcome');
+  global.result.recommendation.strategyId = savedStrategy;
+  global.result.scenarios[0].id = savedScenarioId;
+
+  const appSource = fs.readFileSync('web/app.js','utf8');
+  assert(appSource.includes('window.EvaluationController?.sectorMetrics?.('),
+    'party table must read live response metrics from the evaluation controller');
+  assert(appSource.includes("updatePartySectorMetric(i,input.parentElement.querySelector('.sector-deal-metric'))"),
+    'party slider input must repaint its metric before re-optimization completes');
 
   // Let the deferred comparison start. It is deliberately unresolved here;
   // the full-screen loading state must already be gone.
