@@ -33,6 +33,26 @@ int main() {
 
   const auto registry = cad::load_structural_parameter_registry(
       "data/calibration/structural_parameter_registry.csv");
+  const auto completeness = cad::audit_structural_calibration_completeness(registry);
+  assert(completeness.parameter_count == 25);
+  assert(completeness.calibration_target_count == 23);
+  assert(completeness.direct_empirical_count == 3);
+  assert(completeness.provisional_count == 20);
+  assert(completeness.shock_target_count == 6);
+  assert(completeness.direct_empirical_shock_count == 0);
+  assert(completeness.realized_residual_shock_count == 0);
+  assert(completeness.multiplier_target_count == 11);
+  assert(completeness.direct_empirical_multiplier_count == 0);
+  assert(std::abs(completeness.direct_empirical_coverage - (300.0 / 23.0)) < 1e-9);
+  assert(completeness.grade == "mostly-provisional");
+
+  const auto registry_json = cad::structural_parameter_registry_to_json(registry);
+  assert(registry_json.find("\"calibrationCompleteness\":{") != std::string::npos);
+  assert(registry_json.find("\"calibrationTargetCount\":23") != std::string::npos);
+  assert(registry_json.find("\"directEmpiricalCount\":3") != std::string::npos);
+  assert(registry_json.find("\"directEmpiricalShockCount\":0") != std::string::npos);
+  assert(registry_json.find("\"directEmpiricalMultiplierCount\":0") != std::string::npos);
+
   const auto parameters = cad::apply_structural_parameter_registry(
       cad::StructuralParameters{}, registry);
   assert(std::abs(parameters.output_persistence - output->estimate) < 1e-9);

@@ -16,10 +16,10 @@ int main() {
 
   const auto audit = cad::audit_empirical_structural_evidence(evidence);
   assert(audit.parameter_count == 25);
-  assert(audit.statistically_anchored_count == 12);
-  assert(audit.reference_only_count == 9);
+  assert(audit.statistically_anchored_count == 13);
+  assert(audit.reference_only_count == 10);
   assert(audit.direct_mapping_count == 3);
-  assert(std::abs(audit.statistically_anchored_coverage - 48.0) < 1e-12);
+  assert(std::abs(audit.statistically_anchored_coverage - 52.0) < 1e-12);
   assert(std::abs(audit.direct_mapping_coverage - 12.0) < 1e-12);
 
   const auto* neutral = structural.find("neutral_rate");
@@ -43,10 +43,16 @@ int main() {
   assert(std::abs(parameters.inflation_expectations_weight - 0.2628689419) < 1e-10);
   assert(std::abs(parameters.fx_pass_through - 0.35) < 1e-12);
   assert(std::abs(parameters.import_price_pass_through - 0.022) < 1e-12);
+  assert(std::abs(parameters.growth_shock_sd - 0.25) < 1e-12);
+
+  const auto* realized_growth = evidence.find("growth_shock_sd");
+  assert(realized_growth);
+  assert(realized_growth->mapping_status == "reference-only");
+  assert(std::abs(realized_growth->anchor_value - 2.3455131813) < 1e-10);
 
   const auto json = cad::empirical_structural_audit_to_json(audit);
-  assert(json.find("\"statisticallyAnchoredCount\":12") != std::string::npos);
-  assert(json.find("\"statisticallyAnchoredCoverage\":48.000000") != std::string::npos);
+  assert(json.find("\"statisticallyAnchoredCount\":13") != std::string::npos);
+  assert(json.find("\"statisticallyAnchoredCoverage\":52.000000") != std::string::npos);
   assert(json.find("\"directMappingCount\":3") != std::string::npos);
 
   std::cout << "empirical structural calibration tests passed\n";

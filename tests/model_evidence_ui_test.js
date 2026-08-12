@@ -7,6 +7,12 @@ const source = fs.readFileSync('web/calibration.js', 'utf8');
 const required = [
   '#modelEvidence',
   'Model evidence V2',
+  'Structural calibration completeness',
+  'Direct empirical shock variances',
+  'Direct empirical multipliers',
+  'Still provisional',
+  'direct empirical mappings',
+  'Observed-data calibration completeness',
   '/api/v2/structural-registry',
   '/api/v2/backtests',
   '/api/v2/welfare',

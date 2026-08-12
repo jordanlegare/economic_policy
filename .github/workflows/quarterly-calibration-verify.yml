@@ -12,3 +12,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify frozen quarterly empirical calibration
         run: python3 tools/refresh_sep_calibration.py --verify
+      - name: Verify realized-data residual frontier
+        run: python3 tools/estimate_realized_residuals.py --verify

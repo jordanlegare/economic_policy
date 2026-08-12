@@ -7,6 +7,9 @@ This directory contains public, distributable calibration metadata and derived s
 - `source_registry.csv` — authoritative/public source catalogue and model-design provenance references.
 - `current.snapshot.csv` — exact derived observed/sector calibration snapshot loaded by the application.
 - `structural_parameter_registry.csv` — V2 structural coefficient baselines, classifications, vintages, uncertainty bounds and sampling rules.
+- `empirical_structural_evidence.csv` — statistical/official anchors with explicit direct versus reference-only model mappings.
+- `quarterly_estimation_panel.csv` / `quarterly_structural_estimates.csv` — frozen real-time SEP estimation layer.
+- `realized_calibration_frontier.csv` — realized-data residual/multiplier frontier, including blocked identification requirements rather than silently substituting incompatible estimates.
 
 ## V2 structural registry
 
@@ -15,6 +18,30 @@ The structural registry separates model assumptions from observed data. Each coe
 The initial V2 ranges are deliberately labelled **sensitivity envelopes**, not empirical confidence intervals. `assumed` and provisional `calibrated` entries should be replaced or narrowed when reproducible empirical estimates become available. `mandate` entries such as the inflation target are fixed, and `derived` entries such as the paired inflation-expectations weight are not sampled independently.
 
 `StructuralParameters::uncertainty_scale` is a global multiplier around the declared registry widths. `0` disables structural uncertainty exactly. The reference value `0.10` uses the registry's stated `relative_sigma` values without rescaling.
+
+### Calibration completeness
+
+Structural calibration completeness is intentionally stricter than provenance completeness. The denominator excludes mandate-fixed and algebraically derived parameters, while the numerator counts only production parameters with a direct empirical/official mapping. Reference-only evidence increases the empirical evidence base but does not increase production calibration completeness or overwrite the production coefficient.
+
+The browser reports shock-variance and multiplier coverage separately. A structural registry can therefore be 100% complete as an audit/provenance contract while still being mostly provisional empirically.
+
+## Realized-data residual frontier
+
+Run the deterministic committed-data check with:
+
+```bash
+python3 tools/estimate_realized_residuals.py --verify
+```
+
+Regenerate the frontier after reviewing a changed realized panel with:
+
+```bash
+python3 tools/estimate_realized_residuals.py --refresh
+```
+
+The current bootstrap extracts a sanity-screened Statistics Canada quarterly real-GDP volatility estimate for `growth_shock_sd`, but keeps it `reference-only`: the production growth innovation is conditional on output gap, credit spread and coordinated-policy terms that are not yet frozen over the same realized sample. The tool explicitly records the data/identification requirements for the other provisional shock variances and remaining multipliers.
+
+A chained-series break that produces an implausible annualized GDP jump is quarantined rather than counted as a macro innovation. The deterministic verifier requires the committed frontier to reproduce exactly and requires the realized GDP estimate to remain non-promoting until the conditioning-set requirement is satisfied.
 
 ## Reviewed HS-line input
 
