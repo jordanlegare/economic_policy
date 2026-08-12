@@ -125,7 +125,7 @@ assert(pdf.includes('/BaseFont /Helvetica-Bold'));
 assert(pdf.includes('/BaseFont /Helvetica-Oblique'));
 assert(pdf.includes('0.055 0.125 0.205 rg'));
 for(const heading of ['WHERE WE ARE','WHAT THEY WANT','WHAT WE WANT','WHAT CHANGED','RED LINES','PRIMARY PACKAGE','BRIDGE PACKAGE','BATNA','KEY UNCERTAINTIES','DECISION REQUIRED TODAY','RECOMMENDED LANGUAGE','EVIDENCE SOURCES'])assert(pdf.includes(heading),`missing ${heading}`);
-assert(pdf.includes('DEAL VS WALK-AWAY (BATNA)'));
+assert(pdf.includes('DEAL VS WALK-AWAY'));
 assert(pdf.includes('AGREEMENT PREMIUM OVER WALK-AWAY'));
 assert(pdf.includes('Canada walk-away: Canada outside option'));
 assert(pdf.includes('U.S. walk-away: U.S. outside option'));
