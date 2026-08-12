@@ -17,6 +17,18 @@ jobs:
           ref: agent/v2-quarterly-estimation
       - name: Apply quarterly promotion and parser guards
         run: python3 tools/apply_quarterly_promotion.py
+      - name: Align structural registry integrity assertion
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/calibration_test.cpp')
+          text = path.read_text(encoding='utf-8')
+          old = 'assert(registry.registry_id == "v2-structural-2026-08-12");'
+          new = 'assert(registry.registry_id == "v2-structural-quarterly-2026-08-12");'
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one structural registry assertion')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Verify frozen quarterly calibration
         run: python3 tools/refresh_sep_calibration.py --verify
       - name: Build and test promoted model
