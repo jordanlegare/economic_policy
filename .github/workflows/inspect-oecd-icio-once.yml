@@ -9,16 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download and inspect current OECD ICIO archive
+      - name: Inspect OECD download response
         run: |
-          set -euxo pipefail
-          curl --retry 4 --retry-delay 2 -L -o /tmp/icio.zip https://webfs-sti.oecd.org/files/STI-PIE/ICIO/2025/2016-2022_SML.zip
-          sha256sum /tmp/icio.zip
-          unzip -l /tmp/icio.zip | head -80
-          mkdir -p /tmp/icio
-          unzip -q /tmp/icio.zip -d /tmp/icio
-          find /tmp/icio -maxdepth 2 -type f -print
-          first=$(find /tmp/icio -type f -name '*.csv' | sort | head -1)
-          echo "FIRST_CSV=$first"
-          head -8 "$first"
-          grep -m 5 -E 'CAN|USA' "$first" || true
+          set -uxo pipefail
+          url='https://webfs-sti.oecd.org/files/STI-PIE/ICIO/2025/2016-2022_SML.zip'
+          curl -I -L "$url" || true
+          curl --retry 2 -L -A 'Mozilla/5.0' -o /tmp/icio.bin "$url"
+          wc -c /tmp/icio.bin
+          file /tmp/icio.bin
+          head -40 /tmp/icio.bin || true
