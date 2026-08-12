@@ -8,11 +8,12 @@ PARAM,canada_imports_from_us_cad,361.667193,CAD_bn,observed,statcan_trade_annual
 PARAM,exports_to_us_share,78.285187,percent,official-derived,statcan_trade_annual,2025,0,true
 PARAM,imports_from_us_share,45.840365,percent,official-derived,statcan_trade_annual,2025,0,true
 PARAM,input_output_calibrated,1,binary,official-derived,statcan_io,2024,0,false
+PARAM,input_output_model_sector_coverage,20,count,official-derived,statcan_io,2024,0,false
 PARAM,cusma_origin_utilization_proxy,97.5,percent,official-derived,finance_cusma_compliance_2026,2026-02-05,0,false
 PARAM,us_effective_tariff_goods,5.0,percent,official-derived,boc_mpr_tariffs_2026_07,2026-07-10,0,false
 PARAM,canada_effective_tariff_goods,1.5,percent,official-derived,boc_mpr_tariffs_2026_07,2026-07-10,0,false
 PARAM,tariff_price_pass_through_anchor,0.24,ratio,empirically-estimated,boc_tariff_passthrough_2026,2025,0,false
-PARAM,trade_elasticity,0.65,elasticity,assumption,model_default,unsourced-model-default,0.15,false
+PARAM,trade_elasticity,0.65,elasticity,empirically-estimated,imf_trade_flows_mr_2012,2012,0,true
 PARAM,border_friction,2.0,index,assumption,model_default,unsourced-model-default,0.50,false
 SOURCE,statcan_trade_annual,Statistics Canada,"Table 12-10-0172-01 bilateral merchandise trade by principal partner and product group",2025,https://www150.statcan.gc.ca/n1/tbl/csv/12100172-eng.zip,,verified-vintage
 SOURCE,statcan_trade_world,Statistics Canada,"Table 12-10-0173-01 merchandise trade by province country and product section",2025,https://www150.statcan.gc.ca/n1/tbl/csv/12100173-eng.zip,,verified-vintage
@@ -26,6 +27,7 @@ SOURCE,finance_cusma_compliance_2026,Department of Finance Canada,"Finance Commi
 SOURCE,statcan_cusma_compliance_q4_2025,Statistics Canada,"Table 33-10-1075-01 goods sold to the United States compliant with CUSMA",2025-Q4 corrected 2026-03-18,https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3310107501,,official-industry-crosscheck
 SOURCE,cusma_rules_origin,Global Affairs Canada,CUSMA Chapter 4 and Annex 4-B rules of origin,agreement-current,https://www.international.gc.ca/trade-commerce/trade-agreements-accords-commerciaux/agr-acc/cusma-aceum/text-texte/04.aspx?lang=eng,,official-legal-origin-rules
 SOURCE,carrere_grujovic_robert_nicoud_2020,Journal of the European Economic Association,"Trade and Frictional Unemployment in the Global Economy; Table 2 sector trade elasticities",2000-2009 sample,https://academic.oup.com/jeea/article/18/6/2869/5698020,,peer-reviewed-estimates-mapped
+SOURCE,imf_trade_flows_mr_2012,International Monetary Fund,"Trade Flows, Multilateral Resistance, and Firm Heterogeneity; Canada aggregate elasticity",2012,https://www.elibrary.imf.org/view/journals/001/2012/297/article-A001-en.xml,,production-scalar-empirical-anchor
 SOURCE,boc_tariff_passthrough_2026,Bank of Canada,The Price Impact of Canadian Retaliatory Tariffs,2025 episode published 2026-06,https://www.bankofcanada.ca/2026/06/staff-working-paper-2026-22/,,staff-research-empirical-anchor
 SOURCE,us_section338_20260720,The White House,Section 338 Canada proclamations announced 2026-07-20,2026-07-20,https://www.whitehouse.gov/fact-sheets/2026/07/fact-sheet-president-donald-j-trump-imposes-additional-tariffs-on-canada/,,future-measure-excluded-until-effective-date
 MEASURE,ca_countertariffs_steel_aluminum_auto,Canada,Canadian counter tariffs remaining on U.S. steel aluminum and automobiles,2025-03-13,2025-03-13,,25%,specified U.S.-origin steel aluminum and motor-vehicle tariff items,finance_countertariffs,in-force
