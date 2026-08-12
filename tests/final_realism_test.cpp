@@ -7,7 +7,7 @@
 
 namespace {
 
-const cad::Scenario& scenario(const cad::Result& result, const std::string& id) {
+const cad::Scenario& scenario(const cad::Result& result, const char* id) {
   for (const auto& s : result.scenarios) if (s.id == id) return s;
   assert(false && "scenario not found");
   return result.scenarios.front();
