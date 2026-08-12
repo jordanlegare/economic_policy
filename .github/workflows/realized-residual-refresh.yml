@@ -16,9 +16,9 @@ jobs:
         with:
           ref: agent/v2-realized-residuals
       - name: Refresh realized quarterly residuals
-        run: python3 tools/refresh_realized_residuals.py --refresh
+        run: python3 tools/build_realized_residuals.py --refresh
       - name: Verify generated residual artifacts
-        run: python3 tools/refresh_realized_residuals.py --verify
+        run: python3 tools/build_realized_residuals.py --verify
       - name: Freeze generated residual artifacts
         run: |
           git config user.name 'github-actions[bot]'
