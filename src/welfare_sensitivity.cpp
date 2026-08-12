@@ -52,6 +52,26 @@ std::string esc(const std::string& value) {
   return out;
 }
 
+WelfarePreferenceProfile internal_weight_profile(
+    const Economy& economy, const std::string& id,
+    const std::string& dimension, double scale) {
+  WelfarePreferenceProfile p;
+  const double total = std::max(1e-9, std::max(0.0, economy.canada_priority)
+      + std::max(0.0, economy.us_priority));
+  p.profile_id = id;
+  p.canada_priority = 100.0 * std::max(0.0, economy.canada_priority) / total;
+  p.us_priority = 100.0 - p.canada_priority;
+  p.risk_aversion = clamp(economy.risk_aversion, 0.0, 100.0);
+  p.loss_weights = economy.loss_weights;
+  p.internal_weights_changed = true;
+  p.internal_weight_dimension = dimension;
+  p.internal_weight_scale = scale;
+  if (dimension == "boc_inflation") p.loss_weights.boc_inflation *= scale;
+  else if (dimension == "federal_debt") p.loss_weights.federal_debt *= scale;
+  else if (dimension == "us_inflation") p.loss_weights.us_inflation *= scale;
+  return p;
+}
+
 }  // namespace
 
 std::vector<WelfarePreferenceProfile> make_welfare_preference_grid(const Economy& economy) {
@@ -68,6 +88,7 @@ std::vector<WelfarePreferenceProfile> make_welfare_preference_grid(const Economy
       p.risk_aversion = clamp(base_risk + risk_shift, 0.0, 100.0);
       p.priority_shift_points = p.canada_priority - base_ca;
       p.risk_shift_points = p.risk_aversion - base_risk;
+      p.loss_weights = economy.loss_weights;
       if (std::abs(priority_shift) < 1e-9 && std::abs(risk_shift) < 1e-9) {
         p.profile_id = "reference";
       } else {
@@ -80,8 +101,22 @@ std::vector<WelfarePreferenceProfile> make_welfare_preference_grid(const Economy
       bool duplicate = false;
       for (const auto& q : out)
         duplicate = duplicate || (std::abs(q.canada_priority - p.canada_priority) < 1e-9
-            && std::abs(q.risk_aversion - p.risk_aversion) < 1e-9);
+            && std::abs(q.risk_aversion - p.risk_aversion) < 1e-9
+            && !q.internal_weights_changed);
       if (!duplicate) out.push_back(p);
+    }
+  }
+
+  // Named one-dimensional sensitivity profiles for the most consequential
+  // internal model-design penalties. These are deliberately separate from the
+  // 3x3 delegation/risk grid so interpretation remains transparent.
+  for (const auto& dimension : {std::string("boc_inflation"),
+                                std::string("federal_debt"),
+                                std::string("us_inflation")}) {
+    for (double scale : {0.80, 1.20}) {
+      std::ostringstream id;
+      id << dimension << "-x" << std::fixed << std::setprecision(1) << scale;
+      out.push_back(internal_weight_profile(economy, id.str(), dimension, scale));
     }
   }
   return out;
@@ -109,6 +144,7 @@ WelfareSensitivitySummary evaluate_welfare_sensitivity(
     candidate.canada_priority = profile.canada_priority;
     candidate.us_priority = profile.us_priority;
     candidate.risk_aversion = profile.risk_aversion;
+    candidate.loss_weights = profile.loss_weights;
     const Result result = engine.evaluate(candidate);
     const Scenario* selected = selected_scenario(result);
     if (!selected) continue;
@@ -130,23 +166,35 @@ WelfareSensitivitySummary evaluate_welfare_sensitivity(
     c.same_sector_package = c.same_reference_controls && same_package(*selected, *reference);
     c.growth_constraint_met = result.recommendation.growth_constraint_met;
     c.mandate_weights_fixed = result.recommendation.mandate_weights_fixed;
+    c.internal_component_weights_fixed = !profile.internal_weights_changed;
+    c.internal_weight_dimension = profile.internal_weight_dimension;
+    c.internal_weight_scale = profile.internal_weight_scale;
 
+    if (profile.internal_weights_changed) ++out.internal_weight_profile_count;
     if (c.same_reference_controls) ++out.exact_recommendation_wins;
     if (c.same_strategy_family) ++out.strategy_family_wins;
     if (c.same_sector_package) ++out.sector_package_wins;
     if (!c.same_reference_controls) {
       ++out.recommendation_switches;
-      if (std::abs(c.risk_shift_points) < 1e-9 && std::abs(c.priority_shift_points) > 1e-9) {
+      if (profile.internal_weights_changed) {
+        ++out.internal_weight_switches;
+        out.internal_weight_switch_observed = true;
+      }
+      if (std::abs(c.risk_shift_points) < 1e-9 && std::abs(c.priority_shift_points) > 1e-9
+          && !profile.internal_weights_changed) {
         out.priority_switch_observed = true;
         nearest_priority = std::min(nearest_priority, std::abs(c.priority_shift_points));
       }
-      if (std::abs(c.priority_shift_points) < 1e-9 && std::abs(c.risk_shift_points) > 1e-9) {
+      if (std::abs(c.priority_shift_points) < 1e-9 && std::abs(c.risk_shift_points) > 1e-9
+          && !profile.internal_weights_changed) {
         out.risk_switch_observed = true;
         nearest_risk = std::min(nearest_risk, std::abs(c.risk_shift_points));
       }
     }
     out.all_growth_constraints_met = out.all_growth_constraints_met && c.growth_constraint_met;
     out.all_mandate_weights_fixed = out.all_mandate_weights_fixed && c.mandate_weights_fixed;
+    out.all_internal_component_weights_fixed = out.all_internal_component_weights_fixed
+        && c.internal_component_weights_fixed;
     if (!fairness_set) {
       out.fairness_min = out.fairness_max = c.fairness_score;
       fairness_set = true;
@@ -180,11 +228,14 @@ std::string welfare_sensitivity_to_json(const WelfareSensitivitySummary& s) {
   o << std::fixed << std::setprecision(6)
     << "{\"methodology\":\"" << esc(s.methodology)
     << "\",\"profileCount\":" << s.profile_count
+    << ",\"internalWeightProfileCount\":" << s.internal_weight_profile_count
     << ",\"referenceStrategy\":\"" << esc(s.reference_strategy)
     << "\",\"exactRecommendationRetentionRate\":" << s.exact_recommendation_retention_rate
     << ",\"strategyFamilyRetentionRate\":" << s.strategy_family_retention_rate
     << ",\"sectorPackageRetentionRate\":" << s.sector_package_retention_rate
     << ",\"recommendationSwitches\":" << s.recommendation_switches
+    << ",\"internalWeightSwitches\":" << s.internal_weight_switches
+    << ",\"internalWeightSwitchObserved\":" << (s.internal_weight_switch_observed ? "true" : "false")
     << ",\"prioritySwitchObserved\":" << (s.priority_switch_observed ? "true" : "false")
     << ",\"nearestPrioritySwitchPoints\":" << s.nearest_priority_switch_points
     << ",\"riskSwitchObserved\":" << (s.risk_switch_observed ? "true" : "false")
@@ -192,6 +243,8 @@ std::string welfare_sensitivity_to_json(const WelfareSensitivitySummary& s) {
     << ",\"fairnessMin\":" << s.fairness_min << ",\"fairnessMax\":" << s.fairness_max
     << ",\"allGrowthConstraintsMet\":" << (s.all_growth_constraints_met ? "true" : "false")
     << ",\"allMandateWeightsFixed\":" << (s.all_mandate_weights_fixed ? "true" : "false")
+    << ",\"allInternalComponentWeightsFixed\":"
+    << (s.all_internal_component_weights_fixed ? "true" : "false")
     << ",\"classification\":\"" << esc(s.classification) << "\",\"alternatives\":[";
   for (std::size_t i = 0; i < s.alternatives.size(); ++i) {
     if (i) o << ',';
@@ -213,7 +266,11 @@ std::string welfare_sensitivity_to_json(const WelfareSensitivitySummary& s) {
       << ",\"sameStrategyFamily\":" << (c.same_strategy_family ? "true" : "false")
       << ",\"sameSectorPackage\":" << (c.same_sector_package ? "true" : "false")
       << ",\"growthConstraintMet\":" << (c.growth_constraint_met ? "true" : "false")
-      << ",\"mandateWeightsFixed\":" << (c.mandate_weights_fixed ? "true" : "false") << "}";
+      << ",\"mandateWeightsFixed\":" << (c.mandate_weights_fixed ? "true" : "false")
+      << ",\"internalComponentWeightsFixed\":"
+      << (c.internal_component_weights_fixed ? "true" : "false")
+      << ",\"internalWeightDimension\":\"" << esc(c.internal_weight_dimension)
+      << "\",\"internalWeightScale\":" << c.internal_weight_scale << "}";
   }
   o << "]}";
   return o.str();

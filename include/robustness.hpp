@@ -124,6 +124,9 @@ inline std::vector<StructuralParameters> draw_structural_parameters(
     p.us_growth_shock_sd = draw(baseline.us_growth_shock_sd, "us_growth_shock_sd", 1e-6, inf, "lognormal");
     p.export_shock_sd = draw(baseline.export_shock_sd, "export_shock_sd", 1e-6, inf, "lognormal");
     p.us_export_shock_sd = draw(baseline.us_export_shock_sd, "us_export_shock_sd", 1e-6, inf, "lognormal");
+    p.shock_tail_threshold = draw(baseline.shock_tail_threshold, "shock_tail_threshold", .5, 5.0, "normal");
+    p.shock_tail_scale = draw(baseline.shock_tail_scale, "shock_tail_scale", 1.0, 5.0, "lognormal");
+    p.stress_regime_shock_scale = draw(baseline.stress_regime_shock_scale, "stress_regime_shock_scale", 1.0, 4.0, "lognormal");
     out.push_back(std::move(p));
   }
   return out;

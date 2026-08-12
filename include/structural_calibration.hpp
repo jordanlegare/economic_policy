@@ -23,7 +23,8 @@ inline std::vector<std::string> required_structural_parameter_names() {
     "oil_inflation_sensitivity", "canada_trade_drag_scale",
     "us_retaliation_drag_scale", "tariff_revenue_elasticity_scale",
     "output_shock_sd", "inflation_shock_sd", "output_inflation_shock_correlation",
-    "growth_shock_sd", "us_growth_shock_sd", "export_shock_sd", "us_export_shock_sd"
+    "growth_shock_sd", "us_growth_shock_sd", "export_shock_sd", "us_export_shock_sd",
+    "shock_tail_threshold", "shock_tail_scale", "stress_regime_shock_scale"
   };
 }
 
@@ -205,6 +206,9 @@ inline StructuralParameters apply_structural_parameter_registry(
   value("us_growth_shock_sd", p.us_growth_shock_sd);
   value("export_shock_sd", p.export_shock_sd);
   value("us_export_shock_sd", p.us_export_shock_sd);
+  value("shock_tail_threshold", p.shock_tail_threshold);
+  value("shock_tail_scale", p.shock_tail_scale);
+  value("stress_regime_shock_scale", p.stress_regime_shock_scale);
   if (registry.loaded) {
     p.calibration_id = registry.registry_id;
     p.calibration_vintage = registry.as_of;
