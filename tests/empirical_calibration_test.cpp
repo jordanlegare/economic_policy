@@ -15,12 +15,12 @@ int main() {
   assert(cad::empirical_structural_evidence_complete(evidence));
 
   const auto audit = cad::audit_empirical_structural_evidence(evidence);
-  assert(audit.parameter_count == 26);
+  assert(audit.parameter_count == 29);
   assert(audit.statistically_anchored_count == 14);
   assert(audit.reference_only_count == 11);
   assert(audit.direct_mapping_count == 3);
-  assert(std::abs(audit.statistically_anchored_coverage - 53.84615384615385) < 1e-10);
-  assert(std::abs(audit.direct_mapping_coverage - 11.53846153846154) < 1e-10);
+  assert(std::abs(audit.statistically_anchored_coverage - 48.27586206896552) < 1e-10);
+  assert(std::abs(audit.direct_mapping_coverage - 10.34482758620690) < 1e-10);
 
   const auto* neutral = structural.find("neutral_rate");
   assert(neutral);
