@@ -66,6 +66,12 @@ sector_index,pre_trade,post_trade,tariff_change_pp,control_trade_change_pct,pre_
 
 The output contains sector trade elasticity and price pass-through estimates plus standard errors and can be supplied to `refresh_calibration.py --behavioral-estimates`.
 
+## U.S. input-output refresh and structural promotion gate
+
+`tools/build_bea_io_matrix.py` is the fail-closed refresh path for the U.S. production-network artifact. It requires `BEA_API_KEY`, discovers an adequate BEA InputOutput direct-requirements/use-table pair, aggregates it to the exact 20 model sectors, and writes a CSV, generated C++ header and provenance record. Until those artifacts are reviewed and committed, the U.S. network remains explicitly non-empirical.
+
+`python3 tools/verify_structural_promotions.py` enforces the evidence boundary for macro/transmission parameters. Any production registry entry labelled `empirical_estimate`, `official_assessment` or `realized_residual_estimate` must have a matching `direct` evidence record from the same source. Reference-only estimates may inform sensitivity/calibrated anchors but cannot be silently promoted.
+
 ## Trust rule
 
 The committed bootstrap is intentionally incomplete. `certifiedForEmpiricalUse` must remain false until the required official/estimated layers pass the runtime and CI calibration gates. Structural-registry completeness means the assumptions are auditable; it does **not** mean those assumptions are empirically identified.

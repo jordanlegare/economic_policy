@@ -591,6 +591,7 @@ int main(int argc, char** argv) {
       respond(client, 200, "text/html; charset=utf-8", diplomatic_index());
     } else if (first.rfind("GET /app.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/app.css"));
     else if (first.rfind("GET /app.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/app.js") + "\n" + read_file("web/evaluation-controller.js"));
+    else if (first.rfind("GET /trade-incidence.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/trade-incidence.js"));
     else if (first.rfind("GET /diplomat.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/diplomat.css"));
     else if (first.rfind("GET /diplomat.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/diplomat.js"));
     else if (first.rfind("GET /negotiation-model.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/negotiation-model.css"));
