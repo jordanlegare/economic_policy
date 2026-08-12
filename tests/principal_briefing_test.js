@@ -141,7 +141,7 @@ const missingBatnaScenarioResult=JSON.parse(JSON.stringify(result));
 missingBatnaScenarioResult.negotiation.batna.canadaStrategy='Historical Canadian outside option';
 const missingBatnaScenario=window.PrincipalBriefing.buildModel({result:missingBatnaScenarioResult,room,settings:{},now:'2026-08-11T12:00:00Z'});
 assert.strictEqual(missingBatnaScenario.batna.canadaScenario,null);
-assert(window.PrincipalBriefing.previewHtml(missingBatnaScenario).includes('matching scenario detail is unavailable'));
+assert(/matching scenario detail is unavailable/i.test(window.PrincipalBriefing.previewHtml(missingBatnaScenario)));
 
 const missingRobustResult=JSON.parse(JSON.stringify(result));
 missingRobustResult.robustness.packages=[];
