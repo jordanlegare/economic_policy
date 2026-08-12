@@ -14,3 +14,5 @@ jobs:
         run: python3 tools/refresh_sep_calibration.py --verify
       - name: Verify realized-data residual frontier
         run: python3 tools/estimate_realized_residuals.py --verify
+      - name: Verify observed-data trade calibration certificate
+        run: python3 tools/verify_trade_gate_certification.py --verify
