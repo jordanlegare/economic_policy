@@ -9,6 +9,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cad {
@@ -136,8 +137,8 @@ inline bool has_source(const BacktestFixture& fixture, const std::string& id) {
 }
 
 inline std::vector<std::string> required_inputs() {
-  return {"policy_rate", "inflation", "gdp_growth", "unemployment", "wage_growth",
-          "us_tariff_canada", "canada_retaliatory_tariff"};
+  return {"policy_rate", "inflation", "core_inflation", "gdp_growth", "unemployment",
+          "wage_growth", "us_tariff_canada", "canada_retaliatory_tariff"};
 }
 
 inline void finalize(BacktestFixture& fixture) {
@@ -180,7 +181,7 @@ inline void finalize(BacktestFixture& fixture) {
 
 inline void apply_input(Economy& e, const BacktestDatum& d) {
   if (d.name == "policy_rate") e.policy_rate = d.value;
-  else if (d.name == "inflation") { e.inflation = d.value; e.core_inflation = d.value; }
+  else if (d.name == "inflation") e.inflation = d.value;
   else if (d.name == "core_inflation") e.core_inflation = d.value;
   else if (d.name == "gdp_growth") e.gdp_growth = d.value;
   else if (d.name == "output_gap") e.output_gap = d.value;
