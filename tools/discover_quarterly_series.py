@@ -33,6 +33,7 @@ def main():
         ("CPI TRIM", ["cpi", "trim"]),
         ("CPI MEDIAN", ["cpi", "median"]),
         ("CORE CPI", ["core", "cpi"]),
+        ("WTI", ["west texas intermediate"]),
     ]
     print(f"series_count={len(rows)}")
     for label, tokens in needles:
