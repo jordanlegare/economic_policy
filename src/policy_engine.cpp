@@ -1,4 +1,5 @@
 #include "policy_engine.hpp"
+#include "trade_network.hpp"
 
 #include <algorithm>
 #include <array>
@@ -22,38 +23,9 @@ constexpr int kVerificationDraws = 2800;
 constexpr double kSectorGridStep = 25.0;
 constexpr std::size_t kSectorStagedFinalists = 8;
 constexpr std::size_t kSectorExhaustiveVerificationCap = 128;
+constexpr double kTariffPricePassThroughAnchor = 0.24;
 
-struct SectorProfile {
-  const char* code;
-  const char* name;
-  double trade;
-  double import;
-  double jobs;
-  double cyclical;
-};
-
-constexpr SectorProfile sector_profiles[] = {
-  {"11","Agriculture, forestry, fishing & hunting",.82,.42,.72,.65},
-  {"21","Mining, quarrying, oil & gas",.88,.18,.32,.75},
-  {"22","Utilities",.16,.10,.25,.25},
-  {"23","Construction",.18,.28,.82,.88},
-  {"31-33","Manufacturing",.94,.76,.68,.92},
-  {"42","Wholesale trade",.68,.58,.64,.74},
-  {"44-45","Retail trade",.30,.72,.88,.62},
-  {"48-49","Transportation & warehousing",.72,.48,.70,.86},
-  {"51","Information & cultural industries",.34,.30,.48,.44},
-  {"52","Finance & insurance",.22,.20,.34,.55},
-  {"53","Real estate, rental & leasing",.10,.12,.30,.78},
-  {"54","Professional, scientific & technical services",.38,.26,.58,.48},
-  {"55","Management of companies & enterprises",.20,.18,.24,.40},
-  {"56","Administrative, support & waste services",.28,.24,.86,.72},
-  {"61","Educational services",.08,.10,.82,.18},
-  {"62","Health care & social assistance",.06,.14,.94,.16},
-  {"71","Arts, entertainment & recreation",.14,.16,.88,.68},
-  {"72","Accommodation & food services",.18,.52,.96,.82},
-  {"81","Other services (except public administration)",.16,.30,.90,.58},
-  {"91","Public administration",.04,.08,.62,.12}
-};
+const auto& sector_profiles = trade_sector_profiles();
 
 struct SectorUtility {
   double canada = 0.0;
@@ -82,54 +54,135 @@ std::vector<double> coverage_levels(double current, double cooperation_ceiling,
   return levels;
 }
 
-SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size_t sector,
-                             double us_coverage, double canada_coverage) {
+TradeNetworkInput make_trade_network_input(const Economy& e, const Scenario& policy) {
+  TradeNetworkInput input;
+  input.us_headline_tariff = e.us_tariff_canada;
+  input.canada_headline_tariff = e.canada_retaliatory_tariff;
+  input.negotiated_relief = policy.negotiated_relief;
+  input.diversification = clamp(policy.diversification + e.trade_diversification, 0.0, .75);
+  input.trade_elasticity = e.trade_elasticity;
+  input.price_pass_through = kTariffPricePassThroughAnchor;
+  input.us_coverage = e.us_sector_coverage;
+  input.canada_coverage = e.canada_sector_coverage;
+  return input;
+}
+
+SectorImpact direct_sector_impact(const Economy& e, const Scenario& policy,
+                                  std::size_t sector, double us_coverage,
+                                  double canada_coverage,
+                                  const TariffIncidence& us_incidence,
+                                  const TariffIncidence& canada_incidence) {
   const auto& p = sector_profiles[sector];
   const double deescalation = clamp(policy.negotiated_relief / 100.0, 0.0, 1.0);
   const double diversification = clamp(policy.diversification + e.trade_diversification, 0.0, 0.75);
   const double uc = clamp(us_coverage / 100.0, 0.0, 1.0);
-  const double cc = clamp(canada_coverage / 100.0, 0.0, 1.0);
-  const double us_tariff = e.us_tariff_canada * (1.0 - deescalation) / 100.0 * uc;
-  const double ca_tariff = e.canada_retaliatory_tariff * (1.0 - deescalation) / 100.0 * cc;
+  const double us_tariff = us_incidence.applied_tariff / 100.0;
+  const double ca_tariff = canada_incidence.applied_tariff / 100.0;
   const double supply = policy.productive_share * policy.fiscal_impulse * (.16 + .12 * p.cyclical);
   const double ca_shock = us_tariff * p.trade * (.72 - .28 * diversification)
       + e.border_friction / 100.0 * p.trade * .18;
   const double us_shock = ca_tariff * p.import * .46 + us_tariff * p.import * .12;
   const double us_protection = us_tariff * p.trade * .24 * (1.0 - .5 * uc);
 
+  SectorImpact impact;
+  impact.code = p.code;
+  impact.name = p.name;
+  impact.exposure = 100.0 * p.trade;
+  impact.canada_output = 100.0 * (-ca_shock + supply + policy.targeted_relief * .10 * p.jobs);
+  impact.us_output = 100.0 * (-us_shock + us_protection + deescalation * .012 * p.trade);
+  impact.canada_jobs = impact.canada_output * (.30 + .42 * p.jobs);
+  impact.us_jobs = impact.us_output * (.28 + .38 * p.jobs);
+  // Buyer pass-through is now explicit. The small cross-border term preserves
+  // the prior re-routing/supply-chain price channel; the 20x20 network adds the
+  // larger downstream input-cost propagation separately.
+  impact.canada_prices = canada_incidence.buyer_pass_through * p.import
+      + us_incidence.applied_tariff * p.import * .05 - 100.0 * supply * .10;
+  impact.us_prices = us_incidence.buyer_pass_through * p.import
+      + canada_incidence.buyer_pass_through * p.import * .10;
+  impact.us_applied_tariff = us_incidence.applied_tariff;
+  impact.canada_applied_tariff = canada_incidence.applied_tariff;
+  impact.us_buyer_pass_through = us_incidence.buyer_pass_through;
+  impact.canada_buyer_pass_through = canada_incidence.buyer_pass_through;
+  impact.canada_exporter_absorption = us_incidence.exporter_absorption;
+  impact.us_exporter_absorption = canada_incidence.exporter_absorption;
+  impact.us_importer_absorption = us_incidence.importer_absorption;
+  impact.canada_importer_absorption = canada_incidence.importer_absorption;
+  return impact;
+}
+
+SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size_t sector,
+                             double us_coverage, double canada_coverage) {
+  const auto input = make_trade_network_input(e, policy);
+  const auto network = evaluate_trade_source(input, sector, us_coverage, canada_coverage);
+  const auto direct = direct_sector_impact(e, policy, sector, us_coverage, canada_coverage,
+      network.us_tariff, network.canada_tariff);
+
   SectorUtility out;
-  out.impact.code = p.code;
-  out.impact.name = p.name;
-  out.impact.exposure = 100.0 * p.trade;
-  out.impact.canada_output = 100.0 * (-ca_shock + supply + policy.targeted_relief * .10 * p.jobs);
-  out.impact.us_output = 100.0 * (-us_shock + us_protection + deescalation * .012 * p.trade);
-  out.impact.canada_jobs = out.impact.canada_output * (.30 + .42 * p.jobs);
-  out.impact.us_jobs = out.impact.us_output * (.28 + .38 * p.jobs);
-  out.impact.canada_prices = 100.0 * (ca_tariff * p.import * .30 + us_tariff * p.import * .05 - supply * .10);
-  out.impact.us_prices = 100.0 * (us_tariff * p.import * .24 + ca_tariff * p.import * .10);
+  out.impact = direct;
+  out.impact.canada_output += network.canada_output[sector];
+  out.impact.canada_jobs += network.canada_jobs[sector];
+  out.impact.canada_prices += network.canada_prices[sector];
+  out.impact.us_output += network.us_output[sector];
+  out.impact.us_jobs += network.us_jobs[sector];
+  out.impact.us_prices += network.us_prices[sector];
+  out.impact.canada_upstream_cost = network.canada_upstream_cost[sector];
+  out.impact.us_upstream_cost = network.us_upstream_cost[sector];
 
   const double price_weight = .65 + .70 * clamp(e.risk_aversion / 100.0, 0.0, 1.0)
       + .18 * std::max(0.0, (e.inflation + e.us_inflation) / 2.0 - 2.0);
-  const double ca_jobs_weight = .45 + .08 * std::max(0.0, e.unemployment - 5.0);
-  const double us_jobs_weight = .45 + .08 * std::max(0.0, 4.5 - e.us_growth);
-  const double leverage = 100.0 * ca_tariff * p.trade * .16 * (1.0 - .65 * cc);
 
-  // National aggregation uses directional bilateral importance. A small sector
-  // cannot receive the same national weight as manufacturing merely because its
-  // own local 0-100 normalization spans the same range.
-  out.canada = p.trade * (out.impact.canada_output + ca_jobs_weight * out.impact.canada_jobs
-      - price_weight * out.impact.canada_prices + leverage);
-  out.us = p.import * (out.impact.us_output + us_jobs_weight * out.impact.us_jobs
-      - price_weight * out.impact.us_prices);
+  // Each source-sector tariff decision is still additive, but its utility now
+  // includes all downstream cost and upstream supplier-demand externalities.
+  // This preserves the exact finite Pareto dynamic program on the declared grid.
+  for (std::size_t downstream = 0; downstream < std::size(sector_profiles); ++downstream) {
+    const auto& p = sector_profiles[downstream];
+    double canada_output = network.canada_output[downstream];
+    double canada_jobs = network.canada_jobs[downstream];
+    double canada_prices = network.canada_prices[downstream];
+    double us_output = network.us_output[downstream];
+    double us_jobs = network.us_jobs[downstream];
+    double us_prices = network.us_prices[downstream];
+    if (downstream == sector) {
+      canada_output += direct.canada_output;
+      canada_jobs += direct.canada_jobs;
+      canada_prices += direct.canada_prices;
+      us_output += direct.us_output;
+      us_jobs += direct.us_jobs;
+      us_prices += direct.us_prices;
+    }
+    const double ca_jobs_weight = .45 + .08 * std::max(0.0, e.unemployment - 5.0);
+    const double us_jobs_weight = .45 + .08 * std::max(0.0, 4.5 - e.us_growth);
+    out.canada += p.trade * (canada_output + ca_jobs_weight * canada_jobs
+        - price_weight * canada_prices);
+    out.us += p.import * (us_output + us_jobs_weight * us_jobs
+        - price_weight * us_prices);
+  }
+
+  const auto& source_profile = sector_profiles[sector];
+  const double cc = clamp(canada_coverage / 100.0, 0.0, 1.0);
+  const double ca_tariff = network.canada_tariff.applied_tariff / 100.0;
+  const double leverage = 100.0 * ca_tariff * source_profile.trade * .16 * (1.0 - .65 * cc);
+  out.canada += source_profile.trade * leverage;
   return out;
 }
 
 void add_sector_impacts(Scenario& s, const Economy& e) {
+  const auto network = evaluate_trade_network(make_trade_network_input(e, s));
   s.sectors.clear();
   s.sectors.reserve(std::size(sector_profiles));
   for (std::size_t sector = 0; sector < std::size(sector_profiles); ++sector) {
-    s.sectors.push_back(sector_utility(
-        e, s, sector, e.us_sector_coverage[sector], e.canada_sector_coverage[sector]).impact);
+    const auto& n = network.sectors[sector];
+    auto impact = direct_sector_impact(e, s, sector, e.us_sector_coverage[sector],
+        e.canada_sector_coverage[sector], n.us_tariff, n.canada_tariff);
+    impact.canada_output += n.canada_indirect_output;
+    impact.canada_jobs += n.canada_indirect_jobs;
+    impact.canada_prices += n.canada_indirect_prices;
+    impact.us_output += n.us_indirect_output;
+    impact.us_jobs += n.us_indirect_jobs;
+    impact.us_prices += n.us_indirect_prices;
+    impact.canada_upstream_cost = n.canada_upstream_cost;
+    impact.us_upstream_cost = n.us_upstream_cost;
+    s.sectors.push_back(std::move(impact));
   }
 }
 
@@ -325,14 +378,18 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
       0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation));
   const double ca_tariff = std::max(
       0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation));
+  const auto network = evaluate_trade_network(make_trade_network_input(e, s));
   const double exposed_exports = e.exports_to_us_share / 100.0
       * (1.0 - clamp(diversification + e.trade_diversification, 0.0, 0.75));
   const double trade_drag = p.canada_trade_drag_scale * exposed_exports * e.exports_gdp / 100.0
-      * e.trade_elasticity * (us_tariff + e.border_friction) / 100.0;
+      * e.trade_elasticity * (us_tariff + e.border_friction) / 100.0
+      + network.canada_supply_chain_drag;
   const double us_trade_drag = p.us_retaliation_drag_scale * e.imports_from_us_share / 100.0
-      * e.trade_elasticity * (ca_tariff + .45 * e.border_friction) / 100.0;
+      * e.trade_elasticity * (ca_tariff + .45 * e.border_friction) / 100.0
+      + network.us_supply_chain_drag;
   const double import_price = e.imports_from_us_share / 100.0
-      * e.import_content_consumption / 100.0 * ca_tariff;
+      * e.import_content_consumption / 100.0 * ca_tariff
+      + network.canada_input_cost_pressure;
   const double supply = coordinated * p.productive_supply_multiplier + e.productivity_growth * .035;
   const double relief_cost = targeted_relief + e.tariff_relief;
   const double fx = (e.usdcad - 1.34) * p.fx_pass_through;
@@ -374,6 +431,7 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
           + coordinated * .24 + shock(rng) * p.growth_shock_sd, -3.0, 5.5);
       const double us_growth = clamp(e.us_growth + .16 * coordinated + .28 * deescalation
           - .010 * us_tariff - .014 * ca_tariff - .04 * e.border_friction
+          - .40 * network.us_supply_chain_drag
           + shock(rng) * p.us_growth_shock_sd, -3.0, 5.5);
       u = clamp(u - .10 * (growth - 1.7) + shock(rng) * .035, 3.5, 11.0);
       housing = clamp(.78 * housing - 1.15 * (rate - p.neutral_rate)
@@ -467,7 +525,8 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   s.federal_score = 100.0 / (1.0 + federal_loss);
 
   const double us_inflation_pressure = std::max(
-      0.0, e.us_inflation - 2.0 + e.us_tariff_canada * us_barrier_coverage * .025);
+      0.0, e.us_inflation - 2.0 + e.us_tariff_canada * us_barrier_coverage * .025
+      + .10 * network.us_input_cost_pressure);
   const double us_loss = .55 * sq(std::max(0.0, -s.us_export_change))
       + .8 * sq(us_inflation_pressure)
       + .55 * sq(std::max(0.0, 1.8 - s.us_growth))
@@ -711,6 +770,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.verification_monte_carlo_draws = kVerificationDraws;
   r.recommendation.sector_grid_step = kSectorGridStep;
   r.recommendation.policy_candidates_verified = static_cast<int>(r.scenarios.size());
+  r.recommendation.trade_network_method = trade_network_methodology();
   r.allocations_examined = 1;
   r.gdp_floors_examined = 1;
 
@@ -872,7 +932,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
         << " frontier schedules per strategy, then rechecks each selected strategy with "
         << kVerificationDraws << " common-random-number draws. ";
   }
-  recommendation << "Canadian and U.S. export channels are independent. Bilateral trade balance is reported for diplomatic context but is not rewarded in the welfare objective.";
+  recommendation << "Sector welfare now includes linear upstream supplier-demand and downstream input-cost propagation through a 20-sector production network. The network coefficients are explicitly provisional bridge coefficients mapped to the Statistics Canada 2024 sector structure rather than claimed as direct table-cell estimates. Canadian and U.S. export channels are independent. Bilateral trade balance is reported for diplomatic context but is not rewarded in the welfare objective.";
   r.recommendation.explanation = recommendation.str();
 
   for (auto& scenario : r.scenarios)
@@ -883,10 +943,10 @@ Result PolicyEngine::evaluate(const Economy& e) const {
       : best.first_move_bp < 0 ? "Cut 25 bp" : "Hold & coordinate";
   if (r.recommendation.global_search_complete && r.recommendation.verified_win_win) {
     r.rationale = "The " + best.name
-        + " is the highest verified bilateral-welfare win-win on the complete declared startup grid under fixed mandates, the national no-worse baseline test, the growth constraint and full sector-package stochastic verification.";
+        + " is the highest verified bilateral-welfare win-win on the complete declared startup grid under fixed mandates, the national no-worse baseline test, the growth constraint, production-network spillovers and full sector-package stochastic verification.";
   } else {
     r.rationale = "The " + best.name
-        + " is the highest verified bilateral-welfare package among the retained search candidates under the fixed mandate, sector Pareto screen, growth constraint and stochastic verification.";
+        + " is the highest verified bilateral-welfare package among the retained search candidates under the fixed mandate, sector Pareto screen, production-network spillovers, growth constraint and stochastic verification.";
   }
   return r;
 }
@@ -928,6 +988,7 @@ std::string to_json(const Result& r) {
     << ",\"tradeBalanceIsObjective\":" << (r.recommendation.trade_balance_is_objective ? "true" : "false")
     << ",\"mandateWeightsFixed\":" << (r.recommendation.mandate_weights_fixed ? "true" : "false")
     << ",\"sectorSearchMethod\":\"" << esc(r.recommendation.sector_search_method)
+    << "\",\"tradeNetworkMethod\":\"" << esc(r.recommendation.trade_network_method)
     << "\",\"usSectorCoverage\":";
   array_json(o, r.recommendation.us_sector_coverage);
   o << ",\"canadaSectorCoverage\":";
@@ -1009,7 +1070,17 @@ std::string to_json(const Result& r) {
         << ",\"prices\":" << x.canada_prices
         << "},\"us\":{\"output\":" << x.us_output
         << ",\"jobs\":" << x.us_jobs
-        << ",\"prices\":" << x.us_prices << "}}";
+        << ",\"prices\":" << x.us_prices
+        << "},\"trade\":{\"usAppliedTariff\":" << x.us_applied_tariff
+        << ",\"canadaAppliedTariff\":" << x.canada_applied_tariff
+        << ",\"usBuyerPassThrough\":" << x.us_buyer_pass_through
+        << ",\"canadaBuyerPassThrough\":" << x.canada_buyer_pass_through
+        << ",\"canadaExporterAbsorption\":" << x.canada_exporter_absorption
+        << ",\"usExporterAbsorption\":" << x.us_exporter_absorption
+        << ",\"usImporterAbsorption\":" << x.us_importer_absorption
+        << ",\"canadaImporterAbsorption\":" << x.canada_importer_absorption
+        << ",\"canadaUpstreamCost\":" << x.canada_upstream_cost
+        << ",\"usUpstreamCost\":" << x.us_upstream_cost << "}}";
     }
     o << "]}";
   }

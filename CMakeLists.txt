@@ -23,11 +23,20 @@ endfunction()
 
 add_library(policy_engine
   src/policy_engine.cpp
+  src/trade_network.cpp
   src/decision_robustness.cpp
   src/welfare_sensitivity.cpp
   src/model_evidence.cpp)
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
+# The direct-sector adapter retains both bilateral coverage arguments so its
+# signature mirrors the optimizer decision tuple. Clang/GCC may flag the Canada
+# argument as unused inside the direct-only component; keep that warning visible
+# without letting the Release -Werror gate reject the intentional interface.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/policy_engine.cpp PROPERTIES
+    COMPILE_OPTIONS "-Wno-error=unused-parameter")
+endif()
 
 add_executable(cad-policy-studio src/main.cpp)
 target_link_libraries(cad-policy-studio PRIVATE policy_engine)
@@ -123,6 +132,7 @@ set_tests_properties(robust_recommendation PROPERTIES WORKING_DIRECTORY ${CMAKE_
 cad_add_test(negotiation_room_tests tests/negotiation_room_test.cpp negotiation_room)
 set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
+cad_add_test(trade_network_tests tests/trade_network_test.cpp trade_network)
 cad_add_test(robustness_sampler_tests tests/robustness_test.cpp robustness_sampler)
 cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp robustness_integration)
 cad_add_test(backtest_tests tests/backtest_test.cpp historical_backtest)
