@@ -20,7 +20,8 @@ double sq(double x) { return x * x; }
 constexpr int kBaseDraws = 700;
 constexpr int kVerificationDraws = 2800;
 constexpr double kSectorGridStep = 25.0;
-constexpr std::size_t kSectorFinalists = 8;
+constexpr std::size_t kSectorStagedFinalists = 8;
+constexpr std::size_t kSectorExhaustiveVerificationCap = 128;
 
 struct SectorProfile {
   const char* code;
@@ -146,6 +147,7 @@ struct SectorSearch {
   std::vector<CoverageCandidate> finalists;
   int candidates_examined = 0;
   int pareto_frontier_size = 0;
+  bool verification_exhaustive = true;
   double canada_min = 0.0, canada_max = 0.0;
   double us_min = 0.0, us_max = 0.0;
   double baseline_canada_score = 0.0, baseline_us_score = 0.0;
@@ -263,7 +265,10 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
   std::sort(win_win.begin(), win_win.end(), [](const CoverageCandidate& a, const CoverageCandidate& b) {
     return a.objective > b.objective;
   });
-  const std::size_t keep = std::min<std::size_t>(kSectorFinalists, win_win.size());
+  const std::size_t cap = e.exhaustive_policy_search
+      ? kSectorExhaustiveVerificationCap : kSectorStagedFinalists;
+  search.verification_exhaustive = win_win.size() <= cap;
+  const std::size_t keep = std::min<std::size_t>(cap, win_win.size());
   search.finalists.assign(win_win.begin(), win_win.begin() + keep);
   return search;
 }
@@ -314,7 +319,7 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   ca_barrier_coverage /= std::max(1e-9, us_export_weight);
 
   // Everything below is invariant across stochastic paths and quarters. Keep
-  // it out of the 700/2,800 x 12 hot loop while preserving the exact model.
+  // it out of the Monte Carlo hot loop while preserving the exact model.
   const double coordinated = productive * fiscal;
   const double us_tariff = std::max(
       0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation));
@@ -543,6 +548,7 @@ struct ScenarioMeta {
   int candidates_examined = 0;
   int pareto_size = 0;
   int finalists = 0;
+  bool exhaustive = true;
   double sector_ca_score = 0.0;
   double sector_us_score = 0.0;
   double baseline_ca_score = 0.0;
@@ -650,27 +656,48 @@ Result PolicyEngine::evaluate(const Economy& e) const {
                 + .08 * (1.0 - deescalation), 0.0, .45);
             const double diversification = clamp(.08 + .48 * productive * (1.0 - deescalation)
                 + diversification_boost, 0.0, .70);
-            auto s = simulate(e, parameters_, "custom", "Custom win-win frontier",
+            ++candidate;
+            std::string id = "custom";
+            std::string name = "Custom win-win frontier";
+            if (e.exhaustive_policy_search) {
+              std::ostringstream generated_id;
+              generated_id << "custom-" << std::setw(3) << std::setfill('0') << candidate;
+              id = generated_id.str();
+              name = "Generated win-win mix";
+            }
+            auto s = simulate(e, parameters_, id, name,
                 "Autonomously generated from the policy search.",
                 move, fiscal, productive, deescalation, relief, diversification,
                 seed_, kBaseDraws);
-            ++candidate;
-            const double candidate_score = deal_score(s, e, false);
-            if (!have_custom || candidate_score > best_custom_score) {
-              best_custom_score = candidate_score;
-              custom = std::move(s);
-              have_custom = true;
+            if (e.exhaustive_policy_search) {
+              std::ostringstream description;
+              description << "Generated policy mix " << candidate << " of 288: "
+                  << (move < 0 ? "ease 25 bp" : move > 0 ? "tighten 25 bp" : "hold rates")
+                  << ", " << std::setprecision(2) << fiscal << "% fiscal impulse, "
+                  << 100.0 * deescalation << "% negotiated rate relief, productive share "
+                  << 100.0 * productive << "%, diversification " << 100.0 * diversification << "%.";
+              s.description = description.str();
+              r.scenarios.push_back(std::move(s));
+            } else {
+              const double candidate_score = deal_score(s, e, false);
+              if (!have_custom || candidate_score > best_custom_score) {
+                best_custom_score = candidate_score;
+                custom = std::move(s);
+                have_custom = true;
+              }
             }
           }
   r.candidates_examined = candidate;
-  std::ostringstream custom_description;
-  custom_description << "Best of " << candidate << " generated policy mixes under fixed delegation priorities: "
-      << (custom.first_move_bp < 0 ? "ease monetary policy"
-          : custom.first_move_bp > 0 ? "tighten monetary policy" : "hold rates")
-      << ", " << std::setprecision(2) << custom.fiscal_impulse
-      << "% fiscal impulse, negotiated relief within the cooperation limit, and market diversification.";
-  custom.description = custom_description.str();
-  r.scenarios.push_back(std::move(custom));
+  if (!e.exhaustive_policy_search) {
+    std::ostringstream custom_description;
+    custom_description << "Best of " << candidate << " generated policy mixes under fixed delegation priorities: "
+        << (custom.first_move_bp < 0 ? "ease monetary policy"
+            : custom.first_move_bp > 0 ? "tighten monetary policy" : "hold rates")
+        << ", " << std::setprecision(2) << custom.fiscal_impulse
+        << "% fiscal impulse, negotiated relief within the cooperation limit, and market diversification.";
+    custom.description = custom_description.str();
+    r.scenarios.push_back(std::move(custom));
+  }
 
   // Mandate weights are inputs, not variables the optimizer is allowed to tune.
   const double priority_total = std::max(1e-9, std::max(0.0, e.canada_priority)
@@ -683,17 +710,36 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.base_monte_carlo_draws = kBaseDraws;
   r.recommendation.verification_monte_carlo_draws = kVerificationDraws;
   r.recommendation.sector_grid_step = kSectorGridStep;
+  r.recommendation.policy_candidates_verified = static_cast<int>(r.scenarios.size());
   r.allocations_examined = 1;
   r.gdp_floors_examined = 1;
 
-  // Unified sector/macro verification pass. Each policy strategy receives an
-  // exact Pareto search over additive bilateral sector utility on the declared
-  // grid. The strongest frontier packages are then run back through the full
-  // stochastic macro simulator before the strategy can be ranked.
+  Scenario starting_baseline;
+  double baseline_canada = 0.0;
+  double baseline_us = 0.0;
+  if (e.exhaustive_policy_search) {
+    starting_baseline = simulate(e, parameters_, "baseline", "Starting posture",
+        "The submitted tariff, sector-coverage, monetary and fiscal posture with no negotiated policy change.",
+        0.0, 0.0, 0.5, 0.0, 0.0, 0.0, seed_, kVerificationDraws);
+    starting_baseline.sector_verified = true;
+    baseline_canada = std::sqrt(std::max(.01, starting_baseline.boc_score)
+        * std::max(.01, starting_baseline.federal_score));
+    baseline_us = starting_baseline.us_score;
+    r.recommendation.baseline_canada_score = baseline_canada;
+    r.recommendation.baseline_us_score = baseline_us;
+  }
+
+  // Unified sector/macro verification pass. Exhaustive startup mode carries
+  // all 288 generated policy-control mixes plus the expert strategies into the
+  // sector search. Every retained sector Pareto package is evaluated with the
+  // full verification draw count before its policy strategy can be selected.
   std::vector<ScenarioMeta> meta;
   meta.reserve(r.scenarios.size());
+  bool all_sector_frontiers_verified = true;
   for (auto& base : r.scenarios) {
     const SectorSearch search = search_sector_frontier(e, base);
+    if (e.exhaustive_policy_search && !search.verification_exhaustive)
+      all_sector_frontiers_verified = false;
     Scenario selected;
     CoverageCandidate selected_coverage;
     bool have_selected = false;
@@ -704,14 +750,22 @@ Result PolicyEngine::evaluate(const Economy& e) const {
       Economy candidate_e = e;
       candidate_e.us_sector_coverage = coverage.us_coverage;
       candidate_e.canada_sector_coverage = coverage.canada_coverage;
+      const int candidate_draws = e.exhaustive_policy_search ? kVerificationDraws : kBaseDraws;
       auto verified = simulate(candidate_e, parameters_, base.id, base.name, base.description,
           base.first_move_bp, base.fiscal_impulse, base.productive_share,
           base.negotiated_relief / 100.0, base.targeted_relief, base.diversification,
-          seed_, kBaseDraws);
+          seed_, candidate_draws);
       verified.sector_verified = true;
       const double raw_score = deal_score(verified, e, false);
       const bool growth_ok = verified.bilateral_growth_floor + 1e-9 >= e.minimum_bilateral_growth;
-      const double rank = (growth_ok ? 0.0 : -1e6) + raw_score;
+      bool national_win_win = true;
+      if (e.exhaustive_policy_search) {
+        const double canada_score = std::sqrt(std::max(.01, verified.boc_score)
+            * std::max(.01, verified.federal_score));
+        national_win_win = canada_score + 1e-9 >= baseline_canada
+            && verified.us_score + 1e-9 >= baseline_us;
+      }
+      const double rank = (growth_ok && national_win_win ? 0.0 : -1e6) + raw_score;
       ++finalists_run;
       if (!have_selected || rank > selected_rank) {
         selected_rank = rank;
@@ -736,6 +790,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
     m.candidates_examined = search.candidates_examined;
     m.pareto_size = search.pareto_frontier_size;
     m.finalists = finalists_run;
+    m.exhaustive = search.verification_exhaustive;
     m.sector_ca_score = selected_coverage.canada_score;
     m.sector_us_score = selected_coverage.us_score;
     m.baseline_ca_score = search.baseline_canada_score;
@@ -743,22 +798,29 @@ Result PolicyEngine::evaluate(const Economy& e) const {
     meta.push_back(std::move(m));
   }
 
-  // Second-stage verification uses four times as many common-random-number
-  // draws for every sector-optimized strategy, eliminating a winner-only
-  // recheck and reducing Monte Carlo winner's-curse risk.
-  for (auto& scenario : r.scenarios) {
-    Economy verified_e = e;
-    verified_e.us_sector_coverage = scenario.applied_us_sector_coverage;
-    verified_e.canada_sector_coverage = scenario.applied_canada_sector_coverage;
-    auto verified = simulate(verified_e, parameters_, scenario.id, scenario.name, scenario.description,
-        scenario.first_move_bp, scenario.fiscal_impulse, scenario.productive_share,
-        scenario.negotiated_relief / 100.0, scenario.targeted_relief, scenario.diversification,
-        seed_, kVerificationDraws);
-    verified.sector_verified = true;
-    const double raw_score = deal_score(verified, e, false);
-    const bool growth_ok = verified.bilateral_growth_floor + 1e-9 >= e.minimum_bilateral_growth;
-    verified.score = (growth_ok ? 0.0 : -1e6) + raw_score;
-    scenario = std::move(verified);
+  if (e.exhaustive_policy_search) {
+    const bool baseline_growth_ok = starting_baseline.bilateral_growth_floor + 1e-9
+        >= e.minimum_bilateral_growth;
+    starting_baseline.score = (baseline_growth_ok ? 0.0 : -1e6)
+        + deal_score(starting_baseline, e, false);
+    r.scenarios.push_back(std::move(starting_baseline));
+  } else {
+    // Staged mode retains the historical two-pass structure for low-level tests
+    // and robustness draws that do not claim startup global optimality.
+    for (auto& scenario : r.scenarios) {
+      Economy verified_e = e;
+      verified_e.us_sector_coverage = scenario.applied_us_sector_coverage;
+      verified_e.canada_sector_coverage = scenario.applied_canada_sector_coverage;
+      auto verified = simulate(verified_e, parameters_, scenario.id, scenario.name, scenario.description,
+          scenario.first_move_bp, scenario.fiscal_impulse, scenario.productive_share,
+          scenario.negotiated_relief / 100.0, scenario.targeted_relief, scenario.diversification,
+          seed_, kVerificationDraws);
+      verified.sector_verified = true;
+      const double raw_score = deal_score(verified, e, false);
+      const bool growth_ok = verified.bilateral_growth_floor + 1e-9 >= e.minimum_bilateral_growth;
+      verified.score = (growth_ok ? 0.0 : -1e6) + raw_score;
+      scenario = std::move(verified);
+    }
   }
 
   std::sort(r.scenarios.begin(), r.scenarios.end(),
@@ -775,28 +837,42 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.verified_min_sector_metric = min_sector_metric(best);
   r.recommendation.growth_constraint_met =
       best.bilateral_growth_floor + 1e-9 >= e.minimum_bilateral_growth;
+  const bool sector_win_win = !best_meta
+      || (best_meta->sector_ca_score + 1e-9 >= best_meta->baseline_ca_score
+          && best_meta->sector_us_score + 1e-9 >= best_meta->baseline_us_score);
+  const bool national_win_win = !e.exhaustive_policy_search
+      || (r.recommendation.verified_canada_score + 1e-9 >= baseline_canada
+          && r.recommendation.verified_us_score + 1e-9 >= baseline_us);
+  r.recommendation.verified_win_win = sector_win_win
+      && national_win_win && r.recommendation.growth_constraint_met;
+  r.recommendation.global_search_complete = e.exhaustive_policy_search
+      && all_sector_frontiers_verified;
   if (best_meta) {
     r.recommendation.sector_candidates_examined = best_meta->candidates_examined;
     r.recommendation.sector_pareto_frontier_size = best_meta->pareto_size;
     r.recommendation.sector_finalists_resimulated = best_meta->finalists;
-    r.recommendation.verified_win_win =
-        best_meta->sector_ca_score + 1e-9 >= best_meta->baseline_ca_score
-        && best_meta->sector_us_score + 1e-9 >= best_meta->baseline_us_score
-        && r.recommendation.growth_constraint_met;
   }
   fill_sector_display_metrics(e, best, r.recommendation);
 
   std::ostringstream recommendation;
   recommendation << "The recommendation keeps the delegation priorities fixed at "
       << std::setprecision(3) << r.recommendation.canada_priority << "% Canada / "
-      << r.recommendation.us_priority << "% United States. For each policy strategy, the engine "
-      << "builds the non-dominated global frontier of bilateral sector-coverage schedules at "
-      << kSectorGridStep << "% increments of the permitted relief range across all 20 sectors, rejects sector packages that make "
-      << "either side worse than the starting sector posture, re-simulates up to "
-      << kSectorFinalists << " frontier schedules through the macro model, then rechecks every "
-      << "sector-optimized strategy with " << kVerificationDraws << " common-random-number draws. "
-      << "Canadian and U.S. export channels are independent. Bilateral trade balance is reported "
-      << "for diplomatic context but is not rewarded in the welfare objective.";
+      << r.recommendation.us_priority << "% United States. ";
+  if (e.exhaustive_policy_search) {
+    recommendation << "The startup optimizer carries all 288 generated policy-control mixes plus 13 expert strategies into the 20-sector Pareto search. "
+        << "Each retained sector win-win schedule is re-simulated with " << kVerificationDraws
+        << " common-random-number draws before selection; both national welfare scores must also be no worse than the submitted starting posture. ";
+    if (r.recommendation.global_search_complete)
+      recommendation << "The sector verification cap did not bind, so the declared startup grid was exhaustively verified. ";
+    else
+      recommendation << "The sector verification safety cap bound for at least one strategy, so globalSearchComplete is false and the result must be described as the best verified retained package rather than a global optimum. ";
+  } else {
+    recommendation << "The staged optimizer builds the non-dominated global frontier of bilateral sector-coverage schedules at "
+        << kSectorGridStep << "% increments, re-simulates up to " << kSectorStagedFinalists
+        << " frontier schedules per strategy, then rechecks each selected strategy with "
+        << kVerificationDraws << " common-random-number draws. ";
+  }
+  recommendation << "Canadian and U.S. export channels are independent. Bilateral trade balance is reported for diplomatic context but is not rewarded in the welfare objective.";
   r.recommendation.explanation = recommendation.str();
 
   for (auto& scenario : r.scenarios)
@@ -805,9 +881,13 @@ Result PolicyEngine::evaluate(const Economy& e) const {
 
   r.signal = best.first_move_bp > 0 ? "Raise 25 bp"
       : best.first_move_bp < 0 ? "Cut 25 bp" : "Hold & coordinate";
-  r.rationale = "The " + best.name
-      + " is the highest verified bilateral-welfare package under the fixed mandate, "
-        "sector-level Pareto screen, growth constraint and second-stage stochastic verification.";
+  if (r.recommendation.global_search_complete && r.recommendation.verified_win_win) {
+    r.rationale = "The " + best.name
+        + " is the highest verified bilateral-welfare win-win on the complete declared startup grid under fixed mandates, the national no-worse baseline test, the growth constraint and full sector-package stochastic verification.";
+  } else {
+    r.rationale = "The " + best.name
+        + " is the highest verified bilateral-welfare package among the retained search candidates under the fixed mandate, sector Pareto screen, growth constraint and stochastic verification.";
+  }
   return r;
 }
 
@@ -832,13 +912,17 @@ std::string to_json(const Result& r) {
     << "\",\"sectorCandidatesExamined\":" << r.recommendation.sector_candidates_examined
     << ",\"sectorParetoFrontierSize\":" << r.recommendation.sector_pareto_frontier_size
     << ",\"sectorFinalistsResimulated\":" << r.recommendation.sector_finalists_resimulated
+    << ",\"policyCandidatesVerified\":" << r.recommendation.policy_candidates_verified
     << ",\"sectorGridStep\":" << r.recommendation.sector_grid_step
     << ",\"baseMonteCarloDraws\":" << r.recommendation.base_monte_carlo_draws
     << ",\"verificationMonteCarloDraws\":" << r.recommendation.verification_monte_carlo_draws
     << ",\"verifiedCanadaScore\":" << r.recommendation.verified_canada_score
     << ",\"verifiedUsScore\":" << r.recommendation.verified_us_score
+    << ",\"baselineCanadaScore\":" << r.recommendation.baseline_canada_score
+    << ",\"baselineUsScore\":" << r.recommendation.baseline_us_score
     << ",\"verifiedMinSectorMetric\":" << r.recommendation.verified_min_sector_metric
     << ",\"verifiedWinWin\":" << (r.recommendation.verified_win_win ? "true" : "false")
+    << ",\"globalSearchComplete\":" << (r.recommendation.global_search_complete ? "true" : "false")
     << ",\"growthConstraintMet\":" << (r.recommendation.growth_constraint_met ? "true" : "false")
     << ",\"independentUsTradeChannel\":" << (r.recommendation.independent_us_trade_channel ? "true" : "false")
     << ",\"tradeBalanceIsObjective\":" << (r.recommendation.trade_balance_is_objective ? "true" : "false")
