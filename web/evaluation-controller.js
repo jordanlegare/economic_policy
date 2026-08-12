@@ -2,9 +2,9 @@
   'use strict';
 
   // The policy engine returns a sector schedule that has already been re-simulated
-  // and verified. Displaying that schedule must not silently turn it into the
-  // starting posture for another optimization pass. Keep a separate negotiation
-  // anchor and advance it only when the user/counterparty actually changes coverage.
+  // and verified. The displayed auto-applied agreement is deliberately separate
+  // from the delegation posture used as the next search anchor, so applying a
+  // recommendation cannot compound the cooperation envelope against itself.
   let negotiationAnchor = null;
   let lastAutoCoverage = null;
   let comparisonCache = null;
@@ -35,6 +35,43 @@
       negotiationAnchor = current;
     }
     return copyCoverage(negotiationAnchor);
+  }
+
+  function recommendationIsVerified(rec) {
+    return rec?.verifiedWinWin === true
+      && rec?.growthConstraintMet !== false
+      && Array.isArray(rec.usSectorCoverage)
+      && Array.isArray(rec.canadaSectorCoverage)
+      && rec.usSectorCoverage.length === positions.us.length
+      && rec.canadaSectorCoverage.length === positions.canada.length;
+  }
+
+  function sectorSearchSummary(rec) {
+    const candidates = Number(rec?.sectorCandidatesExamined || 0);
+    const pareto = Number(rec?.sectorParetoFrontierSize || 0);
+    const finalists = Number(rec?.sectorFinalistsResimulated || 0);
+    return `${candidates.toLocaleString()} sector schedules explored · ${pareto.toLocaleString()} Pareto schedules · ${finalists.toLocaleString()} finalists re-simulated`;
+  }
+
+  function setAutoApplyStatus(text) {
+    const target = typeof document !== 'undefined' ? document.querySelector('.auto span') : null;
+    if (target) target.textContent = text;
+  }
+
+  function announceVerifiedWinWin(rec) {
+    if (typeof window?.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    window.dispatchEvent(new CustomEvent('economic-policy:verified-win-win-applied', {
+      detail: {
+        strategyId: rec.strategyId || result?.scenarios?.[0]?.id || '',
+        coverage: displayedCoverage(),
+        searchAnchor: copyCoverage(negotiationAnchor || positions),
+        sectorCandidatesExamined: Number(rec.sectorCandidatesExamined || 0),
+        sectorParetoFrontierSize: Number(rec.sectorParetoFrontierSize || 0),
+        sectorFinalistsResimulated: Number(rec.sectorFinalistsResimulated || 0),
+        verifiedCanadaScore: Number(rec.verifiedCanadaScore || 0),
+        verifiedUsScore: Number(rec.verifiedUsScore || 0)
+      }
+    }));
   }
 
   function comparisonKey(preferences) {
@@ -73,14 +110,28 @@
   }
 
   function publishVerifiedRecommendation() {
-    if (!result?.recommendation) return;
+    const rec = result?.recommendation;
+    if (!rec) return;
+
+    if (!recommendationIsVerified(rec)) {
+      // Never move either delegation's sliders onto an unverified package. The
+      // current posture remains visible and remains the search anchor.
+      lastAutoCoverage = null;
+      setAutoApplyStatus(`Auto-apply verified win-win agreement paused · ${sectorSearchSummary(rec)} · no package cleared both-party and growth verification.`);
+      return;
+    }
+
     const changed = applyRecommendation(false, !openingCalibrated);
     openingCalibrated = true;
     lastAutoCoverage = displayedCoverage();
-    // The returned scenario has already been evaluated on this exact optimized
-    // coverage schedule. Publish the display state, but do not recursively run
-    // the optimizer against its own concession.
+    setAutoApplyStatus(`Auto-apply verified win-win agreement ON · ${sectorSearchSummary(rec)} · both delegations' sector sliders now show the verified package.`);
+
+    // publishNegotiation('automatic') serializes both Canada and U.S. sector
+    // arrays, so the joint dashboard and either delegation view converge on the
+    // same verified agreement without making that agreement a new concession
+    // anchor for another optimization pass.
     if (changed) publishNegotiation('automatic');
+    announceVerifiedWinWin(rec);
   }
 
   function provisionalComparison(evaluated) {
@@ -109,7 +160,7 @@
   function makeRequest(preferences, rate, retaliation, comparisonOnly = false) {
     return fetch('/api/evaluate', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         ...settings,
         ...preferences,
@@ -263,6 +314,14 @@
     resetNegotiationAnchor() {
       negotiationAnchor = displayedCoverage();
       lastAutoCoverage = null;
+    },
+    state() {
+      return {
+        searchAnchor: copyCoverage(negotiationAnchor || positions),
+        displayedCoverage: displayedCoverage(),
+        autoAppliedCoverage: lastAutoCoverage ? copyCoverage(lastAutoCoverage) : null,
+        verifiedWinWin: recommendationIsVerified(result?.recommendation)
+      };
     },
     waitForComparison() {
       return comparisonTask;
