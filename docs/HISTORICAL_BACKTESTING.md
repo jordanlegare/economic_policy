@@ -21,7 +21,8 @@ Every empirical datum must reference a declared `SOURCE`. `backtest_scope` is re
 Inputs available by July 12 include:
 
 - policy rate: 1.5%, from the June 1 Bank of Canada decision;
-- CPI inflation: 7.7% year over year for May 2022, released June 22;
+- headline CPI inflation: 7.7% year over year for May 2022, released June 22;
+- core inflation: 4.15%, transparently derived as the midpoint of the Bank's June 1 published 3.2%–5.1% range of core measures rather than equating headline CPI with core inflation;
 - first-quarter real GDP growth: 0.8% quarter over quarter, represented as approximately 3.2% annualized for the engine's annual-rate convention, released May 31;
 - unemployment rate: 4.9% for June 2022, released July 8;
 - average hourly wage growth: 5.2% year over year for June 2022, released July 8.
