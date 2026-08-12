@@ -20,6 +20,11 @@ int main() {
     out << "PARAM,exports_to_us_share,78.285,percent,official-derived,trade,2025,0,true\n";
     out << "PARAM,imports_from_us_share,45.840,percent,official-derived,trade,2025,0,true\n";
     out << "PARAM,input_output_calibrated,1,binary,official-derived,io,2024,0,false\n";
+    out << "PARAM,input_output_model_sector_coverage,20,count,official-derived,io,2024,0,false\n";
+    out << "PARAM,us_effective_tariff_goods,25,percent,official-derived,tariff,2026,0,false\n";
+    out << "PARAM,canada_effective_tariff_goods,15,percent,official-derived,tariff,2026,0,false\n";
+    out << "PARAM,cusma_origin_utilization_proxy,88,percent,official-derived,origin,2026,0,false\n";
+    out << "PARAM,tariff_price_pass_through_anchor,0.65,ratio,empirically-estimated,pass,2025,0.04,false\n";
     out << "PARAM,trade_elasticity,0.9,elasticity,empirically-estimated,estimate,2025,0.1,true\n";
     out << "SOURCE,trade,Statistics Canada,Bilateral trade,2025,https://example.invalid/trade,abc,verified\n";
     out << "MEASURE,future,United States,Future tariff,2026-07-20,2026-08-19,,50%,selected goods,legal,future\n";
@@ -91,6 +96,10 @@ int main() {
   assert(certified.pass_through_estimated);
   assert(std::abs(certified.completeness - 100.0) < 1e-9);
   assert(certified.grade == "empirical-calibrated");
+  assert(certified.parameters.at("input_output_model_sector_coverage").value == 20.0);
+  assert(certified.parameters.at("trade_elasticity").kind == "empirically-estimated");
+  assert(certified.parameters.at("trade_elasticity").source_id == "imf_trade_flows_mr_2012");
+  assert(certified.parameters.at("trade_elasticity").use_in_model);
   assert(certified.sectors[0].elasticity_kind == "empirically-estimated");
   assert(certified.sectors[4].pass_through_kind == "empirical-research-anchor");
   assert(certified.sectors[2].tariff_kind == "not-applicable");
