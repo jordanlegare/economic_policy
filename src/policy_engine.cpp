@@ -64,6 +64,10 @@ TradeNetworkInput make_trade_network_input(const Economy& e, const Scenario& pol
   input.price_pass_through = kTariffPricePassThroughAnchor;
   input.us_coverage = e.us_sector_coverage;
   input.canada_coverage = e.canada_sector_coverage;
+  input.us_trade_elasticity = e.us_sector_trade_elasticity;
+  input.canada_trade_elasticity = e.canada_sector_trade_elasticity;
+  input.us_price_pass_through = e.us_sector_price_pass_through;
+  input.canada_price_pass_through = e.canada_sector_price_pass_through;
   return input;
 }
 
@@ -403,9 +407,27 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
       const double rate_target = clamp(p.neutral_rate
           + p.rate_inflation_response * (inf - p.inflation_target)
           + p.rate_output_response * gap, .25, 7.0);
-      if (q == 0) rate = clamp(rate + move / 100.0, 0.0, 8.0);
-      else rate = clamp(rate + clamp(rate_target - rate,
-          -p.max_quarterly_rate_step, p.max_quarterly_rate_step), 0.0, 8.0);
+      if (q == 0) {
+        rate = clamp(rate + move / 100.0, 0.0, 8.0);
+      } else {
+        double policy_step = clamp(rate_target - rate,
+            -p.max_quarterly_rate_step, p.max_quarterly_rate_step);
+        // The optimized control remains the auditable first-quarter move. In
+        // quarter 2 it can receive one same-direction, state-contingent follow-
+        // up when the incoming data still justify the original action. This
+        // adds a dynamic policy path without expanding or obscuring the declared
+        // 288-control startup search grid.
+        if (q == 1 && std::abs(move) > 1e-9) {
+          const double followup = std::min(.25, p.max_quarterly_rate_step);
+          const bool continue_easing = move < 0.0
+              && gap < -.25 && inf <= p.inflation_target + .35;
+          const bool continue_tightening = move > 0.0
+              && (inf >= p.inflation_target + .50 || gap > .50);
+          if (continue_easing) policy_step = std::min(policy_step, -followup);
+          if (continue_tightening) policy_step = std::max(policy_step, followup);
+        }
+        rate = clamp(rate + policy_step, 0.0, 8.0);
+      }
       const double demand = fiscal * (1.0 - productive) * p.fiscal_demand_multiplier
           - (rate - p.neutral_rate) * p.real_rate_demand_sensitivity;
 
@@ -417,15 +439,24 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
       us_export_change = -100.0 * us_trade_drag + .30 * (e.gdp_growth - 1.5)
           + 1.5 * deescalation + shock(rng) * p.us_export_shock_sd;
 
+      // Preserve common-random-number ordering while allowing the only
+      // currently measured innovation dependence to enter production. The
+      // correlation comes from the frozen output/inflation residual covariance;
+      // all remaining shock relationships stay independent until identified.
+      const double output_z = shock(rng);
+      const double inflation_independent_z = shock(rng);
+      const double rho = clamp(p.output_inflation_shock_correlation, -.999, .999);
+      const double inflation_z = rho * output_z
+          + std::sqrt(std::max(0.0, 1.0 - rho * rho)) * inflation_independent_z;
       gap = p.output_persistence * gap + demand - trade_drag
           + p.global_growth_sensitivity * (e.global_growth - 2.7)
-          + shock(rng) * p.output_shock_sd;
+          + output_z * p.output_shock_sd;
       inf = p.inflation_persistence * inf
           + p.inflation_expectations_weight * e.inflation_expectations
           + p.phillips_curve_slope * gap + fx - supply
           + p.import_price_pass_through * import_price
           - p.oil_inflation_sensitivity * (e.oil_price - 75.0)
-          + shock(rng) * p.inflation_shock_sd;
+          + inflation_z * p.inflation_shock_sd;
       const double growth = clamp(1.75 + gap - .18 * e.credit_spread
           + coordinated * .24 + shock(rng) * p.growth_shock_sd, -3.0, 5.5);
       const double us_growth = clamp(e.us_growth + .16 * coordinated + .28 * deescalation
@@ -931,7 +962,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
         << " frontier schedules per strategy, then rechecks each selected strategy with "
         << kVerificationDraws << " common-random-number draws. ";
   }
-  recommendation << "Sector welfare now includes linear upstream supplier-demand and downstream input-cost propagation through a 20-sector production network. The network coefficients are explicitly provisional bridge coefficients mapped to the Statistics Canada 2024 sector structure rather than claimed as direct table-cell estimates. Canadian and U.S. export channels are independent. Bilateral trade balance is reported for diplomatic context but is not rewarded in the welfare objective.";
+  recommendation << "Sector welfare includes upstream supplier-demand and downstream input-cost propagation through country-specific 20-sector production-network objects. The Canadian matrix is the directly aggregated Statistics Canada 2024 table. The U.S. matrix is a separately identified but explicitly provisional structural proxy pending a certified BEA extraction, and must not be described as empirical U.S. IO calibration. Directional sector elasticity and pass-through inputs fall back to audited aggregate anchors unless production-compatible sector evidence is supplied. Monetary policy can make one state-contingent quarter-2 follow-up after the optimized first move, and the measured output/inflation residual correlation is propagated without claiming a fully identified multivariate shock process. Canadian and U.S. export channels are independent. Bilateral trade balance is reported for diplomatic context but is not rewarded in the welfare objective.";
   r.recommendation.explanation = recommendation.str();
 
   for (auto& scenario : r.scenarios)

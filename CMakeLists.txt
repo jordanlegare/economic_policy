@@ -41,6 +41,7 @@ if(WIN32)
     web/app.css
     web/app.js
     web/evaluation-controller.js
+    web/trade-incidence.js
     web/diplomat.css
     web/diplomat.js
     web/negotiation-model.css
