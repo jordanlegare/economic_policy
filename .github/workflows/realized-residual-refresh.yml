@@ -1,0 +1,32 @@
+name: Realized residual refresh
+
+on:
+  push:
+    branches: [agent/v2-realized-residuals]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v2-realized-residuals
+      - name: Refresh realized quarterly residuals
+        run: python3 tools/refresh_realized_residuals.py --refresh
+      - name: Verify generated residual artifacts
+        run: python3 tools/refresh_realized_residuals.py --verify
+      - name: Freeze generated residual artifacts
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/calibration/realized_residual_estimates.csv data/calibration/realized_residual_covariance.csv data/calibration/realized_residual_manifest.csv data/calibration/empirical_structural_evidence.csv
+          if git diff --cached --quiet; then
+            echo 'No residual artifacts changed'
+          else
+            git commit -m 'Freeze realized residual calibration'
+            git push origin HEAD:agent/v2-realized-residuals
+          fi
