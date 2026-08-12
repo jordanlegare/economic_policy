@@ -57,6 +57,7 @@ struct NegotiationAnalysis {
   int pareto_frontier_size = 0;
   int bargaining_grid_levels = 5;
   int sector_verification_draws = 0;
+  double pareto_utility_tolerance = 0.5;
   bool independent_us_trade_channel = false;
   bool trade_balance_is_objective = true;
   bool mandate_weights_fixed = false;
@@ -355,35 +356,28 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
     return a.evaluated.us_utility > b.evaluated.us_utility;
   });
 
-  // Preserve distinct bargaining packages that occupy the same nondominated
-  // utility coordinate. The previous one-pass skyline kept only the first
-  // candidate at a tied Canada/U.S. point, which made Pareto package IDs vanish
-  // when empirical tariff calibration caused more utilities to clamp at 100.
-  // A candidate is dominated only when another package is at least as good for
-  // both principals and strictly better for one; exact utility ties remain
-  // Pareto-efficient alternatives because their concession bundles can differ.
+  // The displayed diplomatic frontier is epsilon-Pareto rather than an exact
+  // mathematical skyline. Model utilities are 0-100 composites whose decimal
+  // differences below half a point are not economically meaningful enough to
+  // erase distinct concession bundles. A package is therefore removed only if
+  // another feasible package improves BOTH principals by more than the stated
+  // tolerance. The tolerance is exposed in the API for auditability.
   std::vector<Candidate> frontier;
-  double best_us_at_higher_canada = -std::numeric_limits<double>::infinity();
-  constexpr double pareto_eps = 1e-9;
-  std::size_t group_begin = 0;
-  while (group_begin < feasible.size()) {
-    std::size_t group_end = group_begin + 1;
-    const double canada_utility = feasible[group_begin].evaluated.canada_utility;
-    double group_best_us = feasible[group_begin].evaluated.us_utility;
-    while (group_end < feasible.size()
-        && std::abs(feasible[group_end].evaluated.canada_utility - canada_utility) <= pareto_eps) {
-      group_best_us = std::max(group_best_us, feasible[group_end].evaluated.us_utility);
-      ++group_end;
+  const double pareto_eps = analysis.pareto_utility_tolerance;
+  std::size_t strictly_better_canada_end = 0;
+  double best_us_with_strictly_better_canada = -std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < feasible.size(); ++i) {
+    const double canada_cutoff = feasible[i].evaluated.canada_utility + pareto_eps;
+    while (strictly_better_canada_end < i
+        && feasible[strictly_better_canada_end].evaluated.canada_utility > canada_cutoff) {
+      best_us_with_strictly_better_canada = std::max(
+          best_us_with_strictly_better_canada,
+          feasible[strictly_better_canada_end].evaluated.us_utility);
+      ++strictly_better_canada_end;
     }
-
-    if (group_best_us > best_us_at_higher_canada + pareto_eps) {
-      for (std::size_t i = group_begin; i < group_end; ++i) {
-        if (std::abs(feasible[i].evaluated.us_utility - group_best_us) <= pareto_eps)
-          frontier.push_back(feasible[i]);
-      }
-    }
-    best_us_at_higher_canada = std::max(best_us_at_higher_canada, group_best_us);
-    group_begin = group_end;
+    const bool epsilon_dominated = best_us_with_strictly_better_canada
+        > feasible[i].evaluated.us_utility + pareto_eps;
+    if (!epsilon_dominated) frontier.push_back(feasible[i]);
   }
   analysis.pareto_frontier_size = static_cast<int>(frontier.size());
 
@@ -427,6 +421,7 @@ inline std::string negotiation_to_json(const NegotiationAnalysis& analysis) {
   out << "{\"candidatesExamined\":" << analysis.candidates_examined
       << ",\"individuallyRationalCount\":" << analysis.individually_rational_count
       << ",\"paretoFrontierSize\":" << analysis.pareto_frontier_size
+      << ",\"paretoUtilityTolerance\":" << analysis.pareto_utility_tolerance
       << ",\"bargainingGridLevels\":" << analysis.bargaining_grid_levels
       << ",\"batna\":{\"canada\":" << analysis.canada_batna
       << ",\"us\":" << analysis.us_batna
