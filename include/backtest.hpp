@@ -42,8 +42,14 @@ struct BacktestFixture {
   bool loaded = false;
   bool no_lookahead = false;
   bool provenance_complete = false;
+  // Backward-compatible coverage of the original eight core historical fields.
   double input_coverage = 0.0;
+  // Coverage of the expanded financial/external/fiscal state tier.
+  double extended_input_coverage = 0.0;
+  // Coverage across both the core and expanded declared state tiers.
+  double state_coverage = 0.0;
   std::string grade = "unusable";
+  std::string state_grade = "unusable";
 };
 
 struct BacktestMetric {
@@ -63,7 +69,10 @@ struct BacktestResult {
   bool no_lookahead = false;
   bool provenance_complete = false;
   double input_coverage = 0.0;
+  double extended_input_coverage = 0.0;
+  double state_coverage = 0.0;
   std::string fixture_grade;
+  std::string state_grade;
   std::string recommended_strategy;
   double recommended_first_move_bp = 0.0;
   bool policy_benchmark_available = false;
@@ -141,9 +150,26 @@ inline std::vector<std::string> required_inputs() {
           "wage_growth", "us_tariff_canada", "canada_retaliatory_tariff"};
 }
 
+inline std::vector<std::string> required_extended_inputs() {
+  return {"usdcad", "oil_price", "global_growth", "us_growth", "us_inflation",
+          "fiscal_balance_gdp", "federal_debt_gdp", "household_debt_income"};
+}
+
+inline int covered(const BacktestFixture& fixture,
+                   const std::vector<std::string>& required) {
+  int present = 0;
+  for (const auto& name : required) if (find(fixture.inputs, name)) ++present;
+  return present;
+}
+
+inline double percent_coverage(int present, std::size_t required) {
+  return required ? 100.0 * static_cast<double>(present) / static_cast<double>(required) : 0.0;
+}
+
 inline void finalize(BacktestFixture& fixture) {
   if (!fixture.loaded || !iso_date(fixture.decision_date)) {
     fixture.grade = "unusable";
+    fixture.state_grade = "unusable";
     return;
   }
 
@@ -167,16 +193,25 @@ inline void finalize(BacktestFixture& fixture) {
   fixture.no_lookahead = temporal_ok;
   fixture.provenance_complete = provenance_ok;
 
-  int present = 0;
-  const auto required = required_inputs();
-  for (const auto& name : required) if (find(fixture.inputs, name)) ++present;
-  fixture.input_coverage = required.empty() ? 0.0
-      : 100.0 * static_cast<double>(present) / static_cast<double>(required.size());
+  const auto core = required_inputs();
+  const auto extended = required_extended_inputs();
+  const int core_present = covered(fixture, core);
+  const int extended_present = covered(fixture, extended);
+  fixture.input_coverage = percent_coverage(core_present, core.size());
+  fixture.extended_input_coverage = percent_coverage(extended_present, extended.size());
+  fixture.state_coverage = percent_coverage(core_present + extended_present,
+      core.size() + extended.size());
 
   if (!fixture.no_lookahead) fixture.grade = "lookahead-failed";
   else if (!fixture.provenance_complete) fixture.grade = "provenance-incomplete";
   else if (fixture.input_coverage >= 99.999) fixture.grade = "vintage-complete";
   else fixture.grade = "vintage-partial";
+
+  if (!fixture.no_lookahead) fixture.state_grade = "lookahead-failed";
+  else if (!fixture.provenance_complete) fixture.state_grade = "provenance-incomplete";
+  else if (fixture.extended_input_coverage >= 99.999) fixture.state_grade = "expanded-complete";
+  else if (fixture.extended_input_coverage > 0.0) fixture.state_grade = "expanded-partial";
+  else fixture.state_grade = "core-only";
 }
 
 inline void apply_input(Economy& e, const BacktestDatum& d) {
@@ -190,6 +225,13 @@ inline void apply_input(Economy& e, const BacktestDatum& d) {
   else if (d.name == "productivity_growth") e.productivity_growth = d.value;
   else if (d.name == "population_growth") e.population_growth = d.value;
   else if (d.name == "inflation_expectations") e.inflation_expectations = d.value;
+  else if (d.name == "usdcad") e.usdcad = d.value;
+  else if (d.name == "oil_price") e.oil_price = d.value;
+  else if (d.name == "credit_spread") e.credit_spread = d.value;
+  else if (d.name == "housing_gap") e.housing_gap = d.value;
+  else if (d.name == "household_debt_income") e.household_debt_income = d.value;
+  else if (d.name == "fiscal_balance_gdp") e.fiscal_balance_gdp = d.value;
+  else if (d.name == "federal_debt_gdp") e.federal_debt_gdp = d.value;
   else if (d.name == "us_tariff_canada") e.us_tariff_canada = d.value;
   else if (d.name == "canada_retaliatory_tariff") e.canada_retaliatory_tariff = d.value;
   else if (d.name == "global_growth") e.global_growth = d.value;
@@ -268,7 +310,10 @@ inline BacktestResult run_backtest(const PolicyEngine& engine,
   out.no_lookahead = fixture.no_lookahead;
   out.provenance_complete = fixture.provenance_complete;
   out.input_coverage = fixture.input_coverage;
+  out.extended_input_coverage = fixture.extended_input_coverage;
+  out.state_coverage = fixture.state_coverage;
   out.fixture_grade = fixture.grade;
+  out.state_grade = fixture.state_grade;
   if (!fixture.loaded || !fixture.no_lookahead || !fixture.provenance_complete) return out;
 
   Economy state;
@@ -322,7 +367,10 @@ inline std::string backtest_to_json(const BacktestResult& r) {
     << ",\"noLookahead\":" << (r.no_lookahead ? "true" : "false")
     << ",\"provenanceComplete\":" << (r.provenance_complete ? "true" : "false")
     << ",\"inputCoverage\":" << r.input_coverage
+    << ",\"extendedInputCoverage\":" << r.extended_input_coverage
+    << ",\"stateCoverage\":" << r.state_coverage
     << ",\"fixtureGrade\":\"" << esc(r.fixture_grade)
+    << "\",\"stateGrade\":\"" << esc(r.state_grade)
     << "\",\"recommendedStrategy\":\"" << esc(r.recommended_strategy)
     << "\",\"recommendedFirstMoveBp\":" << r.recommended_first_move_bp
     << ",\"policyBenchmarkAvailable\":" << (r.policy_benchmark_available ? "true" : "false")
