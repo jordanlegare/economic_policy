@@ -22,8 +22,8 @@ inline std::vector<std::string> required_structural_parameter_names() {
     "phillips_curve_slope", "fx_pass_through", "import_price_pass_through",
     "oil_inflation_sensitivity", "canada_trade_drag_scale",
     "us_retaliation_drag_scale", "tariff_revenue_elasticity_scale",
-    "output_shock_sd", "inflation_shock_sd", "growth_shock_sd",
-    "us_growth_shock_sd", "export_shock_sd", "us_export_shock_sd"
+    "output_shock_sd", "inflation_shock_sd", "output_inflation_shock_correlation",
+    "growth_shock_sd", "us_growth_shock_sd", "export_shock_sd", "us_export_shock_sd"
   };
 }
 
@@ -106,7 +106,7 @@ inline StructuralCalibrationCompleteness audit_structural_calibration_completene
     const auto* entry = registry.find(name);
     if (!entry) continue;
     // Mandates are policy-framework constants and derived parameters are
-    // algebraic constraints.  Neither should inflate or depress the empirical
+    // algebraic constraints. Neither should inflate or depress the empirical
     // calibration denominator.
     if (entry->kind == "mandate" || entry->kind == "derived") continue;
     ++out.calibration_target_count;
@@ -200,6 +200,7 @@ inline StructuralParameters apply_structural_parameter_registry(
   value("tariff_revenue_elasticity_scale", p.tariff_revenue_elasticity_scale);
   value("output_shock_sd", p.output_shock_sd);
   value("inflation_shock_sd", p.inflation_shock_sd);
+  value("output_inflation_shock_correlation", p.output_inflation_shock_correlation);
   value("growth_shock_sd", p.growth_shock_sd);
   value("us_growth_shock_sd", p.us_growth_shock_sd);
   value("export_shock_sd", p.export_shock_sd);
