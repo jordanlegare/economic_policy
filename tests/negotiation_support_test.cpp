@@ -55,6 +55,7 @@ int main() {
   const auto analysis = cad::analyze_negotiation(economy, result);
   assert(analysis.candidates_examined == 3 * 3125);
   assert(analysis.bargaining_grid_levels == 5);
+  assert(std::abs(analysis.pareto_utility_tolerance - 0.5) < 1e-12);
   assert(analysis.individually_rational_count > 0);
   assert(analysis.pareto_frontier_size > 0);
   assert(!analysis.frontier.empty());
@@ -104,10 +105,28 @@ int main() {
   assert(canada_weighted.candidates_examined == analysis.candidates_examined);
   assert(canada_weighted.recommended.individually_rational);
 
+  // Current empirical tariff calibration (5.0% U.S.-on-Canada and 1.5%
+  // Canada-on-U.S.) can collapse the exact mathematical skyline to one point.
+  // The diplomatic surface therefore reports an auditable epsilon-Pareto set:
+  // packages separated by less than 0.5 utility point for either principal are
+  // materially indistinguishable rather than discarded. Keep Pareto 1-9 visible.
+  cad::Economy calibrated_like = economy;
+  calibrated_like.us_tariff_canada = 5.0;
+  calibrated_like.canada_retaliatory_tariff = 1.5;
+  const auto calibrated_analysis = cad::analyze_negotiation(calibrated_like, result);
+  assert(std::abs(calibrated_analysis.pareto_utility_tolerance - 0.5) < 1e-12);
+  assert(calibrated_analysis.pareto_frontier_size >= 9);
+  assert(calibrated_analysis.frontier.size() >= 9);
+  for (std::size_t i = 0; i < 9; ++i) {
+    assert(calibrated_analysis.frontier[i].id == "pareto-" + std::to_string(i + 1));
+    assert(calibrated_analysis.frontier[i].pareto_efficient);
+  }
+
   const auto negotiation_json = cad::negotiation_to_json(analysis);
   assert(negotiation_json.find("\"batna\"") != std::string::npos);
   assert(negotiation_json.find("\"reservation\"") != std::string::npos);
   assert(negotiation_json.find("\"paretoFrontierSize\"") != std::string::npos);
+  assert(negotiation_json.find("\"paretoUtilityTolerance\":0.500") != std::string::npos);
   assert(negotiation_json.find("\"canadaExportChange\"") != std::string::npos);
   assert(negotiation_json.find("\"usExportChange\"") != std::string::npos);
   assert(negotiation_json.find("\"usSectorCoverage\"") != std::string::npos);

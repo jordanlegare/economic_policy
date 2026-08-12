@@ -57,6 +57,7 @@ struct NegotiationAnalysis {
   int pareto_frontier_size = 0;
   int bargaining_grid_levels = 5;
   int sector_verification_draws = 0;
+  double pareto_utility_tolerance = 0.5;
   bool independent_us_trade_channel = false;
   bool trade_balance_is_objective = true;
   bool mandate_weights_fixed = false;
@@ -355,13 +356,28 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
     return a.evaluated.us_utility > b.evaluated.us_utility;
   });
 
+  // The displayed diplomatic frontier is epsilon-Pareto rather than an exact
+  // mathematical skyline. Model utilities are 0-100 composites whose decimal
+  // differences below half a point are not economically meaningful enough to
+  // erase distinct concession bundles. A package is therefore removed only if
+  // another feasible package improves BOTH principals by more than the stated
+  // tolerance. The tolerance is exposed in the API for auditability.
   std::vector<Candidate> frontier;
-  double best_us = -std::numeric_limits<double>::infinity();
-  for (const auto& candidate : feasible) {
-    if (candidate.evaluated.us_utility > best_us + 1e-9) {
-      frontier.push_back(candidate);
-      best_us = candidate.evaluated.us_utility;
+  const double pareto_eps = analysis.pareto_utility_tolerance;
+  std::size_t strictly_better_canada_end = 0;
+  double best_us_with_strictly_better_canada = -std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < feasible.size(); ++i) {
+    const double canada_cutoff = feasible[i].evaluated.canada_utility + pareto_eps;
+    while (strictly_better_canada_end < i
+        && feasible[strictly_better_canada_end].evaluated.canada_utility > canada_cutoff) {
+      best_us_with_strictly_better_canada = std::max(
+          best_us_with_strictly_better_canada,
+          feasible[strictly_better_canada_end].evaluated.us_utility);
+      ++strictly_better_canada_end;
     }
+    const bool epsilon_dominated = best_us_with_strictly_better_canada
+        > feasible[i].evaluated.us_utility + pareto_eps;
+    if (!epsilon_dominated) frontier.push_back(feasible[i]);
   }
   analysis.pareto_frontier_size = static_cast<int>(frontier.size());
 
@@ -405,6 +421,7 @@ inline std::string negotiation_to_json(const NegotiationAnalysis& analysis) {
   out << "{\"candidatesExamined\":" << analysis.candidates_examined
       << ",\"individuallyRationalCount\":" << analysis.individually_rational_count
       << ",\"paretoFrontierSize\":" << analysis.pareto_frontier_size
+      << ",\"paretoUtilityTolerance\":" << analysis.pareto_utility_tolerance
       << ",\"bargainingGridLevels\":" << analysis.bargaining_grid_levels
       << ",\"batna\":{\"canada\":" << analysis.canada_batna
       << ",\"us\":" << analysis.us_batna
