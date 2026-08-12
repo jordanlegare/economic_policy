@@ -29,7 +29,7 @@ SERIES = {
     "cpi_median": "INDINF_CPI_MEDIAN_Q",
     "policy_rate": "V39079",
     "usdcad": "FXUSDCAD",
-    "wti": "WTI",
+    "wti": "WGTS.WTI",
 }
 SAMPLE_START = "2001Q1"
 SAMPLE_END = "2019Q4"
