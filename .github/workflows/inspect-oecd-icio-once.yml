@@ -1,0 +1,24 @@
+name: Inspect OECD ICIO once
+
+on:
+  push:
+    branches: [agent/bilateral-trade-realism]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and inspect current OECD ICIO archive
+        run: |
+          set -euxo pipefail
+          curl --retry 4 --retry-delay 2 -L -o /tmp/icio.zip https://webfs-sti.oecd.org/files/STI-PIE/ICIO/2025/2016-2022_SML.zip
+          sha256sum /tmp/icio.zip
+          unzip -l /tmp/icio.zip | head -80
+          mkdir -p /tmp/icio
+          unzip -q /tmp/icio.zip -d /tmp/icio
+          find /tmp/icio -maxdepth 2 -type f -print
+          first=$(find /tmp/icio -type f -name '*.csv' | sort | head -1)
+          echo "FIRST_CSV=$first"
+          head -8 "$first"
+          grep -m 5 -E 'CAN|USA' "$first" || true
