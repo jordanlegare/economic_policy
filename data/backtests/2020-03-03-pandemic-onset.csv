@@ -1,0 +1,25 @@
+# Canada Policy Studio historical backtest fixture v1
+META,fixture_id,ca-2020-03-03-pandemic-onset
+META,decision_date,2020-03-03
+META,horizon_quarters,12
+INPUT,policy_rate,1.75,percent,2020-01-22,2020-01-22,boc_policy_2020_01_22,observed
+INPUT,inflation,2.4,percent_yoy,2020-01-31,2020-02-19,statcan_cpi_2020_01,observed
+INPUT,core_inflation,2.0,percent_yoy,2020-01-22,2020-01-22,boc_policy_2020_01_22,policy-derived
+INPUT,gdp_growth,0.4,percent_annualized,2019-12-31,2020-02-28,statcan_gdp_2019_q4,official-derived
+INPUT,unemployment,5.5,percent,2020-01-31,2020-02-07,statcan_lfs_2020_01,observed
+INPUT,wage_growth,4.24,percent_yoy,2020-01-31,2020-02-07,statcan_lfs_wages_2020_01,official-derived
+INPUT,us_tariff_canada,0.0,percent,2020-03-03,2020-03-03,backtest_scope,scope-control
+INPUT,canada_retaliatory_tariff,0.0,percent,2020-03-03,2020-03-03,backtest_scope,scope-control
+BENCHMARK,first_move_bp,-50,basis_points,2020-03-04,2020-03-04,boc_policy_2020_03_04,observed-policy
+OUTCOME,inflation,5.2,percent_yoy,2023-02-28,2023-03-21,statcan_cpi_2023_02,observed
+OUTCOME,unemployment,5.0,percent,2023-02-28,2023-03-10,statcan_lfs_2023_02,observed
+OUTCOME,gdp_growth,0.0,percent_quarterly,2022-12-31,2023-02-28,statcan_gdp_2022_q4,observed
+SOURCE,boc_policy_2020_01_22,Bank of Canada,Policy rate decision 2020-01-22,https://www.bankofcanada.ca/2020/01/fad-press-release-2020-01-22/
+SOURCE,statcan_cpi_2020_01,Statistics Canada,Consumer Price Index January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200219/dq200219a-eng.htm
+SOURCE,statcan_gdp_2019_q4,Statistics Canada,Gross domestic product fourth quarter 2019,https://www150.statcan.gc.ca/n1/daily-quotidien/200228/dq200228a-eng.htm
+SOURCE,statcan_lfs_2020_01,Statistics Canada,Labour Force Survey January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200207/dq200207a-eng.htm
+SOURCE,statcan_lfs_wages_2020_01,Statistics Canada,Average usual hours and wages January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200207/t011a-eng.htm
+SOURCE,boc_policy_2020_03_04,Bank of Canada,Policy rate decision 2020-03-04,https://www.bankofcanada.ca/2020/03/fad-press-release-2020-03-04/
+SOURCE,statcan_cpi_2023_02,Statistics Canada,Consumer Price Index February 2023,https://www150.statcan.gc.ca/n1/daily-quotidien/230321/dq230321a-eng.htm
+SOURCE,statcan_lfs_2023_02,Statistics Canada,Labour Force Survey February 2023,https://www150.statcan.gc.ca/n1/daily-quotidien/230310/dq230310a-eng.htm
+SOURCE,statcan_gdp_2022_q4,Statistics Canada,Gross domestic product fourth quarter 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/230228/dq230228a-eng.htm
