@@ -1,0 +1,13 @@
+component,baseline,unit,classification,scope,sensitivity_low,sensitivity_high,notes
+boc_inflation,3.8,loss_weight,assumed-model-design,BoC,3.04,4.56,"Penalty on squared deviation of inflation from the fixed 2% mandate target. The mandate is not varied; only this model-design penalty is sensitivity-tested."
+boc_unemployment,1.2,loss_weight,assumed-model-design,BoC,0.96,1.44,"Penalty on squared unemployment above the model's 5.8% reference threshold."
+boc_contraction,0.7,loss_weight,assumed-model-design,BoC,0.56,0.84,"Penalty on squared negative Canadian growth."
+boc_recession,0.018,loss_weight,assumed-model-design,BoC,0.0144,0.0216,"Penalty per percentage point of simulated recession frequency."
+federal_debt,0.32,loss_weight,assumed-model-design,Canada federal/household,0.256,0.384,"Penalty on squared debt-ratio deterioration from the submitted state."
+federal_contraction,0.7,loss_weight,assumed-model-design,Canada federal/household,0.56,0.84,"Penalty on squared negative Canadian growth."
+federal_unemployment,0.8,loss_weight,assumed-model-design,Canada federal/household,0.64,0.96,"Penalty on squared unemployment above 6%."
+federal_housing,0.012,loss_weight,assumed-model-design,Canada federal/household,0.0096,0.0144,"Penalty on squared housing-gap magnitude."
+us_exports,0.55,loss_weight,assumed-model-design,United States,0.44,0.66,"Penalty on squared negative U.S. export change."
+us_inflation,0.8,loss_weight,assumed-model-design,United States,0.64,0.96,"Penalty on squared modeled U.S. inflation pressure."
+us_growth,0.55,loss_weight,assumed-model-design,United States,0.44,0.66,"Penalty on squared U.S. growth below 1.8%."
+us_retaliation,0.25,loss_weight,assumed-model-design,United States,0.20,0.30,"Penalty on squared effective Canadian retaliatory-tariff exposure."
