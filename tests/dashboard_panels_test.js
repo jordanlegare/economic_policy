@@ -27,6 +27,24 @@ assert(html.includes('id="usTariff" type="range" min="0" max="60" step="1" value
 assert(html.includes('id="sectorCoverage" type="range" min="0" max="100" value="100"'),
   'normalized delegation sector seed must remain full coverage before app.js converts it to an actual tariff display');
 
+const incidenceTag = '<script src="/trade-incidence.js"></script>';
+assert.strictEqual(html.split(incidenceTag).length - 1, 1,
+  'trade incidence diagnostics must be loaded exactly once');
+const incidenceSource = fs.readFileSync('web/trade-incidence.js', 'utf8');
+new vm.Script(incidenceSource, {filename:'web/trade-incidence.js'});
+[
+  'usAppliedTariff', 'canadaAppliedTariff', 'usBuyerPassThrough',
+  'canadaBuyerPassThrough', 'canadaExporterAbsorption',
+  'usExporterAbsorption', 'usImporterAbsorption',
+  'canadaImporterAbsorption', 'canadaUpstreamCost', 'usUpstreamCost'
+].forEach(field => assert(incidenceSource.includes(field),
+  `trade incidence UI must render ${field}`));
+assert(incidenceSource.includes('Canada IO · StatCan empirical'));
+assert(incidenceSource.includes('U.S. IO · BEA artifact pending'));
+const cmakeSource = fs.readFileSync('CMakeLists.txt', 'utf8');
+assert(cmakeSource.includes('web/trade-incidence.js'),
+  'Windows standalone must embed the tariff-incidence diagnostics asset');
+
 const appSource = fs.readFileSync('web/app.js', 'utf8');
 const helperMatch = appSource.match(/const clampNumber=.*?const tariffToCoverage=.*?;/s);
 assert(helperMatch, 'delegation tariff conversion helpers must be present');
