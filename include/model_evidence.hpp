@@ -57,6 +57,15 @@ inline ModelEvidenceStatus model_evidence_status(
   return out;
 }
 
+// Backward-compatible status path for callers that have not yet loaded the
+// empirical registry. Structural and historical evidence remain available;
+// empirical fields stay explicitly unavailable rather than being fabricated.
+inline ModelEvidenceStatus model_evidence_status(
+    const StructuralParameterRegistry& registry,
+    const std::vector<BacktestResult>& backtests) {
+  return model_evidence_status(registry, EmpiricalCalibrationRegistry{}, backtests);
+}
+
 std::string model_evidence_status_to_json(const ModelEvidenceStatus& status);
 std::string historical_evidence_to_json(const std::vector<BacktestResult>& backtests);
 
