@@ -4,8 +4,17 @@ This directory contains public, distributable calibration metadata and derived s
 
 ## Files
 
-- `source_registry.csv` — authoritative/public source catalogue and refresh notes.
-- `current.snapshot.csv` — exact derived calibration snapshot loaded by the application.
+- `source_registry.csv` — authoritative/public source catalogue and model-design provenance references.
+- `current.snapshot.csv` — exact derived observed/sector calibration snapshot loaded by the application.
+- `structural_parameter_registry.csv` — V2 structural coefficient baselines, classifications, vintages, uncertainty bounds and sampling rules.
+
+## V2 structural registry
+
+The structural registry separates model assumptions from observed data. Each coefficient declares a baseline, unit, provenance kind, source ID, vintage, lower/upper sensitivity bounds, distribution and whether it is sampled by the robustness engine.
+
+The initial V2 ranges are deliberately labelled **sensitivity envelopes**, not empirical confidence intervals. `assumed` and provisional `calibrated` entries should be replaced or narrowed when reproducible empirical estimates become available. `mandate` entries such as the inflation target are fixed, and `derived` entries such as the paired inflation-expectations weight are not sampled independently.
+
+`StructuralParameters::uncertainty_scale` is a global multiplier around the declared registry widths. `0` disables structural uncertainty exactly. The reference value `0.10` uses the registry's stated `relative_sigma` values without rescaling.
 
 ## Reviewed HS-line input
 
@@ -32,4 +41,4 @@ The output contains sector trade elasticity and price pass-through estimates plu
 
 ## Trust rule
 
-The committed bootstrap is intentionally incomplete. `certifiedForEmpiricalUse` must remain false until the required official/estimated layers pass the runtime and CI calibration gates.
+The committed bootstrap is intentionally incomplete. `certifiedForEmpiricalUse` must remain false until the required official/estimated layers pass the runtime and CI calibration gates. Structural-registry completeness means the assumptions are auditable; it does **not** mean those assumptions are empirically identified.

@@ -1,4 +1,5 @@
 #include "calibration.hpp"
+#include "structural_calibration.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -55,8 +56,6 @@ int main() {
   assert(std::abs(calibrated.exports_to_us_share - 78.285) < 1e-9);
   assert(std::abs(calibrated.imports_from_us_share - 45.840) < 1e-9);
 
-  // Compression into max-rate + coverage must exactly preserve each sector's
-  // trade-weighted effective tariff rate used by the existing macro engine.
   assert(std::abs(calibrated.us_tariff_canada - 25.0) < 1e-9);
   assert(std::abs(calibrated.canada_retaliatory_tariff - 15.0) < 1e-9);
   for (std::size_t i = 0; i < snapshot.sectors.size(); ++i) {
@@ -68,8 +67,6 @@ int main() {
     assert(std::abs(reconstructed_ca - snapshot.sectors[i].canada_effective_tariff) < 1e-9);
   }
 
-  // The future legal measure is recorded for diplomats but does not directly
-  // alter today's tariff inputs; only reviewed sector-line calibration does.
   assert(snapshot.measures.size() == 1);
   assert(snapshot.measures.front().status == "future");
   assert(std::abs(calibrated.us_tariff_canada - 25.0) < 1e-9);
@@ -87,6 +84,41 @@ int main() {
   assert(!partial.elasticities_estimated);
   assert(partial.completeness < 95.0);
   assert(partial.grade != "empirical-calibrated");
+
+  // V2 structural assumptions must be auditable independently of observed-data
+  // completeness. Every coefficient has a source classification, vintage and
+  // bounded uncertainty rule; mandate/derived parameters are not sampled.
+  const auto registry = cad::load_structural_parameter_registry(
+      "data/calibration/structural_parameter_registry.csv");
+  assert(registry.loaded);
+  assert(registry.registry_id == "v2-structural-2026-08-11");
+  assert(cad::structural_parameter_registry_complete(registry));
+  assert(registry.entries.size() == cad::required_structural_parameter_names().size());
+  assert(cad::sampled_structural_parameter_count(registry) > 0);
+
+  const auto* target = registry.find("inflation_target");
+  assert(target && target->kind == "mandate" && !target->sampled);
+  assert(std::abs(target->lower_bound - 2.0) < 1e-12);
+  assert(std::abs(target->upper_bound - 2.0) < 1e-12);
+  const auto* expectations = registry.find("inflation_expectations_weight");
+  assert(expectations && expectations->kind == "derived" && !expectations->sampled);
+  const auto* pass_through = registry.find("import_price_pass_through");
+  assert(pass_through && pass_through->sampled);
+  assert(pass_through->lower_bound < pass_through->baseline);
+  assert(pass_through->upper_bound > pass_through->baseline);
+
+  const auto structural = cad::apply_structural_parameter_registry(
+      cad::StructuralParameters{}, registry);
+  assert(structural.calibration_id == registry.registry_id);
+  assert(structural.calibration_vintage == registry.as_of);
+  assert(structural.uncertainty_registry.loaded);
+  assert(std::abs(structural.import_price_pass_through - pass_through->baseline) < 1e-12);
+
+  const auto registry_json = cad::structural_parameter_registry_to_json(registry);
+  assert(registry_json.find("\"complete\":true") != std::string::npos);
+  assert(registry_json.find("\"kind\":\"mandate\"") != std::string::npos);
+  assert(registry_json.find("\"distribution\":\"derived\"") != std::string::npos);
+  assert(registry_json.find("\"sourceId\":\"internal_model_design_v2\"") != std::string::npos);
 
   std::remove(path.c_str());
   return 0;
