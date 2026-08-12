@@ -7,9 +7,16 @@ namespace cad {
 
 std::string model_evidence_status_to_json(const ModelEvidenceStatus& s) {
   std::ostringstream out;
-  out << "{\"structuralRegistryLoaded\":" << (s.structural_registry_loaded ? "true" : "false")
+  out << std::fixed << std::setprecision(6)
+      << "{\"structuralRegistryLoaded\":" << (s.structural_registry_loaded ? "true" : "false")
       << ",\"structuralRegistryComplete\":" << (s.structural_registry_complete ? "true" : "false")
       << ",\"sampledParameterCount\":" << s.sampled_parameter_count
+      << ",\"empiricalRegistryLoaded\":" << (s.empirical_registry_loaded ? "true" : "false")
+      << ",\"empiricalRegistryComplete\":" << (s.empirical_registry_complete ? "true" : "false")
+      << ",\"statisticallyAnchoredParameterCount\":" << s.statistically_anchored_parameter_count
+      << ",\"directEmpiricalMappingCount\":" << s.direct_empirical_mapping_count
+      << ",\"statisticallyAnchoredCoverage\":" << s.statistically_anchored_coverage
+      << ",\"directEmpiricalMappingCoverage\":" << s.direct_empirical_mapping_coverage
       << ",\"historicalFixtureCount\":" << s.historical_fixture_count
       << ",\"validHistoricalFixtureCount\":" << s.valid_historical_fixture_count
       << ",\"historicalAggregatePermitted\":"
