@@ -1,0 +1,25 @@
+# Canada Policy Studio historical backtest fixture v1
+META,fixture_id,ca-2015-01-20-oil-shock
+META,decision_date,2015-01-20
+META,horizon_quarters,12
+INPUT,policy_rate,1.0,percent,2014-12-03,2014-12-03,boc_policy_2014_12_03,observed
+INPUT,inflation,2.0,percent_yoy,2014-11-30,2014-12-19,statcan_cpi_2014_11,observed
+INPUT,core_inflation,2.1,percent_yoy,2014-11-30,2014-12-19,statcan_cpi_2014_11,observed
+INPUT,gdp_growth,2.8,percent_annualized,2014-09-30,2014-11-28,statcan_gdp_2014_q3,official-derived
+INPUT,unemployment,6.6,percent,2014-12-31,2015-01-09,statcan_lfs_2014_12,observed
+INPUT,wage_growth,1.88,percent_yoy,2014-12-31,2015-01-09,statcan_lfs_wages_2014_12,official-derived
+INPUT,us_tariff_canada,0.0,percent,2015-01-20,2015-01-20,backtest_scope,scope-control
+INPUT,canada_retaliatory_tariff,0.0,percent,2015-01-20,2015-01-20,backtest_scope,scope-control
+BENCHMARK,first_move_bp,-25,basis_points,2015-01-21,2015-01-21,boc_policy_2015_01_21,observed-policy
+OUTCOME,inflation,1.7,percent_yoy,2018-01-31,2018-02-23,statcan_cpi_2018_01,observed
+OUTCOME,unemployment,5.9,percent,2018-01-31,2018-02-09,statcan_lfs_2018_01,observed
+OUTCOME,gdp_growth,1.7,percent_annualized,2017-12-31,2018-03-02,statcan_gdp_2017_q4,observed
+SOURCE,boc_policy_2014_12_03,Bank of Canada,Policy rate decision 2014-12-03,https://www.bankofcanada.ca/2014/12/fad-press-release-2014-12-03/
+SOURCE,statcan_cpi_2014_11,Statistics Canada,Consumer Price Index November 2014,https://www150.statcan.gc.ca/n1/daily-quotidien/141219/dq141219a-eng.htm
+SOURCE,statcan_gdp_2014_q3,Statistics Canada,Canadian economic accounts third quarter 2014,https://www150.statcan.gc.ca/n1/daily-quotidien/141128/dq141128a-eng.htm
+SOURCE,statcan_lfs_2014_12,Statistics Canada,Labour Force Survey December 2014,https://www150.statcan.gc.ca/n1/daily-quotidien/150109/dq150109a-eng.htm
+SOURCE,statcan_lfs_wages_2014_12,Statistics Canada,Average usual hours and wages December 2014,https://www150.statcan.gc.ca/n1/pub/71-001-x/2014012/t017-eng.htm
+SOURCE,boc_policy_2015_01_21,Bank of Canada,Policy rate decision 2015-01-21,https://www.bankofcanada.ca/2015/01/fad-press-release-2015-01-21/
+SOURCE,statcan_cpi_2018_01,Statistics Canada,Consumer Price Index January 2018,https://www150.statcan.gc.ca/n1/daily-quotidien/180223/dq180223a-eng.htm
+SOURCE,statcan_lfs_2018_01,Statistics Canada,Labour Force Survey January 2018,https://www150.statcan.gc.ca/n1/daily-quotidien/180209/dq180209a-eng.htm
+SOURCE,statcan_gdp_2017_q4,Statistics Canada,Gross domestic product fourth quarter 2017,https://www150.statcan.gc.ca/n1/daily-quotidien/180302/dq180302a-eng.htm
