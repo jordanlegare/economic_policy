@@ -11,6 +11,7 @@
   let comparisonCacheKey = '';
   let comparisonTimer = null;
   let comparisonTask = Promise.resolve();
+  let initialCalibrationApplied = false;
 
   const comparisonDelayMs = Number(window.__EVALUATION_COMPARISON_DELAY_MS ?? 900);
 
@@ -70,6 +71,35 @@
     if (status) status.textContent = live ? 'Live official feeds' : 'Documented calibrated baseline';
     if (sync) sync.textContent = live ? 'Official feeds synchronized' : 'Calibration snapshot active';
     if (asOf && baseline.asOf) asOf.textContent = 'As of ' + new Date(baseline.asOf).toLocaleString();
+  }
+
+  async function applyInitialCalibrationState() {
+    if (initialCalibrationApplied) return;
+    const response = await fetch('/api/calibration', {cache: 'no-store'});
+    if (!response.ok) throw new Error(`Calibration state failed with HTTP ${response.status}`);
+    const calibration = await response.json();
+    const state = calibration?.effectiveState;
+    if (!state) throw new Error('Calibration state is missing effectiveState');
+
+    if (Number.isFinite(+state.usTariff)) tariff.value = +state.usTariff;
+    const retaliation = $('#retaliatoryTariff');
+    if (retaliation && Number.isFinite(+state.retaliatoryTariff)) {
+      retaliation.value = +state.retaliatoryTariff;
+      const readout = $('#retaliatoryTariffValue');
+      if (readout) readout.textContent = retaliation.value + '%';
+    }
+    if (Array.isArray(state.usSectorCoverage) && state.usSectorCoverage.length === positions.us.length)
+      positions.us.splice(0, positions.us.length, ...state.usSectorCoverage.map(Number));
+    if (Array.isArray(state.canadaSectorCoverage) && state.canadaSectorCoverage.length === positions.canada.length)
+      positions.canada.splice(0, positions.canada.length, ...state.canadaSectorCoverage.map(Number));
+
+    updateTariff();
+    updatePosition();
+    syncPartyView();
+    if (!$('#partyView').hidden) renderPartySectors();
+    negotiationAnchor = displayedCoverage();
+    lastAutoCoverage = null;
+    initialCalibrationApplied = true;
   }
 
   function publishVerifiedRecommendation() {
@@ -156,12 +186,13 @@
     const detail = loading?.querySelector?.('small');
     const label = loading?.querySelector?.('span');
     const started = Date.now();
-    if (label) label.textContent = 'RUNNING VERIFIED SEARCH';
-    if (detail) detail.textContent = 'Searching 14 strategies, sector Pareto schedules and robust packages';
+    const searchLabel = 'Searching 13 expert + 288 generated policy mixes, sector Pareto schedules and robust packages';
+    if (label) label.textContent = 'RUNNING VERIFIED GLOBAL SEARCH';
+    if (detail) detail.textContent = searchLabel;
     const timer = setInterval(() => {
       if (!detail) return;
       const seconds = Math.floor((Date.now() - started) / 1000);
-      detail.textContent = `Searching 14 strategies, sector Pareto schedules and robust packages · ${seconds}s elapsed`;
+      detail.textContent = `${searchLabel} · ${seconds}s elapsed`;
     }, 1000);
     return () => clearInterval(timer);
   }
@@ -189,6 +220,10 @@
 
     try {
       await recoverBaselineIfNeeded();
+      // app.js's legacy negotiation room starts at illustrative 50%/5% tariffs.
+      // Before the first real solve, replace that display state with the exact
+      // certified tariff/sector baseline the user is actually asking to optimize.
+      await applyInitialCalibrationState();
       const anchor = evaluationAnchor();
       const preferences = {
         canadaPriority: +$('#canadaPriority').value,
@@ -200,10 +235,9 @@
       anchor.us.forEach((value, i) => preferences['usSector' + i] = value);
       anchor.canada.forEach((value, i) => preferences['canadaSector' + i] = value);
 
-      // Critical startup rule: await only the real policy evaluation. The old
-      // controller blocked the full-screen overlay on a second complete optimizer
-      // run for the no-tariff reference. That reference is useful for one headline
-      // delta but must never gate the whole application.
+      // Critical startup rule: await only the real policy evaluation. The
+      // no-tariff reference is useful for one headline delta but must never gate
+      // the initial best-win-win result.
       const evaluated = await makeRequest(
         preferences, +tariff.value, preferences.retaliatoryTariff, false);
 
