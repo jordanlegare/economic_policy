@@ -42,11 +42,23 @@ ctest --test-dir build --output-on-failure
 - **Trade-balance reporting:** the engine never manufactures exports or imports to force a zero bilateral deficit. Balance, gap and progress are accounting diagnostics only.
 - **Internet baseline:** `GET /api/baseline` refreshes available Bank of Canada Valet observations at page load, exposes source metadata, and reports whether a documented fallback baseline is being used.
 
-## Model robustness roadmap
+## V2 model-evidence APIs
 
-The next research phase explicitly separates observed state, structural parameters, policy controls, negotiation preferences and calibration provenance. It adds parameter uncertainty, vintage-based historical backtesting and welfare-weight sensitivity so recommendation stability can be reported rather than inferred from Monte Carlo precision alone.
+V2 keeps structural uncertainty, historical diagnostics and normative preference sensitivity separate so they cannot be mistaken for one another or for ordinary Monte Carlo precision.
 
-See [`docs/MODEL_ROBUSTNESS_V2.md`](docs/MODEL_ROBUSTNESS_V2.md) for the implementation contract and sequencing.
+- `GET /api/v2/structural-registry` — structural coefficient provenance, sensitivity bounds, distributions and sampling status.
+- `GET /api/v2/backtests` — the no-look-ahead 2015, 2020 and 2022 historical episodes plus cross-episode diagnostics.
+- `GET /api/v2/evidence-status` — compact readiness/status summary for the structural registry and historical suite.
+- `POST /api/v2/robustness` — full nested structural decision robustness. The optional `parameterDraws` field is clamped to 1–24; the interactive default is 6. The same economy JSON fields accepted by `/api/evaluate` may be supplied.
+- `POST /api/v2/welfare` — the full 3×3 delegation-preference/risk grid, rerunning the production policy and sector optimization for every profile.
+
+If a V2 POST body is empty, the server analyzes the most recently evaluated calibrated economy (or the calibrated default state before the first evaluation). The Windows standalone executable embeds the structural registry and all shipped backtest fixtures, so these endpoints remain available when launched from an empty directory.
+
+## Model robustness V2
+
+V2 now separates observed state, structural parameters, policy controls, negotiation preferences and calibration provenance. It includes provenance-bounded structural uncertainty, full nested policy/sector re-optimization, strict historical-vintage backtesting, expanded historical state coverage and welfare-preference sensitivity.
+
+See [`docs/MODEL_ROBUSTNESS_V2.md`](docs/MODEL_ROBUSTNESS_V2.md) for the implementation contract and scientific interpretation.
 
 ## Responsible decision use
 
