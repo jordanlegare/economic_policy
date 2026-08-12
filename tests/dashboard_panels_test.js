@@ -159,7 +159,10 @@ assert(tariffUpdates > 0 && positionUpdates > 0 && partySyncs > 0,
     'first automatic solve must receive 100% U.S. sector coverage across all 20 sectors');
   assert(state.canadaSectorCoverage.every(value => value === 100),
     'first automatic solve must receive 100% Canadian sector coverage across all 20 sectors');
-  assert.strictEqual(window.fetch, baseFetch,
-    'calibration interception must be one-shot and restore the real fetch implementation');
+  const restored = await window.fetch('/api/calibration');
+  const restoredCalibration = await restored.json();
+  assert.strictEqual(restoredCalibration.effectiveState.usTariff, 5,
+    'startup calibration override must be one-shot and restore the real calibration fetch afterward');
+  assert(restoredCalibration.effectiveState.usSectorCoverage.every(value => value === 0));
   console.log('dashboard panels test passed');
 })().catch(error => { console.error(error); process.exit(1); });
