@@ -1,0 +1,16 @@
+name: Quarterly source discovery
+
+on:
+  push:
+    branches: [agent/v2-quarterly-estimation]
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover Bank of Canada series
+        run: python3 tools/discover_quarterly_series.py
