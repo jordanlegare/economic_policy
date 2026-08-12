@@ -1,16 +1,33 @@
-name: Quarterly source discovery
+name: Quarterly empirical refresh
 
 on:
   push:
     branches: [agent/v2-quarterly-estimation]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  discover:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Discover Bank of Canada series
-        run: python3 tools/discover_quarterly_series.py
+        with:
+          ref: agent/v2-quarterly-estimation
+      - name: Refresh public quarterly panel and estimates
+        run: python3 tools/refresh_quarterly_calibration.py --refresh
+      - name: Freeze generated calibration artifacts
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/calibration/quarterly_estimation_panel.csv \
+                  data/calibration/quarterly_estimation_manifest.csv \
+                  data/calibration/quarterly_structural_estimates.csv \
+                  data/calibration/quarterly_residual_covariance.csv
+          if git diff --cached --quiet; then
+            echo 'No calibration changes to commit'
+          else
+            git commit -m 'Freeze quarterly empirical calibration panel'
+            git push origin HEAD:agent/v2-quarterly-estimation
+          fi
