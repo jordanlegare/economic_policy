@@ -1,10 +1,6 @@
-name: StatCan IO calibration extraction
+name: Refresh StatCan IO calibration
 
 on:
-  pull_request:
-    paths:
-      - tools/build_statcan_io_matrix.py
-      - .github/workflows/statcan-io-extract.yml
   workflow_dispatch:
 
 jobs:
@@ -46,30 +42,6 @@ jobs:
           test -s "$ZIP"
           unzip -t "$ZIP" >/dev/null
           sha256sum "$ZIP"
-      - name: Inspect government industry labels
-        run: |
-          python3 - <<'PY'
-          import csv, io, zipfile
-          z = zipfile.ZipFile('/tmp/36100001-eng.zip')
-          member = max((i for i in z.infolist() if i.filename.endswith('.csv') and 'Metadata' not in i.filename), key=lambda i: i.file_size)
-          with z.open(member) as raw:
-              rows = csv.DictReader(io.TextIOWrapper(raw, encoding='utf-8-sig'))
-              labels = set()
-              for row in rows:
-                  if row.get('REF_DATE') != '2024' or row.get('GEO','').lower() != 'canada':
-                      continue
-                  if 'basic' not in row.get('Valuation','').lower():
-                      continue
-                  if not row.get('Use','').lower().startswith('total use'):
-                      continue
-                  label = row.get('Supply','')
-                  lower = label.lower()
-                  if any(word in lower for word in ('government', 'administration', 'defence', 'municipal', 'aboriginal')):
-                      labels.add(label)
-              print('2024 basic-price total-use government candidates:')
-              for label in sorted(labels):
-                  print('  ', label)
-          PY
       - name: Build 2024 StatCan IO matrix
         run: |
           python3 tools/build_statcan_io_matrix.py \
@@ -84,6 +56,8 @@ jobs:
           from pathlib import Path
           path = Path('artifacts/statcan-io/statcan_io_2024_provenance.json')
           data = json.loads(path.read_text())
+          data['downloadUrl'] = 'https://www150.statcan.gc.ca/n1/tbl/csv/36100001-eng.zip'
+          data['webDataService'] = 'https://www150.statcan.gc.ca/t1/wds/rest/getFullTableDownloadCSV/36100001/en'
           data['retrievalTransport'] = os.environ['STATCAN_IO_TRANSPORT']
           data['rawMirror'] = (
               'https://git.nomics.world/dbnomics-source-data/statcan-source-data'
@@ -92,11 +66,24 @@ jobs:
           path.write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
           print(json.dumps({
               'transport': data['retrievalTransport'],
+              'archiveSha256': data['downloadSha256'],
               'mappedTransactionRows': data['mappedTransactionRows'],
+              'mappedGrossOutputRows': data['mappedGrossOutputRows'],
               'maximumRowSum': data['maximumRowSum'],
               'minimumRowSum': data['minimumRowSum'],
           }, sort_keys=True))
           PY
+      - name: Compare with frozen production matrix
+        shell: bash
+        run: |
+          if cmp -s artifacts/statcan-io/statcan_io_2024_matrix.csv data/calibration/statcan_io_2024_matrix.csv \
+             && cmp -s artifacts/statcan-io/trade_io_2024.hpp include/generated/trade_io_2024.hpp; then
+            echo "Frozen production matrix matches a fresh extraction."
+          else
+            echo "Fresh StatCan extraction differs from the frozen production matrix. Review before updating production."
+            diff -u data/calibration/statcan_io_2024_matrix.csv artifacts/statcan-io/statcan_io_2024_matrix.csv || true
+            diff -u include/generated/trade_io_2024.hpp artifacts/statcan-io/trade_io_2024.hpp || true
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: statcan-io-2024-calibration
