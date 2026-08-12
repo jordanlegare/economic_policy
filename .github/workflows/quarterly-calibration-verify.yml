@@ -1,0 +1,14 @@
+name: Quarterly calibration integrity
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify-quarterly-calibration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify frozen quarterly empirical calibration
+        run: python3 tools/refresh_sep_calibration.py --verify
