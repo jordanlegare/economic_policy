@@ -21,7 +21,7 @@ function(cad_enable_warnings target)
   endif()
 endfunction()
 
-add_library(policy_engine src/policy_engine.cpp src/robustness.cpp)
+add_library(policy_engine src/policy_engine.cpp src/decision_robustness.cpp)
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
 
