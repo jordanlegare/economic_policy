@@ -24,6 +24,7 @@ jobs:
         run: |
           node tests/evaluation_controller_test.js
           node tests/model_evidence_ui_test.js
+          node tests/dashboard_panels_test.js
       - name: Verify optimized Release build and active tests
         env:
           CXXFLAGS: -Werror
