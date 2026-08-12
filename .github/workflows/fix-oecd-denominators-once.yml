@@ -1,0 +1,22 @@
+name: Fix OECD denominators once
+on:
+  push:
+    branches: [agent/finish-model-realism]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: github.event.head_commit.message != 'Fix OECD country-specific denominators'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/finish-model-realism
+      - run: python3 tools/fix_oecd_denominators_once.py
+      - run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/build_oecd_bilateral_io.py
+          git commit -m 'Fix OECD country-specific denominators'
+          git push origin HEAD:agent/finish-model-realism
