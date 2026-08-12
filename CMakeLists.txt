@@ -54,6 +54,7 @@ if(WIN32)
     web/principal-briefing.js
     data/calibration/current.snapshot.csv
     data/calibration/structural_parameter_registry.csv
+    data/calibration/state_measurement_registry.csv
     data/backtests/2015-01-20-oil-shock.csv
     data/backtests/2020-03-03-pandemic-onset.csv
     data/backtests/2022-07-12-inflation-tightening.csv
@@ -125,6 +126,8 @@ set_tests_properties(historical_backtest PROPERTIES WORKING_DIRECTORY ${CMAKE_SO
 cad_add_test(welfare_sensitivity_tests tests/welfare_sensitivity_test.cpp welfare_sensitivity)
 cad_add_test(model_evidence_tests tests/model_evidence_test.cpp model_evidence)
 set_tests_properties(model_evidence PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+cad_add_test(state_measurement_tests tests/state_measurement_test.cpp state_measurement_contract)
+set_tests_properties(state_measurement_contract PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
