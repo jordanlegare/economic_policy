@@ -8,12 +8,40 @@
 
 namespace cad {
 
+struct StructuralParameterProvenance {
+  std::string name;
+  double baseline = 0.0;
+  std::string unit;
+  std::string kind;
+  std::string source_id;
+  std::string vintage;
+  double lower_bound = 0.0;
+  double upper_bound = 0.0;
+  std::string distribution = "fixed";
+  double relative_sigma = 0.0;
+  bool sampled = false;
+  std::string notes;
+};
+
+struct StructuralParameterRegistry {
+  std::string registry_id = "none";
+  std::string as_of;
+  bool loaded = false;
+  std::vector<StructuralParameterProvenance> entries;
+
+  const StructuralParameterProvenance* find(const std::string& name) const {
+    for (const auto& entry : entries) if (entry.name == name) return &entry;
+    return nullptr;
+  }
+};
+
 // Structural coefficients are separated from the observed economic state so
 // calibration assumptions can be versioned, stress-tested and sampled without
 // pretending that Monte Carlo shock precision identifies the coefficients.
 struct StructuralParameters {
   std::string calibration_id = "baseline-v1";
   std::string calibration_vintage = "illustrative";
+  StructuralParameterRegistry uncertainty_registry;
 
   double neutral_rate = 2.5;
   double inflation_target = 2.0;
@@ -48,33 +76,6 @@ struct StructuralParameters {
   // Global multiplier for the declared per-parameter uncertainty widths.
   // 0 disables structural uncertainty; 0.10 is the reference V2 scale.
   double uncertainty_scale = 0.10;
-};
-
-struct StructuralParameterProvenance {
-  std::string name;
-  double baseline = 0.0;
-  std::string unit;
-  std::string kind;
-  std::string source_id;
-  std::string vintage;
-  double lower_bound = 0.0;
-  double upper_bound = 0.0;
-  std::string distribution = "fixed";
-  double relative_sigma = 0.0;
-  bool sampled = false;
-  std::string notes;
-};
-
-struct StructuralParameterRegistry {
-  std::string registry_id = "none";
-  std::string as_of;
-  bool loaded = false;
-  std::vector<StructuralParameterProvenance> entries;
-
-  const StructuralParameterProvenance* find(const std::string& name) const {
-    for (const auto& entry : entries) if (entry.name == name) return &entry;
-    return nullptr;
-  }
 };
 
 struct Economy {
@@ -189,9 +190,10 @@ class PolicyEngine {
   explicit PolicyEngine(std::uint64_t seed = 20260810,
                         StructuralParameters parameters = {},
                         StructuralParameterRegistry parameter_registry = {})
-      : seed_{seed},
-        parameters_{std::move(parameters)},
-        parameter_registry_{std::move(parameter_registry)} {}
+      : seed_{seed}, parameters_{std::move(parameters)} {
+    if (parameter_registry.loaded)
+      parameters_.uncertainty_registry = std::move(parameter_registry);
+  }
   Result evaluate(const Economy& economy) const;
   // V2 robustness evaluates the verified V1 policy/sector packages under an
   // outer structural-parameter ensemble using common random numbers. Sector
@@ -199,7 +201,9 @@ class PolicyEngine {
   // summary reports this limitation explicitly.
   Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
   const StructuralParameters& parameters() const { return parameters_; }
-  const StructuralParameterRegistry& parameter_registry() const { return parameter_registry_; }
+  const StructuralParameterRegistry& parameter_registry() const {
+    return parameters_.uncertainty_registry;
+  }
 
  private:
   struct CommonSeed {
@@ -211,7 +215,6 @@ class PolicyEngine {
 
   CommonSeed seed_;
   StructuralParameters parameters_;
-  StructuralParameterRegistry parameter_registry_;
 };
 
 std::string to_json(const Result& result);
