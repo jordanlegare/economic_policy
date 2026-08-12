@@ -35,9 +35,6 @@ struct StructuralParameterRegistry {
   }
 };
 
-// Structural coefficients are separated from the observed economic state so
-// calibration assumptions can be versioned, stress-tested and sampled without
-// pretending that Monte Carlo shock precision identifies the coefficients.
 struct StructuralParameters {
   std::string calibration_id = "baseline-v1";
   std::string calibration_vintage = "illustrative";
@@ -136,7 +133,9 @@ struct Scenario {
 struct RobustnessSummary {
   int parameter_draws = 0;
   int recommendation_wins = 0;
+  int strategy_family_wins = 0;
   double recommendation_win_rate = 0.0;
+  double strategy_family_win_rate = 0.0;
   double score_mean = 0.0;
   double score_p10 = 0.0;
   double score_p90 = 0.0;
@@ -149,13 +148,15 @@ struct RobustnessSummary {
   bool structural_parameters_active = false;
   bool common_random_numbers = false;
   bool sector_packages_reoptimized = false;
+  bool policy_controls_reoptimized = false;
   bool parameter_bounds_active = false;
   bool parameter_provenance_complete = false;
 
-  // Nested sector-robustness audit metrics. The deterministic Pareto frontiers
-  // are cached once per policy because structural macro parameters do not enter
-  // the sector screen; every structural draw still re-simulates and re-selects
-  // the strongest frontier package under that calibration.
+  int policy_control_candidates_per_draw = 0;
+  std::uint64_t policy_control_candidates_examined = 0;
+  std::uint64_t policy_control_changes = 0;
+  double reference_policy_control_retention_rate = 0.0;
+
   int sector_frontiers_built = 0;
   std::uint64_t nested_sector_optimizations = 0;
   std::uint64_t nested_sector_candidates_examined = 0;
@@ -206,9 +207,9 @@ class PolicyEngine {
       parameters_.uncertainty_registry = std::move(parameter_registry);
   }
   Result evaluate(const Economy& economy) const;
-  // V2 robustness samples structural calibrations, then re-optimizes the
-  // verified 20-sector negotiation package for every policy strategy inside
-  // each draw using the same Pareto screen and stochastic verification design.
+  // Full V2 decision robustness samples structural calibrations, re-runs the
+  // complete generated policy-control search, then re-optimizes the 20-sector
+  // negotiation package before stochastic verification inside every draw.
   Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
   const StructuralParameters& parameters() const { return parameters_; }
   const StructuralParameterRegistry& parameter_registry() const {

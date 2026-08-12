@@ -12,6 +12,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cad {
@@ -20,9 +21,10 @@ namespace {
 double clamp(double x, double lo, double hi) { return std::max(lo, std::min(hi, x)); }
 double sq(double x) { return x * x; }
 
-constexpr int kRobustBaseDraws = 700;
-constexpr int kRobustVerificationDraws = 2800;
-constexpr std::size_t kRobustSectorFinalists = 8;
+constexpr int kBaseDraws = 700;
+constexpr int kVerificationDraws = 2800;
+constexpr int kPolicyControlCandidates = 288;
+constexpr std::size_t kSectorFinalists = 8;
 
 struct SectorProfile {
   const char* code;
@@ -33,10 +35,6 @@ struct SectorProfile {
   double cyclical;
 };
 
-// This is the same production sector screen used by PolicyEngine::evaluate().
-// Structural macro parameters do not enter this deterministic Pareto screen;
-// they enter the stochastic finalist ranking below. That makes the frontier
-// safe to cache once per policy without changing the nested optimization.
 constexpr std::array<SectorProfile, 20> kSectorProfiles{{
   {"11","Agriculture, forestry, fishing & hunting",.82,.42,.72,.65},
   {"21","Mining, quarrying, oil & gas",.88,.18,.32,.75},
@@ -129,6 +127,38 @@ SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size
       + us_jobs_weight * out.impact.us_jobs
       - price_weight * out.impact.us_prices);
   return out;
+}
+
+void set_sector_package(Scenario& policy, const Economy& e,
+                        const std::array<double, 20>& us_coverage,
+                        const std::array<double, 20>& canada_coverage) {
+  policy.applied_us_sector_coverage = us_coverage;
+  policy.applied_canada_sector_coverage = canada_coverage;
+  policy.sectors.clear();
+  policy.sectors.reserve(kSectorProfiles.size());
+  for (std::size_t sector = 0; sector < kSectorProfiles.size(); ++sector) {
+    policy.sectors.push_back(sector_utility(
+        e, policy, sector, us_coverage[sector], canada_coverage[sector]).impact);
+  }
+}
+
+bool same_package(const Scenario& a, const Scenario& b) {
+  for (std::size_t i = 0; i < a.applied_us_sector_coverage.size(); ++i) {
+    if (std::abs(a.applied_us_sector_coverage[i]
+        - b.applied_us_sector_coverage[i]) > 1e-9) return false;
+    if (std::abs(a.applied_canada_sector_coverage[i]
+        - b.applied_canada_sector_coverage[i]) > 1e-9) return false;
+  }
+  return true;
+}
+
+bool same_policy_controls(const Scenario& a, const Scenario& b) {
+  return std::abs(a.first_move_bp - b.first_move_bp) < 1e-9
+      && std::abs(a.fiscal_impulse - b.fiscal_impulse) < 1e-9
+      && std::abs(a.productive_share - b.productive_share) < 1e-9
+      && std::abs(a.negotiated_relief - b.negotiated_relief) < 1e-9
+      && std::abs(a.targeted_relief - b.targeted_relief) < 1e-9
+      && std::abs(a.diversification - b.diversification) < 1e-9;
 }
 
 struct CoverageCandidate {
@@ -234,10 +264,8 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
   std::vector<CoverageCandidate> win_win;
 
   for (auto& candidate : frontier) {
-    candidate.canada_score = normalize_utility(
-        candidate.canada_raw, ca_global_min, ca_global_max);
-    candidate.us_score = normalize_utility(
-        candidate.us_raw, us_global_min, us_global_max);
+    candidate.canada_score = normalize_utility(candidate.canada_raw, ca_global_min, ca_global_max);
+    candidate.us_score = normalize_utility(candidate.us_raw, us_global_min, us_global_max);
     if (candidate.canada_score + 1e-9 < search.baseline_canada_score
         || candidate.us_score + 1e-9 < search.baseline_us_score) continue;
     const double nash = std::exp((ca_weight * std::log(std::max(.01, candidate.canada_score))
@@ -266,32 +294,9 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
       [](const CoverageCandidate& a, const CoverageCandidate& b) {
         return a.objective > b.objective;
       });
-  const std::size_t keep = std::min<std::size_t>(kRobustSectorFinalists, win_win.size());
+  const std::size_t keep = std::min<std::size_t>(kSectorFinalists, win_win.size());
   search.finalists.assign(win_win.begin(), win_win.begin() + keep);
   return search;
-}
-
-void set_sector_package(Scenario& policy, const Economy& e,
-                        const std::array<double, 20>& us_coverage,
-                        const std::array<double, 20>& canada_coverage) {
-  policy.applied_us_sector_coverage = us_coverage;
-  policy.applied_canada_sector_coverage = canada_coverage;
-  policy.sectors.clear();
-  policy.sectors.reserve(kSectorProfiles.size());
-  for (std::size_t sector = 0; sector < kSectorProfiles.size(); ++sector) {
-    policy.sectors.push_back(sector_utility(
-        e, policy, sector, us_coverage[sector], canada_coverage[sector]).impact);
-  }
-}
-
-bool same_package(const Scenario& a, const Scenario& b) {
-  for (std::size_t i = 0; i < a.applied_us_sector_coverage.size(); ++i) {
-    if (std::abs(a.applied_us_sector_coverage[i]
-        - b.applied_us_sector_coverage[i]) > 1e-9) return false;
-    if (std::abs(a.applied_canada_sector_coverage[i]
-        - b.applied_canada_sector_coverage[i]) > 1e-9) return false;
-  }
-  return true;
 }
 
 void directional_coverage(const Economy& e, double& us_barrier_coverage,
@@ -568,24 +573,22 @@ void rank_parameterized_scenario(Scenario& s, const Economy& e) {
 
 struct NestedSectorSelection {
   Scenario scenario;
-  bool package_changed = false;
   int finalists_resimulated = 0;
 };
 
 NestedSectorSelection reoptimize_sector_package(
-    const Economy& economy, const Scenario& reference_policy,
-    const SectorSearch& search, const StructuralParameters& parameters,
-    std::uint64_t common_macro_seed) {
+    const Economy& economy, const Scenario& policy, const SectorSearch& search,
+    const StructuralParameters& parameters, std::uint64_t common_macro_seed) {
   Scenario selected_policy;
   bool have_selected = false;
   double selected_rank = -std::numeric_limits<double>::infinity();
   int finalists_resimulated = 0;
 
   for (const auto& coverage : search.finalists) {
-    Scenario candidate = reference_policy;
+    Scenario candidate = policy;
     set_sector_package(candidate, economy, coverage.us_coverage, coverage.canada_coverage);
     Scenario trial = simulate_parameterized(
-        economy, candidate, parameters, common_macro_seed, kRobustBaseDraws);
+        economy, candidate, parameters, common_macro_seed, kBaseDraws);
     rank_parameterized_scenario(trial, economy);
     ++finalists_resimulated;
     if (!have_selected || trial.score > selected_rank) {
@@ -596,22 +599,81 @@ NestedSectorSelection reoptimize_sector_package(
   }
 
   if (!have_selected) {
-    selected_policy = reference_policy;
+    selected_policy = policy;
     set_sector_package(selected_policy, economy,
-        reference_policy.applied_us_sector_coverage,
-        reference_policy.applied_canada_sector_coverage);
+        economy.us_sector_coverage, economy.canada_sector_coverage);
   }
 
   Scenario verified = simulate_parameterized(
-      economy, selected_policy, parameters, common_macro_seed,
-      kRobustVerificationDraws);
+      economy, selected_policy, parameters, common_macro_seed, kVerificationDraws);
   rank_parameterized_scenario(verified, economy);
+  return {std::move(verified), finalists_resimulated};
+}
 
-  NestedSectorSelection out;
-  out.package_changed = !same_package(verified, reference_policy);
-  out.finalists_resimulated = finalists_resimulated;
-  out.scenario = std::move(verified);
-  return out;
+Scenario make_custom_candidate(const Scenario& reference_custom, const Economy& economy,
+                               double move, double fiscal, double productive,
+                               double deescalation, double relief,
+                               double diversification) {
+  Scenario candidate = reference_custom;
+  candidate.first_move_bp = move;
+  candidate.fiscal_impulse = fiscal;
+  candidate.productive_share = productive;
+  candidate.negotiated_relief = 100.0 * deescalation;
+  candidate.targeted_relief = relief;
+  candidate.diversification = diversification;
+  candidate.description = "Autonomously generated from the policy search.";
+  set_sector_package(candidate, economy,
+      economy.us_sector_coverage, economy.canada_sector_coverage);
+  return candidate;
+}
+
+struct PolicySearchResult {
+  Scenario custom;
+  int candidates_examined = 0;
+};
+
+PolicySearchResult search_policy_controls(
+    const Economy& economy, const Scenario& reference_custom,
+    const StructuralParameters& parameters, std::uint64_t common_macro_seed) {
+  Scenario best;
+  bool have_best = false;
+  double best_score = -std::numeric_limits<double>::infinity();
+  int examined = 0;
+  const double max_deescalation = clamp(economy.cooperation_ceiling / 100.0, 0.0, 1.0);
+
+  for (double move : {-25.0, 0.0, 25.0})
+    for (double fiscal : {-0.15, 0.10, 0.35, 0.60})
+      for (double productive : {0.35, 0.65, 0.90})
+        for (double cooperation : {0.0, .33, .67, 1.0})
+          for (double diversification_boost : {0.0, .15}) {
+            const double deescalation = cooperation * max_deescalation;
+            const double relief = clamp(.42 * (1.0 - productive)
+                + .08 * (1.0 - deescalation), 0.0, .45);
+            const double diversification = clamp(
+                .08 + .48 * productive * (1.0 - deescalation)
+                + diversification_boost, 0.0, .70);
+            Scenario candidate = make_custom_candidate(
+                reference_custom, economy, move, fiscal, productive,
+                deescalation, relief, diversification);
+            Scenario trial = simulate_parameterized(
+                economy, candidate, parameters, common_macro_seed, kBaseDraws);
+            const double score = conditional_deal_score(trial, economy);
+            ++examined;
+            if (!have_best || score > best_score) {
+              best_score = score;
+              best = std::move(candidate);
+              have_best = true;
+            }
+          }
+
+  if (!have_best) best = reference_custom;
+  return {std::move(best), examined};
+}
+
+const Scenario* find_scenario(const Result& result, const std::string& id) {
+  for (const auto& scenario : result.scenarios)
+    if (scenario.id == id) return &scenario;
+  return nullptr;
 }
 
 std::string json_escape(const std::string& value) {
@@ -641,89 +703,161 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
   summary.parameter_provenance_complete = structural_parameter_registry_complete(
       parameters_.uncertainty_registry);
   summary.methodology =
-      "outer-structural-ensemble/nested-sector-pareto-reoptimization/"
-      "cached-parameter-invariant-frontiers/common-random-numbers";
+      "outer-structural-ensemble/full-288-policy-control-search/"
+      "nested-sector-pareto-reoptimization/common-random-numbers";
   summary.structural_parameters_active = summary.parameter_draws > 0;
   summary.common_random_numbers = summary.parameter_draws > 0;
   summary.sector_packages_reoptimized = summary.parameter_draws > 0;
+  summary.policy_controls_reoptimized = summary.parameter_draws > 0;
+  summary.policy_control_candidates_per_draw = kPolicyControlCandidates;
 
   if (summary.parameter_draws == 0 || baseline.scenarios.empty()) {
     summary.classification = "not-evaluated";
+    summary.policy_control_candidates_per_draw = 0;
     return baseline;
   }
 
-  // The exact sector Pareto screen is deterministic conditional on Economy and
-  // policy controls. Build it once per policy, then re-rank all retained
-  // finalists under every structural calibration. Rebuilding an identical
-  // frontier inside every draw would add cost without changing the solution.
-  std::vector<SectorSearch> sector_frontiers;
-  sector_frontiers.reserve(baseline.scenarios.size());
-  for (const auto& policy : baseline.scenarios)
-    sector_frontiers.push_back(search_sector_frontier(economy, policy));
-  summary.sector_frontiers_built = static_cast<int>(sector_frontiers.size());
-
+  const Scenario* reference_custom_ptr = find_scenario(baseline, "custom");
+  const Scenario* reference_decision_ptr = find_scenario(
+      baseline, baseline.recommendation.strategy_id);
+  if (!reference_custom_ptr || !reference_decision_ptr) {
+    summary.classification = "not-evaluated";
+    return baseline;
+  }
+  const Scenario reference_custom = *reference_custom_ptr;
+  const Scenario reference_decision = *reference_decision_ptr;
   const std::string baseline_strategy = baseline.recommendation.strategy_id;
+
+  struct CachedPolicy {
+    Scenario policy;
+    SectorSearch frontier;
+  };
+  std::vector<CachedPolicy> fixed_policies;
+  fixed_policies.reserve(baseline.scenarios.size() - 1);
+  for (const auto& policy : baseline.scenarios) {
+    if (policy.id == "custom") continue;
+    fixed_policies.push_back({policy, search_sector_frontier(economy, policy)});
+  }
+  const SectorSearch reference_custom_frontier =
+      search_sector_frontier(economy, reference_custom);
+  summary.sector_frontiers_built = static_cast<int>(fixed_policies.size()) + 1;
+
   const auto ensemble = draw_structural_parameters(
       parameters_, summary.parameter_draws,
       static_cast<std::uint64_t>(seed_) ^ 0x9e3779b97f4a7c15ULL);
   const std::uint64_t common_macro_seed = static_cast<std::uint64_t>(seed_);
-
-  std::vector<double> selected_scores;
-  selected_scores.reserve(ensemble.size());
+  std::vector<double> reference_scores;
+  reference_scores.reserve(ensemble.size());
   int reference_package_retained = 0;
+  int reference_controls_retained = 0;
 
   for (const auto& parameters : ensemble) {
+    const auto policy_search = search_policy_controls(
+        economy, reference_custom, parameters, common_macro_seed);
+    summary.policy_control_candidates_examined +=
+        static_cast<std::uint64_t>(policy_search.candidates_examined);
+    const bool custom_controls_retained =
+        same_policy_controls(policy_search.custom, reference_custom);
+    if (custom_controls_retained) ++reference_controls_retained;
+    else ++summary.policy_control_changes;
+
+    SectorSearch custom_frontier;
+    const SectorSearch* draw_custom_frontier = nullptr;
+    if (custom_controls_retained) {
+      draw_custom_frontier = &reference_custom_frontier;
+    } else {
+      custom_frontier = search_sector_frontier(economy, policy_search.custom);
+      draw_custom_frontier = &custom_frontier;
+      ++summary.sector_frontiers_built;
+    }
+
     double best_score = -std::numeric_limits<double>::infinity();
-    std::string best_strategy;
+    Scenario best_decision;
+    Scenario reference_draw;
+    bool have_reference_draw = false;
 
-    for (std::size_t i = 0; i < baseline.scenarios.size(); ++i) {
-      const auto& policy = baseline.scenarios[i];
-      const auto& frontier = sector_frontiers[i];
+    auto consider = [&](const Scenario& reference_policy, const SectorSearch& frontier,
+                        const Scenario* baseline_same_id) {
       auto nested = reoptimize_sector_package(
-          economy, policy, frontier, parameters, common_macro_seed);
-
+          economy, reference_policy, frontier, parameters, common_macro_seed);
       ++summary.nested_sector_optimizations;
       summary.nested_sector_candidates_examined +=
           static_cast<std::uint64_t>(std::max(0, frontier.candidates_examined));
       summary.nested_sector_finalists_resimulated +=
           static_cast<std::uint64_t>(std::max(0, nested.finalists_resimulated));
-      if (nested.package_changed) ++summary.sector_package_changes;
-
-      if (nested.scenario.id == baseline_strategy) {
-        selected_scores.push_back(nested.scenario.score);
-        if (!nested.package_changed) ++reference_package_retained;
+      if (!baseline_same_id || !same_policy_controls(reference_policy, *baseline_same_id)
+          || !same_package(nested.scenario, *baseline_same_id)) {
+        ++summary.sector_package_changes;
+      }
+      if (reference_policy.id == baseline_strategy
+          && same_policy_controls(reference_policy, reference_decision)) {
+        reference_draw = nested.scenario;
+        have_reference_draw = true;
       }
       if (nested.scenario.score > best_score) {
         best_score = nested.scenario.score;
-        best_strategy = nested.scenario.id;
+        best_decision = std::move(nested.scenario);
       }
+    };
+
+    for (const auto& fixed : fixed_policies) {
+      const Scenario* baseline_same_id = find_scenario(baseline, fixed.policy.id);
+      consider(fixed.policy, fixed.frontier, baseline_same_id);
     }
-    if (best_strategy == baseline_strategy) ++summary.recommendation_wins;
+    consider(policy_search.custom, *draw_custom_frontier, &reference_custom);
+
+    // If the generated custom controls moved away from a reference custom
+    // recommendation, recheck the exact reference controls so the score and
+    // package-retention statistics remain about the original recommendation.
+    if (!have_reference_draw && baseline_strategy == "custom") {
+      auto reference_nested = reoptimize_sector_package(
+          economy, reference_custom, reference_custom_frontier,
+          parameters, common_macro_seed);
+      reference_draw = std::move(reference_nested.scenario);
+      have_reference_draw = true;
+    }
+
+    if (have_reference_draw) {
+      reference_scores.push_back(reference_draw.score);
+      if (same_package(reference_draw, reference_decision))
+        ++reference_package_retained;
+    }
+
+    if (best_decision.id == baseline_strategy) ++summary.strategy_family_wins;
+    const bool same_reference_controls = best_decision.id == baseline_strategy
+        && same_policy_controls(best_decision, reference_decision);
+    if (same_reference_controls) ++summary.recommendation_wins;
   }
 
+  const double draw_count = static_cast<double>(ensemble.size());
   summary.recommendation_win_rate = ensemble.empty() ? 0.0
-      : static_cast<double>(summary.recommendation_wins)
-          / static_cast<double>(ensemble.size());
+      : static_cast<double>(summary.recommendation_wins) / draw_count;
+  summary.strategy_family_win_rate = ensemble.empty() ? 0.0
+      : static_cast<double>(summary.strategy_family_wins) / draw_count;
+  summary.reference_policy_control_retention_rate = ensemble.empty() ? 0.0
+      : static_cast<double>(reference_controls_retained) / draw_count;
   summary.reference_package_retention_rate = ensemble.empty() ? 0.0
-      : static_cast<double>(reference_package_retained)
-          / static_cast<double>(ensemble.size());
-  if (!selected_scores.empty()) {
-    summary.score_mean = std::accumulate(selected_scores.begin(), selected_scores.end(), 0.0)
-        / static_cast<double>(selected_scores.size());
-    summary.score_p10 = robustness_quantile(selected_scores, 0.10);
-    summary.score_p90 = robustness_quantile(selected_scores, 0.90);
+      : static_cast<double>(reference_package_retained) / draw_count;
+
+  if (!reference_scores.empty()) {
+    summary.score_mean = std::accumulate(reference_scores.begin(), reference_scores.end(), 0.0)
+        / static_cast<double>(reference_scores.size());
+    summary.score_p10 = robustness_quantile(reference_scores, 0.10);
+    summary.score_p90 = robustness_quantile(reference_scores, 0.90);
   }
   summary.classification = classify_robustness(summary.recommendation_win_rate);
 
   std::ostringstream note;
-  note << " V2 nested structural robustness: " << summary.recommendation_wins << "/"
-       << summary.parameter_draws << " parameter calibrations retain "
-       << baseline_strategy << " (" << std::fixed << std::setprecision(1)
+  note << " V2 full decision robustness: " << summary.recommendation_wins << "/"
+       << summary.parameter_draws << " structural calibrations retain the reference control "
+       << "decision (" << std::fixed << std::setprecision(1)
        << 100.0 * summary.recommendation_win_rate << "%, " << summary.classification
-       << "). Each draw re-optimizes the verified 20-sector package across the production "
-       << "Pareto finalists using common random numbers; the reference strategy keeps its "
-       << "reference sector package in "
-       << 100.0 * summary.reference_package_retention_rate << "% of calibrations.";
+       << "). The complete 288-candidate generated policy search is rerun inside every draw, "
+       << "followed by nested 20-sector Pareto re-optimization and 2,800-path verification. "
+       << "The broader strategy family wins in "
+       << 100.0 * summary.strategy_family_win_rate << "% of calibrations; the reference generated "
+       << "control package is retained in "
+       << 100.0 * summary.reference_policy_control_retention_rate << "%.";
   baseline.recommendation.explanation += note.str();
   return baseline;
 }
@@ -735,6 +869,8 @@ std::string robustness_to_json(const Result& result) {
     << "{\"parameterDraws\":" << r.parameter_draws
     << ",\"recommendationWins\":" << r.recommendation_wins
     << ",\"recommendationWinRate\":" << r.recommendation_win_rate
+    << ",\"strategyFamilyWins\":" << r.strategy_family_wins
+    << ",\"strategyFamilyWinRate\":" << r.strategy_family_win_rate
     << ",\"scoreMean\":" << r.score_mean
     << ",\"scoreP10\":" << r.score_p10
     << ",\"scoreP90\":" << r.score_p90
@@ -749,9 +885,16 @@ std::string robustness_to_json(const Result& result) {
     << ",\"commonRandomNumbers\":" << (r.common_random_numbers ? "true" : "false")
     << ",\"sectorPackagesReoptimized\":"
     << (r.sector_packages_reoptimized ? "true" : "false")
+    << ",\"policyControlsReoptimized\":"
+    << (r.policy_controls_reoptimized ? "true" : "false")
     << ",\"parameterBoundsActive\":" << (r.parameter_bounds_active ? "true" : "false")
     << ",\"parameterProvenanceComplete\":"
     << (r.parameter_provenance_complete ? "true" : "false")
+    << ",\"policyControlCandidatesPerDraw\":" << r.policy_control_candidates_per_draw
+    << ",\"policyControlCandidatesExamined\":" << r.policy_control_candidates_examined
+    << ",\"policyControlChanges\":" << r.policy_control_changes
+    << ",\"referencePolicyControlRetentionRate\":"
+    << r.reference_policy_control_retention_rate
     << ",\"sectorFrontiersBuilt\":" << r.sector_frontiers_built
     << ",\"nestedSectorOptimizations\":" << r.nested_sector_optimizations
     << ",\"nestedSectorCandidatesExamined\":" << r.nested_sector_candidates_examined
