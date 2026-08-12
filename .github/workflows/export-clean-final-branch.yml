@@ -19,6 +19,8 @@ jobs:
           git fetch origin main
           # No branch-only automation or workflow edits are allowed in the clean PR.
           git checkout origin/main -- .github/workflows
+          rm -f .github/workflows/export-clean-final-branch.yml
+          rm -f .github/workflows/export-clean-final-trigger.yml
           rm -f tools/fix_oecd_denominators_once.py
           git add -A
           git config user.name 'github-actions[bot]'
