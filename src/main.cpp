@@ -1,10 +1,13 @@
 #include "policy_engine.hpp"
 #include "calibration.hpp"
+#include "model_evidence.hpp"
 #include "negotiation_support.hpp"
 #include "negotiation_trade_alignment.hpp"
 #include "robust_recommendation.hpp"
 #include "negotiation_room.hpp"
+#include "structural_calibration.hpp"
 #include "trade_diplomacy_platform.hpp"
+#include "welfare_sensitivity.hpp"
 
 #ifdef CAD_EMBEDDED_ASSETS
 #include "embedded_assets.hpp"
@@ -24,6 +27,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -90,13 +94,12 @@ std::string read_file(const std::string& path) {
   return out.str();
 }
 
-std::string calibration_path() {
+std::string materialized_data_path(const std::string& source_path) {
 #ifdef CAD_EMBEDDED_ASSETS
-  const std::string content = read_file("data/calibration/current.snapshot.csv");
-  if (content.empty()) throw std::runtime_error("embedded calibration snapshot is empty");
-  const auto root = runtime_root();
-  std::filesystem::create_directories(root);
-  const auto path = root / "embedded-current.snapshot.csv";
+  const std::string content = read_file(source_path);
+  if (content.empty()) throw std::runtime_error("embedded data asset is empty: " + source_path);
+  const auto path = runtime_root() / "embedded-data" / source_path;
+  std::filesystem::create_directories(path.parent_path());
 
   bool needs_write = true;
   {
@@ -109,14 +112,18 @@ std::string calibration_path() {
   }
   if (needs_write) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("unable to materialize embedded calibration snapshot");
+    if (!out) throw std::runtime_error("unable to materialize embedded data asset: " + source_path);
     out.write(content.data(), static_cast<std::streamsize>(content.size()));
-    if (!out) throw std::runtime_error("unable to write embedded calibration snapshot");
+    if (!out) throw std::runtime_error("unable to write embedded data asset: " + source_path);
   }
   return path.string();
 #else
-  return "data/calibration/current.snapshot.csv";
+  return source_path;
 #endif
+}
+
+std::string calibration_path() {
+  return materialized_data_path("data/calibration/current.snapshot.csv");
 }
 
 void open_browser(const std::string& url) {
@@ -423,25 +430,45 @@ int main(int argc, char** argv) {
   }
 
   std::string calibrated_path;
+  std::string structural_registry_path;
+  std::vector<std::string> historical_fixture_paths;
   try {
     calibrated_path = calibration_path();
+    structural_registry_path = materialized_data_path(
+        "data/calibration/structural_parameter_registry.csv");
+    historical_fixture_paths = {
+        materialized_data_path("data/backtests/2015-01-20-oil-shock.csv"),
+        materialized_data_path("data/backtests/2020-03-03-pandemic-onset.csv"),
+        materialized_data_path("data/backtests/2022-07-12-inflation-tightening.csv")};
   } catch (const std::exception& error) {
-    std::cerr << "Unable to prepare calibration data: " << error.what() << '\n';
+    std::cerr << "Unable to prepare model data: " << error.what() << '\n';
     close_socket(server);
     return 1;
   }
+
+  const auto structural_registry = cad::load_structural_parameter_registry(
+      structural_registry_path);
+  const auto structural_parameters = cad::apply_structural_parameter_registry(
+      cad::StructuralParameters{}, structural_registry);
+  cad::PolicyEngine evidence_engine(20260810, structural_parameters, structural_registry);
+
   const auto room_path = (runtime_root() / "negotiation-room.events").string();
   cad::CalibratedPolicyEngine engine(calibrated_path);
   NegotiationState negotiation;
   cad::NegotiationRoom room(room_path);
   cad::NegotiationAnalysis last_bargaining;
   cad::RobustRecommendationAnalysis last_robustness;
+  cad::Economy last_economy = cad::apply_calibration(cad::Economy{}, engine.snapshot());
+  std::vector<cad::BacktestResult> historical_backtests;
+  bool historical_evidence_ready = false;
   bool has_evaluation = false;
   const std::string local_url = "http://localhost:" + std::to_string(port);
   std::cout << "Canada–U.S. Diplomatic Policy Studio → "
             << (bind_all ? "http://0.0.0.0:" : "http://localhost:") << port << '\n'
             << "Calibration: " << engine.snapshot().grade << " ("
             << engine.snapshot().completeness << "% complete, as of " << engine.snapshot().as_of << ")\n"
+            << "Structural registry: " << structural_registry.registry_id << " ("
+            << cad::sampled_structural_parameter_count(structural_registry) << " sampled parameters)\n"
             << "Diplomat Room: local append-only persistence at " << room_path << '\n';
   if (launch_browser) open_browser(local_url);
 
@@ -481,6 +508,7 @@ int main(int argc, char** argv) {
     if (first.rfind("POST /api/evaluate ", 0) == 0) {
       auto economy = parse(body);
       auto result = engine.evaluate(economy);  // Mutates economy to the calibrated values actually simulated.
+      last_economy = economy;
       const bool comparison_only = body.find("\"comparisonOnly\":true") != std::string::npos
           || body.find("\"comparisonOnly\": true") != std::string::npos;
       if (comparison_only) {
@@ -499,6 +527,46 @@ int main(int argc, char** argv) {
         auto with_robustness = cad::attach_robustness_json(with_negotiation, robustness);
         respond(client, 200, "application/json", cad::attach_trade_diplomacy_json(with_robustness, platform));
       }
+    } else if (first.rfind("POST /api/v2/robustness ", 0) == 0) {
+      if (!cad::structural_parameter_registry_complete(structural_registry)) {
+        respond(client, 400, "application/json",
+            "{\"error\":\"structural parameter registry is incomplete\"}");
+      } else {
+        cad::Economy economy = body.empty()
+            ? last_economy
+            : cad::apply_calibration(parse(body), engine.snapshot());
+        const int requested = static_cast<int>(number(body, "parameterDraws", 6.0));
+        const int draws = std::clamp(requested, 1, 24);
+        respond(client, 200, "application/json",
+            cad::robustness_to_json(evidence_engine.evaluate_robust(economy, draws)));
+      }
+    } else if (first.rfind("POST /api/v2/welfare ", 0) == 0) {
+      cad::Economy economy = body.empty()
+          ? last_economy
+          : cad::apply_calibration(parse(body), engine.snapshot());
+      respond(client, 200, "application/json",
+          cad::welfare_sensitivity_to_json(
+              cad::evaluate_welfare_sensitivity(evidence_engine, economy)));
+    } else if (first.rfind("GET /api/v2/backtests ", 0) == 0) {
+      if (!historical_evidence_ready) {
+        historical_backtests = cad::run_historical_evidence(
+            evidence_engine, historical_fixture_paths);
+        historical_evidence_ready = true;
+      }
+      respond(client, 200, "application/json",
+          cad::historical_evidence_to_json(historical_backtests));
+    } else if (first.rfind("GET /api/v2/evidence-status ", 0) == 0) {
+      if (!historical_evidence_ready) {
+        historical_backtests = cad::run_historical_evidence(
+            evidence_engine, historical_fixture_paths);
+        historical_evidence_ready = true;
+      }
+      respond(client, 200, "application/json",
+          cad::model_evidence_status_to_json(
+              cad::model_evidence_status(structural_registry, historical_backtests)));
+    } else if (first.rfind("GET /api/v2/structural-registry ", 0) == 0) {
+      respond(client, 200, "application/json",
+          cad::structural_parameter_registry_to_json(structural_registry));
     } else if (first.rfind("POST /api/room ", 0) == 0) {
       const bool ok = room.apply_event(body,
           has_evaluation ? &last_bargaining : nullptr,
