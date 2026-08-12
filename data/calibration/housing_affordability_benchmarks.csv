@@ -1,0 +1,4 @@
+fixture_id,decision_date,source_update_date,hai_quarter,hai_percent,benchmark_start_quarter,benchmark_end_quarter,benchmark_quarters,benchmark_median_percent,housing_gap_percent,source_id,methodology
+ca-2015-01-20-oil-shock,2015-01-20,2014-12-04,2014Q3,32.4,2009Q3,2014Q2,20,32.2,0.621118012422,boc_housing_affordability,prior-20-quarter-median-excluding-current
+ca-2020-03-03-pandemic-onset,2020-03-03,2020-01-23,2019Q3,35.5,2014Q3,2019Q2,20,36.0,-1.388888888889,boc_housing_affordability,prior-20-quarter-median-excluding-current
+ca-2022-07-12-inflation-tightening,2022-07-12,2022-06-02,2022Q1,45.1,2017Q1,2021Q4,20,36.45,23.731138545953,boc_housing_affordability,prior-20-quarter-median-excluding-current
