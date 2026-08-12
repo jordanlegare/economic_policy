@@ -25,7 +25,37 @@ assert(html.includes('id="initialOpeningScenarioController"'));
 assert(html.includes('id="usTariff" type="range" min="0" max="60" step="1" value="50"'),
   'trade shock control must render at 50% before scripts run');
 assert(html.includes('id="sectorCoverage" type="range" min="0" max="100" value="100"'),
-  'delegation sector control must render at 100% before scripts run');
+  'normalized delegation sector seed must remain full coverage before app.js converts it to an actual tariff display');
+
+const appSource = fs.readFileSync('web/app.js', 'utf8');
+const helperMatch = appSource.match(/const clampNumber=.*?const tariffToCoverage=.*?;/s);
+assert(helperMatch, 'delegation tariff conversion helpers must be present');
+const tariffMath = {};
+vm.runInNewContext(`${helperMatch[0]}\nthis.coverageToTariff=coverageToTariff;this.tariffToCoverage=tariffToCoverage;`, tariffMath);
+assert.strictEqual(tariffMath.coverageToTariff(50, 100), 50,
+  '100% internal coverage at a 50% headline must display as a 50% sector tariff');
+assert.strictEqual(tariffMath.coverageToTariff(50, 50), 25,
+  '50% internal coverage at a 50% headline must display as a 25% sector tariff');
+assert.strictEqual(tariffMath.coverageToTariff(5, 25), 1.25,
+  'Canada sector display must use the Canadian headline tariff, not the raw coverage percentage');
+assert.strictEqual(tariffMath.tariffToCoverage(50, 25), 50,
+  'a user-entered 25% sector tariff under a 50% headline must submit 50% normalized coverage');
+assert.strictEqual(tariffMath.tariffToCoverage(5, 1.25), 25,
+  'actual Canadian sector tariffs must convert back to the same normalized model state');
+assert.strictEqual(tariffMath.tariffToCoverage(0, 0), 0,
+  'zero headline tariffs must not divide by zero');
+assert(appSource.includes("child.textContent='Applied tariff for this sector '"),
+  'joint delegation control must be labeled as an applied tariff rather than raw coverage');
+assert(appSource.includes('Sector-by-sector applied tariffs and deal metrics'),
+  'delegation table heading must describe the actual tariff rates shown');
+assert(appSource.includes('positions[negotiator][i]=tariffToCoverage(headlineFor(negotiator),+input.value)'),
+  'delegation table edits must convert actual tariff percentages back to model coverage');
+assert(appSource.includes("positions[negotiator][i]=tariffToCoverage(headlineFor(negotiator),+$('#sectorCoverage').value)"),
+  'joint sidebar sector edits must convert actual tariff percentages back to model coverage');
+assert(appSource.includes('aria-label="${name} applied tariff percentage"'),
+  'delegation sector sliders must expose actual-tariff semantics to assistive technology');
+assert(appSource.includes('U.S. average applied sector tariff'),
+  'published deal summary must report an applied tariff rather than equilibrium coverage');
 
 const match = html.match(/<script id="dashboardPanelController">([\s\S]*?)<\/script>/);
 assert(match, 'dashboard panel controller must be bundled in the page shell');
