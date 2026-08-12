@@ -46,6 +46,30 @@ jobs:
           test -s "$ZIP"
           unzip -t "$ZIP" >/dev/null
           sha256sum "$ZIP"
+      - name: Inspect government industry labels
+        run: |
+          python3 - <<'PY'
+          import csv, io, zipfile
+          z = zipfile.ZipFile('/tmp/36100001-eng.zip')
+          member = max((i for i in z.infolist() if i.filename.endswith('.csv') and 'Metadata' not in i.filename), key=lambda i: i.file_size)
+          with z.open(member) as raw:
+              rows = csv.DictReader(io.TextIOWrapper(raw, encoding='utf-8-sig'))
+              labels = set()
+              for row in rows:
+                  if row.get('REF_DATE') != '2024' or row.get('GEO','').lower() != 'canada':
+                      continue
+                  if 'basic' not in row.get('Valuation','').lower():
+                      continue
+                  if not row.get('Use','').lower().startswith('total use'):
+                      continue
+                  label = row.get('Supply','')
+                  lower = label.lower()
+                  if any(word in lower for word in ('government', 'administration', 'defence', 'municipal', 'aboriginal')):
+                      labels.add(label)
+              print('2024 basic-price total-use government candidates:')
+              for label in sorted(labels):
+                  print('  ', label)
+          PY
       - name: Build 2024 StatCan IO matrix
         run: |
           python3 tools/build_statcan_io_matrix.py \
