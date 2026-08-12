@@ -51,6 +51,7 @@ inline Economy apply_calibration(Economy economy, const CalibrationSnapshot& sna
 
 inline std::string calibration_to_json(const CalibrationSnapshot& snapshot) {
   using calibration_detail::esc;
+  const Economy effective = apply_calibration(Economy{}, snapshot);
   std::ostringstream out;
   out << std::fixed << std::setprecision(4);
   out << "{\"snapshotId\":\"" << esc(snapshot.snapshot_id)
@@ -62,6 +63,19 @@ inline std::string calibration_to_json(const CalibrationSnapshot& snapshot) {
       << "\",\"completeness\":" << snapshot.completeness
       << ",\"certifiedForEmpiricalUse\":" << (snapshot.completeness >= 95.0 ? "true" : "false")
       << ",\"calibrationScope\":\"merchandise-primary-and-manufacturing\""
+      << ",\"effectiveState\":{\"usTariff\":" << effective.us_tariff_canada
+      << ",\"retaliatoryTariff\":" << effective.canada_retaliatory_tariff
+      << ",\"usSectorCoverage\":[";
+  for (std::size_t i = 0; i < effective.us_sector_coverage.size(); ++i) {
+    if (i) out << ',';
+    out << effective.us_sector_coverage[i];
+  }
+  out << "],\"canadaSectorCoverage\":[";
+  for (std::size_t i = 0; i < effective.canada_sector_coverage.size(); ++i) {
+    if (i) out << ',';
+    out << effective.canada_sector_coverage[i];
+  }
+  out << "]}"
       << ",\"checks\":{\"officialTrade\":" << (snapshot.official_trade_complete ? "true" : "false")
       << ",\"tariffLines\":" << (snapshot.tariff_lines_complete ? "true" : "false")
       << ",\"inputOutput\":" << (snapshot.input_output_complete ? "true" : "false")
@@ -114,7 +128,10 @@ class CalibratedPolicyEngine {
         snapshot_(load_calibration_snapshot(snapshot_path)), path_(std::move(snapshot_path)) {}
 
   Result evaluate(Economy& economy) const {
-    economy = apply_calibration(economy, snapshot_);
+    // The calibration snapshot seeds /api/baseline. Once the browser submits a
+    // scenario, those explicit controls are the state to solve; reapplying the
+    // snapshot here would silently erase tariff/coverage what-if inputs.
+    economy.exhaustive_policy_search = true;
     return base_.evaluate(economy);
   }
 
