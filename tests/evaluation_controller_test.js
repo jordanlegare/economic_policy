@@ -29,7 +29,13 @@ element('cooperationCeiling', 50);
 element('retaliatoryTariff', 5);
 element('retaliatoryTariffValue');
 element('partyView').hidden = true;
+const autoStatus = {textContent:''};
 
+global.document = {
+  querySelector(selector) {
+    return selector === '.auto span' ? autoStatus : null;
+  }
+};
 global.window = {__EVALUATION_COMPARISON_DELAY_MS:0};
 global.$ = selector => elements.get(selector) || null;
 global.settings = {policyRate:2.75, gdpGrowth:1.6};
@@ -62,11 +68,22 @@ global.applyRecommendation = () => {
   return changed;
 };
 
+let recommendationVerified = true;
 const fullPayload = () => ({
   scenarios:[{id:'compact',name:'Compact',growth:1.7}],
   recommendation:{
+    strategyId:'compact',
     usSectorCoverage:Array(20).fill(50),
-    canadaSectorCoverage:Array(20).fill(75)
+    canadaSectorCoverage:Array(20).fill(75),
+    policyCandidatesVerified:301,
+    globalSearchComplete:true,
+    sectorCandidatesExamined:4200,
+    sectorParetoFrontierSize:18,
+    sectorFinalistsResimulated:18,
+    verifiedCanadaScore:83,
+    verifiedUsScore:86,
+    verifiedWinWin:recommendationVerified,
+    growthConstraintMet:true
   }
 });
 const comparisonPayload = () => ({scenarios:[{id:'compact',name:'Compact baseline',growth:2.0}]});
@@ -84,6 +101,7 @@ const calibrationPayload = () => ({
     canadaSectorCoverage:calibratedCanadaCoverage
   }
 });
+
 const requests = [];
 let calibrationFetches = 0;
 let releaseComparison;
@@ -123,7 +141,7 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   calibratedUsCoverage.forEach((value, i) => assert.strictEqual(requests[0]['usSector'+i], value));
   calibratedCanadaCoverage.forEach((value, i) => assert.strictEqual(requests[0]['canadaSector'+i], value));
   assert.strictEqual(publishCount, 1,
-    'verified recommendation should publish once without recursive evaluation');
+    'verified recommendation should publish both delegations once without recursive evaluation');
   assert.strictEqual(renderCount, 1);
   assert.strictEqual(elements.get('#strategyLoading').hidden, true,
     'loading overlay must be released before the no-tariff comparator finishes');
@@ -132,6 +150,15 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert.strictEqual(elements.get('#impactGrowth').textContent, 'Calculating…');
   assert(global.positions.us.every(x=>x===50));
   assert(global.positions.canada.every(x=>x===75));
+  assert(autoStatus.textContent.includes('Auto-apply verified win-win agreement ON'));
+  assert(autoStatus.textContent.includes('301 policy candidates verified'));
+  assert(autoStatus.textContent.includes('complete declared startup grid'));
+  assert.strictEqual(window.EvaluationController.state().verifiedWinWin, true);
+  assert.strictEqual(window.EvaluationController.state().globalSearchComplete, true);
+  assert.strictEqual(window.EvaluationController.state().initialCalibrationApplied, true);
+  assert(window.EvaluationController.state().autoAppliedCoverage.us.every(x=>x===50));
+  assert.deepStrictEqual(window.EvaluationController.state().searchAnchor.us, calibratedUsCoverage,
+    'auto-applied winning agreement must not become a new concession anchor');
 
   // Let the deferred comparison start. It is deliberately unresolved here;
   // the full-screen loading state must already be gone.
@@ -147,17 +174,20 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   requests.length = 0;
   comparisonGate = Promise.resolve();
   await evaluate();
-  assert.strictEqual(calibrationFetches, 1, 'calibration seeding must not overwrite later user scenarios');
+  assert.strictEqual(calibrationFetches, 1,
+    'calibration seeding must not overwrite later scenarios');
   assert.strictEqual(requests.length, 1,
     'subsequent runs should reuse the cached no-tariff comparison');
   assert.strictEqual(requests[0].comparisonOnly, false);
   assert.strictEqual(requests[0].usTariff, 5);
   assert.strictEqual(requests[0].retaliatoryTariff, 1.5);
+  assert.strictEqual(requests[0].usSector0, calibratedUsCoverage[0],
+    'unchanged auto display must continue solving from the certified negotiation anchor');
   assert.strictEqual(publishCount, 1, 'unchanged auto recommendation must not republish');
   assert.strictEqual(renderCount, 2);
 
-  // A real user sector edit becomes the next negotiation anchor. Merely showing
-  // the auto recommendation did not do so on the preceding run.
+  // A real user sector edit becomes the next negotiation anchor. The verified
+  // response is then auto-applied back onto both delegations' visible sliders.
   global.positions.us[0] = 42;
   requests.length = 0;
   await evaluate();
@@ -167,7 +197,31 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
     'explicit user sector edit must advance the evaluation anchor');
   assert.strictEqual(calibrationFetches, 1,
     'what-if controls must not be re-seeded from calibration after startup');
+  assert.strictEqual(global.positions.us[0], 50,
+    'verified result must auto-apply the winning U.S. sector coverage');
+  assert(global.positions.canada.every(x=>x===75),
+    'verified result must keep the Canadian side synchronized too');
+  assert.strictEqual(publishCount, 2,
+    'changed verified agreement must publish exactly once for both delegations');
   assert.strictEqual(elements.get('#strategyLoading').hidden, true);
+
+  // An unverified package must never overwrite either delegation's current
+  // posture, even though the engine still explored and returned a recommendation.
+  recommendationVerified = false;
+  global.positions.us[0] = 61;
+  global.positions.canada[0] = 73;
+  requests.length = 0;
+  await evaluate();
+  const unverifiedRequest = requests.find(x=>!x.comparisonOnly);
+  assert.strictEqual(unverifiedRequest.usSector0, 61);
+  assert.strictEqual(unverifiedRequest.canadaSector0, 73);
+  assert.strictEqual(global.positions.us[0], 61);
+  assert.strictEqual(global.positions.canada[0], 73);
+  assert.strictEqual(publishCount, 2,
+    'unverified recommendation must not be published or auto-applied');
+  assert(autoStatus.textContent.includes('paused'));
+  assert.strictEqual(window.EvaluationController.state().verifiedWinWin, false);
+  assert.strictEqual(calibrationFetches, 1);
 
   console.log('evaluation controller test passed');
 })().catch(error => { console.error(error); process.exit(1); });
