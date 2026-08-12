@@ -113,6 +113,7 @@ function(cad_add_test target source test_name)
 endfunction()
 
 cad_add_test(policy_tests tests/policy_engine_test.cpp policy_engine)
+cad_add_test(user_anchor_selection_tests tests/user_anchor_selection_test.cpp user_anchor_selection)
 cad_add_test(negotiation_support_tests tests/negotiation_support_test.cpp negotiation_support)
 cad_add_test(win_win_optimality_tests tests/win_win_optimality_test.cpp win_win_optimality)
 cad_add_test(calibration_tests tests/calibration_test.cpp calibration_integrity)

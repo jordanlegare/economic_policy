@@ -229,6 +229,22 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert.strictEqual(publishCount, 1, 'unchanged auto recommendation must not republish');
   assert.strictEqual(renderCount, 2);
 
+  // A tariff-only user edit must start from the currently displayed verified
+  // package, not from the old calibrated sector anchor. This is the iterative
+  // steering contract for every non-sector UI control.
+  global.tariff.value = '9';
+  requests.length = 0;
+  await evaluate();
+  const tariffEdit = requests.find(x=>!x.comparisonOnly);
+  assert(tariffEdit, 'expected full evaluation for tariff edit');
+  assert.strictEqual(tariffEdit.usTariff, 9);
+  assert.strictEqual(tariffEdit.usSector0, 50,
+    'tariff edit must promote the visible auto-selected U.S. package to the new anchor');
+  assert.strictEqual(tariffEdit.canadaSector0, 75,
+    'tariff edit must promote the visible auto-selected Canadian package to the new anchor');
+  assert.strictEqual(publishCount, 1,
+    'unchanged verified coverage should not republish merely because a tariff changed');
+
   // A real user sector edit becomes the next negotiation anchor. The verified
   // response is then auto-applied back onto both delegations' visible sliders.
   global.positions.us[0] = 42;
