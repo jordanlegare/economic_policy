@@ -12,9 +12,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Download official StatCan 2024 IO table
+        run: |
+          curl -fL --retry 6 --retry-delay 3 --retry-all-errors \
+            --connect-timeout 30 --max-time 360 \
+            -o /tmp/36100001-eng.zip \
+            https://www150.statcan.gc.ca/n1/tbl/csv/36100001-eng.zip
+          test -s /tmp/36100001-eng.zip
       - name: Build 2024 StatCan IO matrix
         run: |
-          python3 tools/build_statcan_io_matrix.py --output-dir artifacts/statcan-io
+          python3 tools/build_statcan_io_matrix.py \
+            --source-zip /tmp/36100001-eng.zip \
+            --output-dir artifacts/statcan-io
           python3 -m py_compile tools/build_statcan_io_matrix.py
           test -s artifacts/statcan-io/statcan_io_2024_matrix.csv
           test -s artifacts/statcan-io/trade_io_2024.hpp
