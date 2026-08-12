@@ -2,6 +2,7 @@
 
 #include "backtest.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -14,6 +15,11 @@ struct BacktestSuiteSummary {
   int valid_count = 0;
   int no_lookahead_count = 0;
   int provenance_complete_count = 0;
+  int expanded_complete_count = 0;
+  double mean_core_input_coverage = 0.0;
+  double mean_extended_input_coverage = 0.0;
+  double mean_state_coverage = 0.0;
+  double minimum_state_coverage = 0.0;
 
   int policy_benchmark_count = 0;
   int policy_direction_matches = 0;
@@ -36,6 +42,7 @@ struct BacktestSuiteSummary {
   double mean_abs_unemployment_error = 0.0;
 
   bool all_valid_no_lookahead = false;
+  bool all_expanded_state_complete = false;
   bool aggregate_diagnostics_permitted = false;
 };
 
@@ -64,11 +71,20 @@ inline BacktestSuiteSummary summarize_backtests(const std::vector<BacktestResult
   double inflation_abs_error = 0.0;
   double growth_abs_error = 0.0;
   double unemployment_abs_error = 0.0;
+  double core_coverage_sum = 0.0;
+  double extended_coverage_sum = 0.0;
+  double state_coverage_sum = 0.0;
+  out.minimum_state_coverage = results.empty() ? 0.0 : 100.0;
 
   for (const auto& result : results) {
     if (result.valid) ++out.valid_count;
     if (result.no_lookahead) ++out.no_lookahead_count;
     if (result.provenance_complete) ++out.provenance_complete_count;
+    if (result.state_grade == "expanded-complete") ++out.expanded_complete_count;
+    core_coverage_sum += result.input_coverage;
+    extended_coverage_sum += result.extended_input_coverage;
+    state_coverage_sum += result.state_coverage;
+    out.minimum_state_coverage = std::min(out.minimum_state_coverage, result.state_coverage);
 
     if (result.valid && result.policy_benchmark_available) {
       ++out.policy_benchmark_count;
@@ -82,6 +98,13 @@ inline BacktestSuiteSummary summarize_backtests(const std::vector<BacktestResult
         out.growth_direction_matches, growth_abs_error);
     backtest_suite_detail::add_metric(result.unemployment, out.unemployment_count,
         out.unemployment_direction_matches, unemployment_abs_error);
+  }
+
+  if (out.fixture_count) {
+    const double n = static_cast<double>(out.fixture_count);
+    out.mean_core_input_coverage = core_coverage_sum / n;
+    out.mean_extended_input_coverage = extended_coverage_sum / n;
+    out.mean_state_coverage = state_coverage_sum / n;
   }
 
   out.policy_direction_accuracy = backtest_suite_detail::ratio(
@@ -106,6 +129,8 @@ inline BacktestSuiteSummary summarize_backtests(const std::vector<BacktestResult
       && out.valid_count == out.fixture_count
       && out.no_lookahead_count == out.fixture_count
       && out.provenance_complete_count == out.fixture_count;
+  out.all_expanded_state_complete = out.fixture_count > 0
+      && out.expanded_complete_count == out.fixture_count;
 
   // Three independent episodes is the minimum project threshold for showing
   // aggregate diagnostics. This is a reporting guard, not a statistical claim
@@ -122,7 +147,14 @@ inline std::string backtest_suite_to_json(const BacktestSuiteSummary& s) {
       << ",\"validCount\":" << s.valid_count
       << ",\"noLookaheadCount\":" << s.no_lookahead_count
       << ",\"provenanceCompleteCount\":" << s.provenance_complete_count
+      << ",\"expandedCompleteCount\":" << s.expanded_complete_count
+      << ",\"meanCoreInputCoverage\":" << s.mean_core_input_coverage
+      << ",\"meanExtendedInputCoverage\":" << s.mean_extended_input_coverage
+      << ",\"meanStateCoverage\":" << s.mean_state_coverage
+      << ",\"minimumStateCoverage\":" << s.minimum_state_coverage
       << ",\"allValidNoLookahead\":" << (s.all_valid_no_lookahead ? "true" : "false")
+      << ",\"allExpandedStateComplete\":"
+      << (s.all_expanded_state_complete ? "true" : "false")
       << ",\"aggregateDiagnosticsPermitted\":"
       << (s.aggregate_diagnostics_permitted ? "true" : "false")
       << ",\"policy\":{\"count\":" << s.policy_benchmark_count
