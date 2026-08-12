@@ -62,6 +62,17 @@ BRACKET_CODE = re.compile(r"\[B[SU][A-Z]*([0-9]{2,6}[A-Z0-9]*)\]", re.IGNORECASE
 
 
 def model_sector_from_label(label: str) -> int | None:
+    text = (label or "").lower()
+    # Canada's NAICS uses sector 41 for wholesale trade while the simulator's
+    # bilateral presentation follows the U.S. NAICS 42 label. Keep that
+    # concordance explicit instead of pretending the codes are identical.
+    if "wholesale trade" in text:
+        return INDEX["42"]
+    # StatCan splits government public-administration industries using special
+    # IO institutional codes that are not always prefixed by a plain NAICS 91.
+    if "public administration" in text:
+        return INDEX["91"]
+
     match = BRACKET_CODE.search(label or "")
     if not match:
         return None
@@ -69,6 +80,8 @@ def model_sector_from_label(label: str) -> int | None:
     prefix = code[:2]
     if prefix in {"31", "32", "33"}:
         return INDEX["31-33"]
+    if prefix == "41":
+        return INDEX["42"]
     if prefix in {"44", "45"}:
         return INDEX["44-45"]
     if prefix in {"48", "49"}:
