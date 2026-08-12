@@ -1,4 +1,4 @@
-# Canada Policy Studio historical backtest fixture v1
+# Canada Policy Studio historical backtest fixture v2
 META,fixture_id,ca-2015-01-20-oil-shock
 META,decision_date,2015-01-20
 META,horizon_quarters,12
@@ -8,6 +8,14 @@ INPUT,core_inflation,2.1,percent_yoy,2014-11-30,2014-12-19,statcan_cpi_2014_11,o
 INPUT,gdp_growth,2.8,percent_annualized,2014-09-30,2014-11-28,statcan_gdp_2014_q3,official-derived
 INPUT,unemployment,6.6,percent,2014-12-31,2015-01-09,statcan_lfs_2014_12,observed
 INPUT,wage_growth,1.88,percent_yoy,2014-12-31,2015-01-09,statcan_lfs_wages_2014_12,official-derived
+INPUT,usdcad,1.1986,cad_per_usd,2015-01-16,2015-01-20,fed_h10_2015_01_20,observed-release
+INPUT,oil_price,48.49,usd_per_barrel,2015-01-16,2015-01-16,eia_wti_daily,market-observed
+INPUT,global_growth,3.5,percent_annual,2015-12-31,2015-01-20,imf_weo_2015_01_20,official-forecast
+INPUT,us_growth,5.0,percent_annualized,2014-09-30,2014-12-23,bea_us_gdp_2014_q3,observed
+INPUT,us_inflation,0.8,percent_yoy,2014-12-31,2015-01-16,bls_us_cpi_2014_12,observed
+INPUT,fiscal_balance_gdp,-0.1,percent_gdp,2015-03-31,2014-11-12,finance_canada_efu_2014,official-forecast
+INPUT,federal_debt_gdp,31.5,percent_gdp,2015-03-31,2014-11-12,finance_canada_efu_2014,official-forecast
+INPUT,household_debt_income,162.6,percent,2014-09-30,2014-12-15,statcan_nbs_2014_q3,observed
 INPUT,us_tariff_canada,0.0,percent,2015-01-20,2015-01-20,backtest_scope,scope-control
 INPUT,canada_retaliatory_tariff,0.0,percent,2015-01-20,2015-01-20,backtest_scope,scope-control
 BENCHMARK,first_move_bp,-25,basis_points,2015-01-21,2015-01-21,boc_policy_2015_01_21,observed-policy
@@ -19,6 +27,13 @@ SOURCE,statcan_cpi_2014_11,Statistics Canada,Consumer Price Index November 2014,
 SOURCE,statcan_gdp_2014_q3,Statistics Canada,Canadian economic accounts third quarter 2014,https://www150.statcan.gc.ca/n1/daily-quotidien/141128/dq141128a-eng.htm
 SOURCE,statcan_lfs_2014_12,Statistics Canada,Labour Force Survey December 2014,https://www150.statcan.gc.ca/n1/daily-quotidien/150109/dq150109a-eng.htm
 SOURCE,statcan_lfs_wages_2014_12,Statistics Canada,Average usual hours and wages December 2014,https://www150.statcan.gc.ca/n1/pub/71-001-x/2014012/t017-eng.htm
+SOURCE,fed_h10_2015_01_20,Federal Reserve Board,Foreign Exchange Rates H10 2015-01-20,https://www.federalreserve.gov/releases/H10/20150120/
+SOURCE,eia_wti_daily,U.S. Energy Information Administration,Cushing OK WTI Spot Price FOB,https://www.eia.gov/dnav/pet/hist/rwtcd.htm
+SOURCE,imf_weo_2015_01_20,International Monetary Fund,World Economic Outlook Update January 2015,https://www.imf.org/en/news/articles/2015/09/28/04/53/sonew012015a
+SOURCE,bea_us_gdp_2014_q3,U.S. Bureau of Economic Analysis,GDP third estimate 2014 Q3,https://www.bea.gov/news/2014/gross-domestic-product-3rd-quarter-2014-third-estimate-corporate-profits-3rd-quarter-2014
+SOURCE,bls_us_cpi_2014_12,U.S. Bureau of Labor Statistics,Consumer Price Index December 2014,https://www.bls.gov/news.release/archives/cpi_01162015.htm
+SOURCE,finance_canada_efu_2014,Department of Finance Canada,Update of Economic and Fiscal Projections 2014,https://www.budget.canada.ca/efp-peb/2014/pub/chap03-eng.html
+SOURCE,statcan_nbs_2014_q3,Statistics Canada,National balance sheet and financial flow accounts third quarter 2014,https://www150.statcan.gc.ca/n1/daily-quotidien/141215/dq141215a-eng.htm
 SOURCE,boc_policy_2015_01_21,Bank of Canada,Policy rate decision 2015-01-21,https://www.bankofcanada.ca/2015/01/fad-press-release-2015-01-21/
 SOURCE,statcan_cpi_2018_01,Statistics Canada,Consumer Price Index January 2018,https://www150.statcan.gc.ca/n1/daily-quotidien/180223/dq180223a-eng.htm
 SOURCE,statcan_lfs_2018_01,Statistics Canada,Labour Force Survey January 2018,https://www150.statcan.gc.ca/n1/daily-quotidien/180209/dq180209a-eng.htm
