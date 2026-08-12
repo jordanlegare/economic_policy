@@ -4,7 +4,7 @@ model_sector,model_code,model_name,statcan_naics_scope,source_table,reference_ye
 2,22,Utilities,22,36-10-0001-01,2024,mapped
 3,23,Construction,23,36-10-0001-01,2024,mapped
 4,31-33,Manufacturing,31-33,36-10-0001-01,2024,mapped
-5,42,Wholesale trade,42,36-10-0001-01,2024,mapped
+5,42,Wholesale trade,"41 (Canadian NAICS; model presentation code 42)",36-10-0001-01,2024,mapped-explicit-concordance
 6,44-45,Retail trade,44-45,36-10-0001-01,2024,mapped
 7,48-49,Transportation & warehousing,48-49,36-10-0001-01,2024,mapped
 8,51,Information & cultural industries,51,36-10-0001-01,2024,mapped
@@ -18,4 +18,4 @@ model_sector,model_code,model_name,statcan_naics_scope,source_table,reference_ye
 16,71,Arts entertainment & recreation,71,36-10-0001-01,2024,mapped
 17,72,Accommodation & food services,72,36-10-0001-01,2024,mapped
 18,81,Other services except public administration,81,36-10-0001-01,2024,mapped
-19,91,Public administration,91,36-10-0001-01,2024,mapped
+19,91,Public administration,"91 via StatCan GS/GU government industries",36-10-0001-01,2024,mapped-explicit-concordance
