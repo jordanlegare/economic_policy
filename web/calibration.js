@@ -26,7 +26,7 @@
     section.className = 'model-evidence';
     section.innerHTML = `
       <div class="calibration-head"><div><div class="eyebrow">Model evidence V2</div><h2>Does the recommendation survive assumptions, history, and preferences?</h2><p>These are separate diagnostics. Structural uncertainty, historical backtests, and delegation-preference sensitivity are not interchangeable confidence measures.</p></div><div id="evidenceGrade" class="calibration-grade">READY</div></div>
-      <div id="evidenceRegistry" class="calibration-summary"><div><span>Structural registry</span><b>Loading…</b><small>provenance and sensitivity bounds</small></div></div>
+      <div id="evidenceRegistry" class="calibration-summary"><div><span>Structural calibration completeness</span><b>Loading…</b><small>direct production mappings only</small></div></div>
       <div class="evidence-actions">
         <button id="runHistoricalEvidence" type="button">Historical diagnostics</button>
         <button id="runWelfareEvidence" type="button">Preference sensitivity</button>
@@ -61,16 +61,20 @@
   async function loadRegistry() {
     try {
       const r = await jsonFetch('/api/v2/structural-registry', {cache:'no-store'});
+      const c = r.calibrationCompleteness || {};
+      const coverage = Number(c.directEmpiricalCoverage || 0);
+      const gradeText = String(c.grade || (r.complete ? 'mostly-provisional' : 'registry-incomplete')).replaceAll('-', ' ').toUpperCase();
       const grade = document.querySelector('#evidenceGrade');
       if (grade) {
-        grade.textContent = r.complete ? 'V2 EVIDENCE READY' : 'REGISTRY INCOMPLETE';
-        grade.classList.toggle('certified', !!r.complete);
+        grade.textContent = r.complete ? gradeText : 'REGISTRY INCOMPLETE';
+        grade.classList.toggle('certified', !!r.complete && coverage >= 95);
       }
       const target = document.querySelector('#evidenceRegistry');
       if (target) target.innerHTML = `
-        <div><span>Structural registry</span><b>${esc(r.registryId || 'none')}</b><small>as of ${esc(r.asOf || 'unknown')}</small></div>
-        <div><span>Sampled coefficients</span><b>${Number(r.sampledParameterCount || 0)}</b><small>${r.complete?'complete provenance/bounds contract':'registry requires review'}</small></div>
-        <div><span>Interpretation</span><b>Sensitivity envelopes</b><small>not statistical confidence intervals</small></div>`;
+        <div><span>Structural calibration completeness</span><b>${fmt(coverage,1)}%</b><small>${Number(c.directEmpiricalCount || 0)}/${Number(c.calibrationTargetCount || 0)} estimable production parameters have direct empirical mappings</small></div>
+        <div><span>Direct empirical shock variances</span><b>${Number(c.directEmpiricalShockCount || 0)}/${Number(c.shockTargetCount || 0)}</b><small>${Number(c.realizedResidualShockCount || 0)} promoted from realized-data residual estimation</small></div>
+        <div><span>Direct empirical multipliers</span><b>${Number(c.directEmpiricalMultiplierCount || 0)}/${Number(c.multiplierTargetCount || 0)}</b><small>${fmt(c.multiplierCoverage,1)}% of remaining transmission/trade multipliers</small></div>
+        <div><span>Still provisional</span><b>${Number(c.provisionalCount || 0)}</b><small>assumed/calibrated production parameters; sensitivity envelopes are not confidence intervals</small></div>`;
     } catch (error) {
       const target = document.querySelector('#evidenceRegistry');
       if (target) target.innerHTML = `<div><span>V2 evidence API</span><b>Unavailable</b><small>${esc(error.message)}</small></div>`;
@@ -154,7 +158,7 @@
     grade.textContent = certified ? 'EMPIRICALLY CALIBRATED' : String(c.grade || 'INCOMPLETE').replaceAll('-', ' ').toUpperCase();
     grade.classList.toggle('certified', certified);
 
-    document.querySelector('#calibrationSummary').innerHTML = `<div><span>Snapshot</span><b>${esc(c.snapshotId)}</b><small>as of ${esc(c.asOf || 'unknown')}</small></div><div><span>Calibration completeness</span><b>${pct(c.completeness)}</b><small>${certified ? 'release-grade empirical layers present' : 'do not treat missing layers as observed facts'}</small></div><div><span>Generated</span><b>${esc(c.generatedAt || 'unknown')}</b><small>snapshot provenance is versioned</small></div>`;
+    document.querySelector('#calibrationSummary').innerHTML = `<div><span>Snapshot</span><b>${esc(c.snapshotId)}</b><small>as of ${esc(c.asOf || 'unknown')}</small></div><div><span>Observed-data calibration completeness</span><b>${pct(c.completeness)}</b><small>${certified ? 'release-grade empirical layers present' : 'trade/state data layer only; structural completeness is reported separately below'}</small></div><div><span>Generated</span><b>${esc(c.generatedAt || 'unknown')}</b><small>snapshot provenance is versioned</small></div>`;
 
     const checks = c.checks || {};
     const labels = {
@@ -172,7 +176,7 @@
     warning.classList.toggle('certified', certified);
     warning.innerHTML = certified
       ? `<b>Empirical calibration gates pass.</b> The result still contains model uncertainty and requires legal/economic judgment; calibration is not a prediction of political acceptance.`
-      : `<b>Calibration is not complete.</b> ${esc(c.warning || 'Missing layers remain model assumptions.')} The platform may be used for research and scenario comparison, but its numerical outputs should not be represented as fully calibrated government-grade estimates.`;
+      : `<b>Observed-data calibration is not complete.</b> ${esc(c.warning || 'Missing layers remain model assumptions.')} Structural calibration completeness is reported separately and counts only direct empirical production mappings.`;
   }
 
   function appendBriefing() {
@@ -183,7 +187,7 @@
       const c = result.calibration, checks = c.checks || {};
       const missing = Object.entries(checks).filter(([,ok]) => !ok).map(([key]) => key).join(', ');
       const sources = (c.sources || []).slice(0,8).map(s => `<li><b>${esc(s.agency)}</b> — ${esc(s.dataset)} · ${esc(s.vintage || 'vintage not captured')} · ${esc(s.status)}</li>`).join('');
-      const section = `<section id="calibrationBriefSection"><h2>Data provenance and calibration</h2><p><b>Snapshot:</b> ${esc(c.snapshotId)} · as of ${esc(c.asOf || 'unknown')} · calibration completeness ${pct(c.completeness)} · grade <b>${esc(c.grade)}</b>.</p><p><b>Empirical-use certification:</b> ${c.certifiedForEmpiricalUse?'PASS':'NOT YET CERTIFIED'}.</p>${missing?`<p><b>Missing calibration gates:</b> ${esc(missing)}.</p>`:''}<h3>Principal source vintages</h3><ul>${sources}</ul><p><small>Observed, official-derived, empirically estimated and assumption inputs are intentionally distinguished. A verified optimizer result is not equivalent to an empirically calibrated forecast.</small></p></section>`;
+      const section = `<section id="calibrationBriefSection"><h2>Data provenance and calibration</h2><p><b>Snapshot:</b> ${esc(c.snapshotId)} · as of ${esc(c.asOf || 'unknown')} · observed-data calibration completeness ${pct(c.completeness)} · grade <b>${esc(c.grade)}</b>.</p><p><b>Empirical-use certification:</b> ${c.certifiedForEmpiricalUse?'PASS':'NOT YET CERTIFIED'}.</p>${missing?`<p><b>Missing calibration gates:</b> ${esc(missing)}.</p>`:''}<h3>Principal source vintages</h3><ul>${sources}</ul><p><small>Observed, official-derived, empirically estimated and assumption inputs are intentionally distinguished. A verified optimizer result is not equivalent to an empirically calibrated forecast.</small></p></section>`;
       const warning = sheet.querySelector('.briefing-warning');
       if (warning) warning.insertAdjacentHTML('beforebegin', section); else sheet.insertAdjacentHTML('beforeend', section);
     }, 0);
