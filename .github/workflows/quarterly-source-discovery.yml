@@ -17,8 +17,6 @@ jobs:
           ref: agent/v2-quarterly-estimation
       - name: Apply quarterly promotion and parser guards
         run: python3 tools/apply_quarterly_promotion.py
-      - name: Refresh public quarterly panel and estimates
-        run: python3 tools/refresh_sep_calibration.py --refresh
       - name: Verify frozen quarterly calibration
         run: python3 tools/refresh_sep_calibration.py --verify
       - name: Build and test promoted model
