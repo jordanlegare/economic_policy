@@ -1,6 +1,7 @@
 #pragma once
 
 #include "calibration_loader.hpp"
+#include "user_anchor_selection.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -131,8 +132,14 @@ class CalibratedPolicyEngine {
     // The calibration snapshot seeds /api/baseline. Once the browser submits a
     // scenario, those explicit controls are the state to solve; reapplying the
     // snapshot here would silently erase tariff/coverage what-if inputs.
+    const Economy calibrated_baseline = apply_calibration(Economy{}, snapshot_);
     economy.exhaustive_policy_search = true;
-    return base_.evaluate(economy);
+    Result result = base_.evaluate(economy);
+    // Initial calibrated opening remains pure maximum welfare. Once the user
+    // changes the visible package, preserve that submitted scenario as the
+    // anchor and use proximity only inside the declared 0.5-point welfare band.
+    apply_user_anchor_selection(economy, calibrated_baseline, result);
+    return result;
   }
 
   const CalibrationSnapshot& snapshot() const { return snapshot_; }
