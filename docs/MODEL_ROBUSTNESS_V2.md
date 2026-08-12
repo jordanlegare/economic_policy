@@ -1,6 +1,6 @@
 # Model Robustness V2
 
-Canada Policy Studio distinguishes simulation precision from empirical confidence. More Monte Carlo draws reduce simulation error conditional on a model; they do not validate structural coefficients. V2 therefore places a documented structural-uncertainty layer around the complete policy decision process.
+Canada Policy Studio distinguishes simulation precision from empirical confidence. More Monte Carlo draws reduce simulation error conditional on a model; they do not validate structural coefficients. V2 therefore places a documented structural-uncertainty layer around the complete policy decision process and a separate vintage-based empirical diagnostic layer around historical episodes.
 
 ## Current V2 status
 
@@ -59,7 +59,7 @@ The active set includes:
 
 The 2% inflation target is a fixed mandate and is never sampled. The expectations weight is derived jointly with inflation persistence so the reference inflation anchor is preserved.
 
-The headline recommendation survival rate now refers to the **same reference control decision**, not merely the same strategy label. This matters for the generated `custom` strategy: if `custom` still wins but with different controls, that counts toward `strategyFamilyWinRate` but not toward `recommendationWinRate`.
+The headline recommendation survival rate refers to the **same reference control decision**, not merely the same strategy label. If `custom` still wins but with different controls, that counts toward `strategyFamilyWinRate` but not toward `recommendationWinRate`.
 
 Project decision labels remain:
 
@@ -82,25 +82,25 @@ The production generated-policy grid is rerun inside every structural draw:
 
 This yields 288 generated control candidates per structural calibration. Each candidate is evaluated with the parameterized macro model under common random numbers. The best generated candidate then competes with the fixed expert strategies after nested sector re-optimization.
 
-The contract reports:
-
-- `policyControlCandidatesPerDraw`;
-- total `policyControlCandidatesExamined`;
-- `policyControlChanges` relative to the reference generated package;
-- `referencePolicyControlRetentionRate`;
-- `strategyFamilyWins` and `strategyFamilyWinRate`.
+The contract reports `policyControlCandidatesPerDraw`, total candidates examined, control changes, reference-control retention, strategy-family wins and strategy-family win rate.
 
 ## 4. Historical backtesting
 
-The next empirical layer is vintage-based backtesting in which the engine receives only information available at the historical decision date. Candidate episodes include:
+Historical vintage backtesting is now an active V2 diagnostic layer. It is deliberately separated from structural robustness because it answers a different question: how did the model behave when constrained to information that was actually available at a historical decision date?
 
-- 2015 oil-price shock;
-- 2020 pandemic shock;
-- 2022 inflation acceleration;
-- 2022–2023 tightening cycle;
-- Canada–U.S. tariff episodes as dated observations become available.
+Every fixture declares a `decision_date` and separates rows into:
 
-Backtests are diagnostics, not claims that the simulator should reproduce realized history. They should measure directional accuracy, interval coverage, regime classification, policy-ranking stability and systematic residual patterns. Each fixture must identify its data vintage and prohibit look-ahead calibration.
+- `INPUT`: may be consumed by the model and must have `release_date <= decision_date`;
+- `BENCHMARK`: an ex-post observed policy decision and must have `release_date > decision_date`;
+- `OUTCOME`: realized macro data used only for diagnostics and must have `release_date > decision_date`.
+
+A single date violation invalidates the entire fixture with `lookahead-failed`; the engine does not silently omit the offending datum. Empirical observations also require source provenance.
+
+The first shipped fixture, `ca-2022-07-12-inflation-tightening`, reconstructs the information set immediately before the Bank of Canada's July 13, 2022 policy decision. It uses then-available policy-rate, inflation, GDP, unemployment and wage data, keeps the tariff channel explicitly out of scope, and compares the model's recommendation with the next day's 100-basis-point move. Twelve-quarter macro diagnostics use realized 2025 inflation, unemployment and GDP data released only after the forecast horizon.
+
+The backtest contract reports policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, core-input coverage, provenance completeness and no-look-ahead status.
+
+Backtests are diagnostics, not claims that the simulator should reproduce realized history. One episode is not validation; aggregate claims require multiple independently sourced fixtures.
 
 ## 5. Welfare-weight sensitivity
 
@@ -120,7 +120,7 @@ The economic model produces conditional outcome distributions. The decision engi
 
 ## 7. Robust recommendation contract
 
-The active V2 contract includes:
+The active structural-robustness contract includes:
 
 - selected strategy under the reference calibration;
 - structural parameter draw count;
@@ -139,7 +139,7 @@ The active V2 contract includes:
 - reference-package retention rate;
 - robustness classification.
 
-A dedicated `robustness_to_json()` serializer exposes this contract independently of the legacy full-result JSON surface.
+A dedicated `robustness_to_json()` serializer exposes this contract independently of the legacy full-result JSON surface. Historical backtests have a separate `backtest_to_json()` contract so ex-post diagnostics cannot be confused with forward-looking robustness statistics.
 
 A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Monte Carlo precision alone is insufficient.
 
@@ -157,15 +157,17 @@ Completed or active:
 8. Nested sector-package re-optimization inside every structural draw.
 9. Full 288-candidate generated policy-control re-optimization inside every structural draw.
 10. Exact recommendation-control survival separated from strategy-family survival.
+11. Historical vintage fixture schema, no-look-ahead validation and first source-backed 2022 episode.
+12. Native CI regression that deliberately injects future information and requires rejection.
 
 Next:
 
-11. Add historical vintage fixtures and no-look-ahead backtest metrics.
-12. Surface structural provenance and full decision-robustness metrics in the application/API.
-13. Replace provisional envelopes with empirical estimates where defensible.
-14. Add welfare-weight sensitivity as a separate analysis endpoint.
-15. Add CI gates for historical-vintage integrity and mandate invariance.
+13. Add additional independently sourced historical episodes, beginning with 2015 and 2020.
+14. Surface structural provenance, decision robustness and historical diagnostics in the application/API.
+15. Replace provisional structural envelopes with empirical estimates where defensible.
+16. Add welfare-weight sensitivity as a separate analysis endpoint.
+17. Aggregate historical diagnostics only after enough fixtures exist for meaningful summaries.
 
 ## Research interpretation
 
-Canada Policy Studio remains a scenario comparator rather than an official forecast or causal model. V2 is intended to reveal where a recommendation depends on structural assumptions, policy-control adaptation, sector adaptation and normative choices instead of hiding that dependence behind additional simulation precision.
+Canada Policy Studio remains a scenario comparator rather than an official forecast or causal model. V2 is intended to reveal where a recommendation depends on structural assumptions, policy-control adaptation, sector adaptation, historical information constraints and normative choices instead of hiding those dependencies behind additional simulation precision.
