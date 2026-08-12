@@ -41,6 +41,7 @@ if(WIN32)
     web/app.css
     web/app.js
     web/evaluation-controller.js
+    web/trade-incidence.js
     web/diplomat.css
     web/diplomat.js
     web/negotiation-model.css
@@ -125,6 +126,8 @@ cad_add_test(negotiation_room_tests tests/negotiation_room_test.cpp negotiation_
 set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
 cad_add_test(trade_network_tests tests/trade_network_test.cpp trade_network)
+cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
+set_tests_properties(trade_episode_validation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(robustness_sampler_tests tests/robustness_test.cpp robustness_sampler)
 cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp robustness_integration)
 cad_add_test(backtest_tests tests/backtest_test.cpp historical_backtest)

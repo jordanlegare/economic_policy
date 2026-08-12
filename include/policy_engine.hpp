@@ -65,6 +65,11 @@ struct StructuralParameters {
 
   double output_shock_sd = 0.16;
   double inflation_shock_sd = 0.11;
+  // Frozen empirical residual-correlation estimate from the same 75-quarter
+  // output-gap / inflation estimation panel. This captures only the identified
+  // two-equation contemporaneous covariance; it is not a claim that the full
+  // macro innovation vector has been empirically identified.
+  double output_inflation_shock_correlation = -0.006249264169;
   double growth_shock_sd = 0.25;
   double us_growth_shock_sd = 0.18;
   double export_shock_sd = 0.35;
@@ -100,7 +105,23 @@ struct Economy {
   bool exhaustive_policy_search = false;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
 
-  Economy() { us_sector_coverage.fill(100.0); canada_sector_coverage.fill(100.0); }
+  // Production-compatible directional sector evidence can be supplied here.
+  // Zero means "no direct sector estimate": the trade network then falls back
+  // to the audited aggregate elasticity/pass-through anchors. Reference-only
+  // literature must not be copied into these arrays merely because it exists.
+  std::array<double, 20> us_sector_trade_elasticity{};
+  std::array<double, 20> canada_sector_trade_elasticity{};
+  std::array<double, 20> us_sector_price_pass_through{};
+  std::array<double, 20> canada_sector_price_pass_through{};
+
+  Economy() {
+    us_sector_coverage.fill(100.0);
+    canada_sector_coverage.fill(100.0);
+    us_sector_trade_elasticity.fill(0.0);
+    canada_sector_trade_elasticity.fill(0.0);
+    us_sector_price_pass_through.fill(0.0);
+    canada_sector_price_pass_through.fill(0.0);
+  }
 };
 
 struct SectorImpact {
@@ -110,7 +131,7 @@ struct SectorImpact {
   double exposure = 0.0;
   // Negotiator-facing tariff-incidence and production-network diagnostics.
   // Tariff values are percentage points; upstream costs are sector marginal-
-  // cost pressure propagated through the 20x20 input-output bridge.
+  // cost pressure propagated through the country-specific 20x20 networks.
   double us_applied_tariff = 0.0, canada_applied_tariff = 0.0;
   double us_buyer_pass_through = 0.0, canada_buyer_pass_through = 0.0;
   double canada_exporter_absorption = 0.0, us_exporter_absorption = 0.0;

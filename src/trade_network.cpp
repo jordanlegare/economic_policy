@@ -12,6 +12,10 @@ double clamp(double value, double lo, double hi) {
   return std::max(lo, std::min(hi, value));
 }
 
+double sector_parameter(double candidate, double fallback, double lo, double hi) {
+  return clamp(candidate > 0.0 ? candidate : fallback, lo, hi);
+}
+
 const std::array<TradeSectorProfile, kTradeSectorCount> kProfiles{{
   {"11","Agriculture, forestry, fishing & hunting",.82,.42,.72,.65},
   {"21","Mining, quarrying, oil & gas",.88,.18,.32,.75},
@@ -35,13 +39,20 @@ const std::array<TradeSectorProfile, kTradeSectorCount> kProfiles{{
   {"91","Public administration",.04,.08,.62,.12}
 }};
 
-// Production coefficients are generated from Statistics Canada Table
-// 36-10-0001-01 (2024, Canada, basic prices). The matrix orientation is
-// [downstream][upstream] and each entry is Z_ij / X_j: domestic purchases from
-// upstream model industry i divided by downstream model-industry gross output.
-// Imports, taxes, value added and final demand are deliberately outside this
-// domestic industry-to-industry propagation matrix.
-const TradeInputOutputMatrix kMatrix = generated::kStatCanIo2024Matrix;
+// Canada production coefficients are generated from Statistics Canada Table
+// 36-10-0001-01 (2024, Canada, basic prices). Orientation is
+// [downstream][upstream], A[j][i] = Z_ij / X_j.
+const TradeInputOutputMatrix kCanadaMatrix = generated::kStatCanIo2024Matrix;
+
+// IMPORTANT EVIDENCE BOUNDARY: the U.S. network is now a distinct model object,
+// but no BEA-derived 20-sector artifact is committed yet. Until the reproducible
+// BEA builder is run and its output certified, use the Canadian empirical matrix
+// only as an explicitly labelled structural proxy. Keeping a separate object is
+// intentional: U.S. propagation can be replaced without touching Canadian
+// coefficients or silently changing their provenance.
+const TradeInputOutputMatrix kUsProxyMatrix = generated::kStatCanIo2024Matrix;
+constexpr bool kCanadaMatrixEmpirical = true;
+constexpr bool kUsMatrixEmpirical = false;
 
 TariffIncidence incidence(double headline, double coverage,
                           double negotiated_relief, double pass_through,
@@ -61,14 +72,37 @@ TariffIncidence incidence(double headline, double coverage,
   return out;
 }
 
+double maximum_row_share(const TradeInputOutputMatrix& matrix) {
+  double maximum = 0.0;
+  for (const auto& row : matrix)
+    maximum = std::max(maximum, std::accumulate(row.begin(), row.end(), 0.0));
+  return maximum;
+}
+
 }  // namespace
 
 const std::array<TradeSectorProfile, kTradeSectorCount>& trade_sector_profiles() {
   return kProfiles;
 }
 
+const TradeInputOutputMatrix& canada_trade_input_output_matrix() {
+  return kCanadaMatrix;
+}
+
+const TradeInputOutputMatrix& us_trade_input_output_matrix() {
+  return kUsProxyMatrix;
+}
+
+bool canada_trade_input_output_empirical() {
+  return kCanadaMatrixEmpirical;
+}
+
+bool us_trade_input_output_empirical() {
+  return kUsMatrixEmpirical;
+}
+
 const TradeInputOutputMatrix& trade_input_output_matrix() {
-  return kMatrix;
+  return canada_trade_input_output_matrix();
 }
 
 TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
@@ -79,44 +113,58 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
   if (source >= kTradeSectorCount) return out;
 
   const auto& src = kProfiles[source];
-  const double elasticity = clamp(input.trade_elasticity, .10, 5.0);
+  const double us_elasticity = sector_parameter(
+      input.us_trade_elasticity[source], input.trade_elasticity, .10, 5.0);
+  const double canada_elasticity = sector_parameter(
+      input.canada_trade_elasticity[source], input.trade_elasticity, .10, 5.0);
+  const double us_pass = sector_parameter(
+      input.us_price_pass_through[source], input.price_pass_through, 0.0, 1.0);
+  const double canada_pass = sector_parameter(
+      input.canada_price_pass_through[source], input.price_pass_through, 0.0, 1.0);
   const double diversification = clamp(input.diversification, 0.0, .75);
-  out.us_tariff = incidence(input.us_headline_tariff, us_coverage,
-      input.negotiated_relief, input.price_pass_through, elasticity);
-  out.canada_tariff = incidence(input.canada_headline_tariff, canada_coverage,
-      input.negotiated_relief, input.price_pass_through, elasticity);
 
-  // Reduced exporter demand feeds backwards to its domestic suppliers. The
-  // direct exporting-sector effect remains in policy_engine.cpp; this layer
-  // contributes only the supplier spillover so the finite sector search stays
-  // additive and auditable.
+  out.us_tariff = incidence(input.us_headline_tariff, us_coverage,
+      input.negotiated_relief, us_pass, us_elasticity);
+  out.canada_tariff = incidence(input.canada_headline_tariff, canada_coverage,
+      input.negotiated_relief, canada_pass, canada_elasticity);
+
+  // Reduced exporter demand feeds backwards through each exporter's own
+  // domestic supplier network. Canada uses the certified StatCan matrix; the
+  // United States uses the separately identified U.S. matrix object/proxy.
   const double canada_direct_drag = -100.0 * (out.us_tariff.applied_tariff / 100.0)
-      * elasticity * src.trade * (.72 - .28 * diversification);
+      * us_elasticity * src.trade * (.72 - .28 * diversification);
   const double us_direct_drag = -100.0 * (out.canada_tariff.applied_tariff / 100.0)
-      * elasticity * src.import * .46;
+      * canada_elasticity * src.import * .46;
 
   for (std::size_t upstream = 0; upstream < kTradeSectorCount; ++upstream) {
-    const double requirement = kMatrix[source][upstream];
-    if (requirement <= 0.0) continue;
-    out.canada_output[upstream] += canada_direct_drag * requirement * .30;
-    out.us_output[upstream] += us_direct_drag * requirement * .30;
+    const double canada_requirement = kCanadaMatrix[source][upstream];
+    const double us_requirement = kUsProxyMatrix[source][upstream];
+    if (canada_requirement > 0.0)
+      out.canada_output[upstream] += canada_direct_drag * canada_requirement * .30;
+    if (us_requirement > 0.0)
+      out.us_output[upstream] += us_direct_drag * us_requirement * .30;
   }
 
-  // Tariffs paid by the importing economy also raise the cost of source-sector
-  // inputs used downstream. Pass-through is applied before the IO coefficient;
-  // firms then absorb part of the marginal-cost shock through margins/output.
+  // Tariffs paid by the importing economy raise the cost of source-sector
+  // inputs used downstream. Country-specific matrices prevent a future BEA
+  // replacement from contaminating the certified Canadian requirements table.
   for (std::size_t downstream = 0; downstream < kTradeSectorCount; ++downstream) {
-    const double requirement = kMatrix[downstream][source];
-    if (requirement <= 0.0) continue;
+    const double us_requirement = kUsProxyMatrix[downstream][source];
+    const double canada_requirement = kCanadaMatrix[downstream][source];
     const auto& dst = kProfiles[downstream];
-    const double us_cost = out.us_tariff.buyer_pass_through * requirement * .85;
-    const double canada_cost = out.canada_tariff.buyer_pass_through * requirement * .85;
-    out.us_upstream_cost[downstream] += us_cost;
-    out.canada_upstream_cost[downstream] += canada_cost;
-    out.us_prices[downstream] += .70 * us_cost;
-    out.canada_prices[downstream] += .70 * canada_cost;
-    out.us_output[downstream] -= us_cost * (.12 + .18 * dst.cyclical);
-    out.canada_output[downstream] -= canada_cost * (.12 + .18 * dst.cyclical);
+    if (us_requirement > 0.0) {
+      const double us_cost = out.us_tariff.buyer_pass_through * us_requirement * .85;
+      out.us_upstream_cost[downstream] += us_cost;
+      out.us_prices[downstream] += .70 * us_cost;
+      out.us_output[downstream] -= us_cost * (.12 + .18 * dst.cyclical);
+    }
+    if (canada_requirement > 0.0) {
+      const double canada_cost = out.canada_tariff.buyer_pass_through
+          * canada_requirement * .85;
+      out.canada_upstream_cost[downstream] += canada_cost;
+      out.canada_prices[downstream] += .70 * canada_cost;
+      out.canada_output[downstream] -= canada_cost * (.12 + .18 * dst.cyclical);
+    }
   }
 
   for (std::size_t sector = 0; sector < kTradeSectorCount; ++sector) {
@@ -167,14 +215,15 @@ TradeNetworkResult evaluate_trade_network(const TradeNetworkInput& input) {
 }
 
 double maximum_trade_input_share() {
-  double maximum = 0.0;
-  for (const auto& row : kMatrix)
-    maximum = std::max(maximum, std::accumulate(row.begin(), row.end(), 0.0));
-  return maximum;
+  return maximum_row_share(kCanadaMatrix);
+}
+
+double maximum_us_trade_input_share() {
+  return maximum_row_share(kUsProxyMatrix);
 }
 
 std::string trade_network_methodology() {
-  return "Empirically aggregated 20-sector direct-requirements production network from Statistics Canada Table 36-10-0001-01: 2024 Canada basic-price industry-by-industry input-output cells. Matrix entries are domestic inter-industry purchases Z_ij divided by downstream gross output X_j; 40,364 detailed transaction cells and 213 detailed gross-output rows are aggregated to the simulator sectors. Imports, taxes, value added and final demand are excluded from the domestic matrix. Canadian NAICS wholesale trade 41 is presented as model code 42, and government GS/GU 91-series industries map to public administration 91. Tariff incidence and pass-through remain separate model mechanisms.";
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network is a separate matrix object but is currently an explicitly provisional structural proxy using the Canadian coefficients until the versioned BEA Input-Output artifact is generated and certified; it must not be described as empirical U.S. IO calibration. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to the declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
 }
 
 }  // namespace cad

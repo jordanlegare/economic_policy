@@ -1,0 +1,10 @@
+key,value,unit,source_id,mapping_status,notes
+episode_id,ca-us-2018-section232,identifier,statcan_2018_tariff_export_study,metadata,"U.S. Section 232 steel/aluminum episode; June 2018 to May 2019"
+us_steel_tariff,25,percent,finance_canada_2018_countermeasures,direct-legal,"U.S. tariff on specified Canadian steel products from June 1 2018"
+us_aluminum_tariff,10,percent,finance_canada_2018_countermeasures,direct-legal,"U.S. tariff on specified Canadian aluminum products from June 1 2018"
+canada_countermeasure_trade_value,16.6,CAD_bn,finance_canada_2018_countermeasures,direct-legal,"Canadian countermeasures effective July 1 2018"
+canada_steel_countertariff,25,percent,finance_canada_2018_countermeasures,direct-legal,"Table 1 U.S.-origin goods"
+canada_other_countertariff,10,percent,finance_canada_2018_countermeasures,direct-legal,"Tables 2 and 3 U.S.-origin goods"
+tariffed_steel_aluminum_export_change,-50,percent,statcan_2018_tariff_export_study,directional-validation-only,"Approximate value decline among tariffed Canadian steel/aluminum exports while tariffs were imposed; not a whole-manufacturing elasticity"
+us_importer_tariff_cost_pass_through,1,ratio,statcan_2018_tariff_export_study,reference-only,"Study reports U.S. importers paid the full tariff cost through higher prices for the treated steel/aluminum products; not promoted as economy-wide U.S. pass-through"
+production_validation_scope,0,flag,internal_model_design,directional-validation-only,"Use this episode to test sign/channel behavior and sensitivity. Do not calibrate the 20-sector manufacturing aggregate directly to the treated-product 50% export decline."
