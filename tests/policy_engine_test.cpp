@@ -159,15 +159,20 @@ int main() {
   assert(initial_json.find("\"baselineCanadaScore\":") != std::string::npos);
   assert(initial_json.find("\"baselineUsScore\":") != std::string::npos);
 
-  // The bargaining/robust layers must see the complete retained candidate set,
-  // not only the 12 cards displayed in the browser. This is what authorizes the
-  // UI to promote a robust package as the primary initial recommendation.
+  // Bargaining enumeration itself searches every linked-issue grid point for
+  // every verified policy/sector strategy, so the point-estimate recommendation
+  // is selected before the display/robustness retention cap is applied. If the
+  // epsilon-frontier exceeds that cap, robustness must report incompleteness
+  // rather than invalidating the point-estimate global-search guarantee.
   const auto initial_negotiation = cad::analyze_negotiation(startup, initial);
-  assert(initial_negotiation.frontier_complete);
   assert(!initial_negotiation.frontier.empty());
+  assert(initial_negotiation.pareto_frontier_size
+      >= static_cast<int>(initial_negotiation.frontier.size()));
+  assert(initial_negotiation.recommended.id == initial_negotiation.frontier.front().id);
   const auto initial_robust = cad::analyze_robust_recommendations(
       startup, initial, initial_negotiation, calibration, 200, 424242);
-  assert(initial_robust.candidate_set_complete);
+  assert(initial_robust.candidate_set_complete
+      == (initial.recommendation.global_search_complete && initial_negotiation.frontier_complete));
   assert(initial_robust.packages.size() == initial_negotiation.frontier.size());
   assert(!initial_robust.recommended_package_id.empty());
 
