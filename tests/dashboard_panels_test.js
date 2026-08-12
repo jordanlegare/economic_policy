@@ -20,6 +20,10 @@ required.forEach(id => assert(
 ));
 assert(html.includes('id="collapseDashboardPanels"'));
 assert(html.includes('id="expandDashboardPanels"'));
+assert(html.includes('id="dashboardPanelStyles"'));
+
+const match = html.match(/<script id="dashboardPanelController">([\s\S]*?)<\/script>/);
+assert(match, 'dashboard panel controller must be bundled in the page shell');
 
 function eventTarget(extra = {}) {
   const listeners = new Map();
@@ -57,7 +61,7 @@ global.localStorage = {
   setItem(key, value) { storage.set(key, value); }
 };
 
-vm.runInThisContext(fs.readFileSync('web/dashboard-panels.js', 'utf8'));
+vm.runInThisContext(match[1]);
 assert(window.DashboardPanels, 'panel controller must expose inspection helpers');
 
 collapse.fire('click');
