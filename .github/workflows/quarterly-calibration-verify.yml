@@ -16,5 +16,9 @@ jobs:
         run: python3 tools/estimate_realized_residuals.py --verify
       - name: Verify structural evidence promotions
         run: python3 tools/verify_structural_promotions.py
+      - name: Verify official-archive bilateral IO builder
+        run: |
+          python3 -m py_compile tools/build_oecd_bilateral_io.py
+          python3 tests/oecd_bilateral_io_builder_test.py
       - name: Verify observed-data trade calibration certificate
         run: python3 tools/verify_trade_gate_certification.py --verify
