@@ -1,0 +1,7 @@
+source_id,agency,dataset,url,sha256,observations,transformation
+boc_sep_output_gap,Bank of Canada,SEP output gap SWP-LYGAP{vintage},https://www.bankofcanada.ca/rates/staff-economic-projections/,e5b3e1d464b341c4aee8c06bbe50092093bb93accf0bda273768e5561aa9eaa5,76,current-quarter real-time vintage
+boc_sep_core_index,Bank of Canada,SEP core CPI SWP-PCPIX{vintage},https://www.bankofcanada.ca/rates/staff-economic-projections/,ef003efebd4ff5432e94f2f2bfae1ad8536a54a326f072b92c32eb8f70f61b19,76,current-quarter real-time vintage; PCPIX converted to year-over-year inflation
+boc_sep_policy_rate,Bank of Canada,SEP implied policy rate SWP-R1N{vintage},https://www.bankofcanada.ca/rates/staff-economic-projections/,85bc39ffc2a4cb4ee1bf5bfdc4a56af751d857c8eab6c9250471ddb2a58cd04b,76,current-quarter real-time vintage
+boc_sep_usdcad,Bank of Canada,SEP U.S./CAD rate SWP-USCANPFX{vintage},https://www.bankofcanada.ca/rates/staff-economic-projections/,1a18e9426eab47852728b8b081aba8d2a3efc45ff5bb3d2c82dbb71edc3bf342,76,current-quarter real-time vintage
+statcan_gdp_quarterly,Statistics Canada,36-10-0104-01,https://www150.statcan.gc.ca/n1/en/tbl/csv/36100104-eng.zip,9a5e3ffe478f1ccb69724147c246818e98786adfafee6818605a298c48626dcd,256,revised chained-dollar GDP quarterly growth diagnostic
+statcan_unemployment_monthly,Statistics Canada,14-10-0287-01,https://www150.statcan.gc.ca/n1/en/tbl/csv/14100287-eng.zip,bb6ab526de920de38442daf0cfce6c7b2fc6058e24f272a4224aa413aa61e3b5,203,revised quarterly-mean unemployment diagnostic

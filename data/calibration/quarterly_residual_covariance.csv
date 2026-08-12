@@ -1,0 +1,5 @@
+row,column,covariance,correlation,observations
+output_gap_residual,output_gap_residual,2.198317809e-05,1,75
+output_gap_residual,inflation_residual,-7.400077064e-06,-0.006249264169,75
+inflation_residual,output_gap_residual,-7.400077064e-06,-0.006249264169,75
+inflation_residual,inflation_residual,0.0637858342,1,75

@@ -1,0 +1,11 @@
+parameter,estimate,standard_error,lower_bound,upper_bound,observations,sample_start,sample_end,method,direct_eligible,notes
+output_persistence,0.8802835399,0.05403573477,0.7743734997,0.98,75,2001Q1,2019Q4,OLS production-form output-gap equation,true,Real-time SEP vintages
+real_rate_demand_sensitivity,-0.0003497741744,0.0002450485963,0.001,0.002,75,2001Q1,2019Q4,OLS production-form output-gap equation,false,Coefficient on -(staff rate-neutral rate)
+output_shock_sd,0.004688622818,0,0.003282035973,0.006095209664,75,2001Q1,2019Q4,residual SD of output equation,true,Quarterly residual innovation
+inflation_persistence,0.7371310581,0.07852389247,0.5832242288,0.8910378873,75,2001Q1,2019Q4,OLS production-form centered inflation equation,true,PCPIX year-over-year within each vintage
+phillips_curve_slope,3.951477288,2.909183953,-1.75052326,9.653477836,75,2001Q1,2019Q4,OLS production-form centered inflation equation,true,Contemporaneous SEP output gap
+fx_pass_through,-0.0008557209133,0.07002587342,-0.1381064328,0.136394991,75,2001Q1,2019Q4,OLS production-form centered inflation equation,false,Omitted oil/import/supply terms remain in residual
+inflation_shock_sd,0.25288263,0,0.177017841,0.328747419,75,2001Q1,2019Q4,residual SD of inflation equation,true,Quarterly residual innovation
+rate_inflation_response,0.13,0,0.0845,0.1755,75,2001Q1,2019Q4,grid fit exact clipped production policy rule,true,SEP implied-rate path RMSE=0.0655 pp
+rate_output_response,0,0,0.001,0.002,75,2001Q1,2019Q4,grid fit exact clipped production policy rule,false,SEP implied-rate path RMSE=0.0655 pp
+max_quarterly_rate_step,0.065,0,0.04875,0.08125,75,2001Q1,2019Q4,grid fit exact clipped production policy rule,true,SEP implied-rate path RMSE=0.0655 pp
