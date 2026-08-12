@@ -111,7 +111,7 @@ def build(text: str, mapping: dict[str, list[tuple[int, float]]]) -> tuple[list[
     # total intermediate purchases from all country-industry rows. Final-demand
     # and value-added rows do not match the country-industry label pattern and
     # are therefore excluded by construction.
-    denominator = [0.0] * 20
+    denominator = {"CAN": [0.0] * 20, "USA": [0.0] * 20}
     ca_from_us = [[0.0] * 20 for _ in range(20)]
     us_from_ca = [[0.0] * 20 for _ in range(20)]
     used_industries: set[str] = set()
@@ -153,7 +153,7 @@ def build(text: str, mapping: dict[str, list[tuple[int, float]]]) -> tuple[list[
         if total_input <= 0:
             continue
         for down_sector, down_weight in down_targets:
-            denominator[down_sector] += total_input * down_weight
+            denominator[down_country][down_sector] += total_input * down_weight
         target_matrix = ca_from_us if down_country == "CAN" else us_from_ca
         for up_industry, value in partner_flows:
             up_targets = mapping.get(up_industry)
@@ -171,15 +171,22 @@ def build(text: str, mapping: dict[str, list[tuple[int, float]]]) -> tuple[list[
         raise SystemExit(f"Reviewed crosswalk is incomplete; unmapped ICIO industries: {preview}")
     if mapped_cells == 0:
         raise SystemExit("No Canada/U.S. bilateral intermediate cells were mapped")
-    if any(value <= 0 for value in denominator):
-        missing = [MODEL_CODES[i] for i, value in enumerate(denominator) if value <= 0]
-        raise SystemExit("No intermediate-input denominator for model sectors: " + ", ".join(missing))
+    for country in ("CAN", "USA"):
+        if any(value <= 0 for value in denominator[country]):
+            missing = [MODEL_CODES[i] for i, value in enumerate(denominator[country]) if value <= 0]
+            raise SystemExit(
+                f"No intermediate-input denominator for {country} model sectors: " + ", ".join(missing)
+            )
 
-    for matrix in (ca_from_us, us_from_ca):
+    for country, matrix in (("CAN", ca_from_us), ("USA", us_from_ca)):
         for downstream in range(20):
-            matrix[downstream] = [value / denominator[downstream] for value in matrix[downstream]]
+            matrix[downstream] = [
+                value / denominator[country][downstream] for value in matrix[downstream]
+            ]
             if sum(matrix[downstream]) >= 1.0 + 1e-9:
-                raise SystemExit(f"Implausible bilateral sourcing share for {MODEL_CODES[downstream]}")
+                raise SystemExit(
+                    f"Implausible bilateral sourcing share for {country} {MODEL_CODES[downstream]}"
+                )
     return ca_from_us, us_from_ca, {
         "mapped_cells": mapped_cells,
         "mapped_icio_industries": len(used_industries),
