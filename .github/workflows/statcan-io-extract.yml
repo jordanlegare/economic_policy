@@ -12,13 +12,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download official StatCan 2024 IO table
+      - name: Acquire official StatCan 2024 IO table
+        shell: bash
         run: |
-          curl -fL --retry 6 --retry-delay 3 --retry-all-errors \
-            --connect-timeout 30 --max-time 360 \
-            -o /tmp/36100001-eng.zip \
-            https://www150.statcan.gc.ca/n1/tbl/csv/36100001-eng.zip
-          test -s /tmp/36100001-eng.zip
+          set -euo pipefail
+          ZIP=/tmp/36100001-eng.zip
+          DIRECT=https://www150.statcan.gc.ca/n1/tbl/csv/36100001-eng.zip
+          if curl -fL --retry 2 --retry-delay 2 --retry-all-errors \
+              --connect-timeout 12 --max-time 120 -o "$ZIP" "$DIRECT"; then
+            echo "STATCAN_IO_TRANSPORT=statcan-direct" >> "$GITHUB_ENV"
+          else
+            echo "Direct StatCan transport unavailable; using DBnomics' raw STATCAN source-data mirror."
+            rm -f "$ZIP"
+            git clone --depth 1 --filter=blob:none --sparse \
+              https://git.nomics.world/dbnomics-source-data/statcan-source-data.git \
+              /tmp/statcan-source
+            git -C /tmp/statcan-source sparse-checkout set 36100001
+            candidate="$(find /tmp/statcan-source/36100001 -type f \
+              \( -name '36100001-eng.zip' -o -name '36100001.zip' -o -name '36100001.csv' \) \
+              | head -n 1)"
+            if [ -z "$candidate" ]; then
+              echo "No raw 36100001 source payload found in DBnomics mirror" >&2
+              find /tmp/statcan-source/36100001 -maxdepth 2 -type f -print || true
+              exit 1
+            fi
+            case "$candidate" in
+              *.zip) cp "$candidate" "$ZIP" ;;
+              *.csv) zip -jq "$ZIP" "$candidate" ;;
+              *) echo "Unsupported mirror payload: $candidate" >&2; exit 1 ;;
+            esac
+            echo "STATCAN_IO_TRANSPORT=dbnomics-raw-statcan-mirror" >> "$GITHUB_ENV"
+          fi
+          test -s "$ZIP"
+          unzip -t "$ZIP" >/dev/null
+          sha256sum "$ZIP"
       - name: Build 2024 StatCan IO matrix
         run: |
           python3 tools/build_statcan_io_matrix.py \
@@ -28,6 +55,24 @@ jobs:
           test -s artifacts/statcan-io/statcan_io_2024_matrix.csv
           test -s artifacts/statcan-io/trade_io_2024.hpp
           test -s artifacts/statcan-io/statcan_io_2024_provenance.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('artifacts/statcan-io/statcan_io_2024_provenance.json')
+          data = json.loads(path.read_text())
+          data['retrievalTransport'] = os.environ['STATCAN_IO_TRANSPORT']
+          data['rawMirror'] = (
+              'https://git.nomics.world/dbnomics-source-data/statcan-source-data'
+              if data['retrievalTransport'] != 'statcan-direct' else None
+          )
+          path.write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({
+              'transport': data['retrievalTransport'],
+              'mappedTransactionRows': data['mappedTransactionRows'],
+              'maximumRowSum': data['maximumRowSum'],
+              'minimumRowSum': data['minimumRowSum'],
+          }, sort_keys=True))
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: statcan-io-2024-calibration
