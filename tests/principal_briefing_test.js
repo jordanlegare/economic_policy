@@ -11,10 +11,10 @@ const principalSource=fs.readFileSync('web/principal-briefing.js','utf8');
 vm.runInThisContext(principalSource);
 
 const issue=(id,label,canadaMove,usMove)=>({id,label,canadaMove,usMove});
-const p1={id:'pareto-1',strategyId:'joint-growth',strategyName:'Joint growth compact',canadaUtility:66,usUtility:64,canadaSurplus:8,usSurplus:7,stabilityScore:91,issues:[
+const p1={id:'pareto-1',strategyId:'joint-growth',strategyName:'Joint growth compact',verifiedWinWin:true,canadaUtility:66,usUtility:64,canadaSurplus:8,usSurplus:7,stabilityScore:91,issues:[
   issue('us-tariff-relief','U.S. tariff relief',0,75),issue('canada-tariff-relief','Canadian retaliatory-tariff relief',50,0),issue('border-facilitation','Border and standards facilitation',50,50),issue('procurement','Reciprocal procurement access',25,25),issue('supply-chain','North American supply-chain commitment',25,25)
 ]};
-const p2={id:'pareto-2',strategyId:'bridge',strategyName:'Reciprocal bridge',canadaUtility:63,usUtility:65,canadaSurplus:6,usSurplus:8,stabilityScore:95,issues:[
+const p2={id:'pareto-2',strategyId:'bridge',strategyName:'Reciprocal bridge',verifiedWinWin:true,canadaUtility:63,usUtility:65,canadaSurplus:6,usSurplus:8,stabilityScore:95,issues:[
   issue('us-tariff-relief','U.S. tariff relief',0,50),issue('canada-tariff-relief','Canadian retaliatory-tariff relief',25,0),issue('border-facilitation','Border and standards facilitation',75,75),issue('procurement','Reciprocal procurement access',25,25),issue('supply-chain','North American supply-chain commitment',50,50)
 ]};
 const result={
@@ -23,13 +23,13 @@ const result={
     {id:'bridge',name:'Reciprocal bridge',growth:1.6,usGrowth:2.0,inflation:2.3,recessionRisk:16}
   ],
   recommendation:{verifiedWinWin:true,growthConstraintMet:true,globalSearchComplete:true,policyCandidatesVerified:301,sectorFinalistsResimulated:18},
-  negotiation:{recommendedPackage:p1,frontier:[p1,p2],batna:{canada:51.2,us:50.4,canadaStrategy:'Canada outside option',usStrategy:'U.S. outside option'},reservation:{canada:52.1,us:51.3}},
-  robustness:{recommendedPackageId:'pareto-1',requiredJointClearProbability:.80,secondStageMonteCarloDraws:5000,seed:20260811,uncertaintyGrade:'mixed empirical and model uncertainty',empiricallyCalibrated:false,parameterDistributions:[
+  negotiation:{recommendedPackage:p1,frontier:[p1,p2],frontierComplete:true,trust:{dataIntegrityPass:true},batna:{canada:51.2,us:50.4,canadaStrategy:'Canada outside option',usStrategy:'U.S. outside option'},reservation:{canada:52.1,us:51.3}},
+  robustness:{recommendedPackageId:'pareto-1',candidateSetComplete:true,requiredJointClearProbability:.80,secondStageMonteCarloDraws:5000,seed:20260811,uncertaintyGrade:'mixed empirical and model uncertainty',empiricallyCalibrated:false,parameterDistributions:[
     {name:'trade_elasticity',mean:.65,standardDeviation:.12,evidenceClass:'assumption',source:'calibration fallback'},
     {name:'border_friction',mean:2,standardDeviation:.3,evidenceClass:'official-derived',source:'border series'}
   ],packages:[
-    {packageId:'pareto-1',jointClearProbability:.86,canadaClearProbability:.93,usClearProbability:.91,canadaCvar10Surplus:2.4,usCvar10Surplus:1.7,maxRegret:.72,rankWinProbability:.61,canadaCi95:[1.1,14.2],usCi95:[.4,13.8]},
-    {packageId:'pareto-2',jointClearProbability:.91,canadaClearProbability:.92,usClearProbability:.96,canadaCvar10Surplus:1.8,usCvar10Surplus:2.1,maxRegret:.94,rankWinProbability:.36,canadaCi95:[.5,12.8],usCi95:[1.0,15.0]}
+    {packageId:'pareto-1',clearsProbabilityGate:true,jointClearProbability:.86,canadaClearProbability:.93,usClearProbability:.91,canadaCvar10Surplus:2.4,usCvar10Surplus:1.7,maxRegret:.72,rankWinProbability:.61,canadaCi95:[1.1,14.2],usCi95:[.4,13.8]},
+    {packageId:'pareto-2',clearsProbabilityGate:true,jointClearProbability:.91,canadaClearProbability:.92,usClearProbability:.96,canadaCvar10Surplus:1.8,usCvar10Surplus:2.1,maxRegret:.94,rankWinProbability:.36,canadaCi95:[.5,12.8],usCi95:[1.0,15.0]}
   ]},
   calibration:{snapshotId:'ca-us-2026-08-11',grade:'partial-official',completeness:68,certifiedForEmpiricalUse:false,checks:{officialTrade:true,tariffLines:false,inputOutput:false,originUtilization:false,elasticitiesEstimated:false,passThroughEstimated:false},sources:[
     {id:'statcan_trade',agency:'Statistics Canada',dataset:'Canadian international merchandise trade',vintage:'2025 annual',status:'loaded',url:'https://www150.statcan.gc.ca/example'},
@@ -48,14 +48,17 @@ const room={round:4,phase:'conditional exchange',revision:19,offers:[
   {revision:10,category:'Bridge',packageId:'pareto-1'},
   {revision:20,category:'Bridge',packageId:'pareto-2'}
 ]};
-const displayedUs=Array(20).fill(50),displayedCanada=Array(20).fill(75);
-const model=window.PrincipalBriefing.buildModel({result,room,settings:{usTariff:35,retaliatoryTariff:10,canadaPriority:55,usPriority:45,riskAversion:62,cooperationCeiling:50,usSectorCoverage:displayedUs,canadaSectorCoverage:displayedCanada},dashboard:{displayedCoverage:{us:displayedUs,canada:displayedCanada}},selectedScenario:result.scenarios[1],redlines:{minCanada:45,minUs:45,maxRecession:40,minGrowth:0,maxInflation:3.5},notes:'Principal wants a narrow opening package.',ledger:[
+const displayedUs=Array(20).fill(50),displayedCanada=Array(20).fill(75),searchUs=Array(20).fill(100),searchCanada=Array(20).fill(100);
+const model=window.PrincipalBriefing.buildModel({result,room,settings:{usTariff:35,retaliatoryTariff:10,canadaPriority:55,usPriority:45,riskAversion:62,cooperationCeiling:50,usSectorCoverage:displayedUs,canadaSectorCoverage:displayedCanada},dashboard:{displayedCoverage:{us:displayedUs,canada:displayedCanada},searchAnchor:{us:searchUs,canada:searchCanada}},selectedScenario:result.scenarios[1],redlines:{minCanada:45,minUs:45,maxRecession:40,minGrowth:0,maxInflation:3.5},notes:'Principal wants a narrow opening package.',ledger:[
   {timestamp:'2026-08-11T10:00:00Z',status:'Bridge option',packageId:'pareto-2',rationale:'Held before round 4'},
   {timestamp:'2026-08-11T11:00:00Z',status:'Proposed',packageId:'pareto-1',rationale:'Latest recorded decision'}
 ],now:'2026-08-11T12:00:00Z'});
 
 assert.strictEqual(model.best.id,'pareto-1');
 assert.strictEqual(model.best.metricsAvailable,true);
+assert.strictEqual(model.robustPromoted,true,'complete candidate set plus probability gate must promote robust package');
+assert.strictEqual(model.primaryKind,'robust');
+assert.strictEqual(model.modelTrustStatus,'ROBUST BEST WIN-WIN ON DECLARED STARTUP GRID');
 assert.strictEqual(model.bridge.id,'pareto-2','latest bridge counteroffer must win over older bridge records');
 assert(model.whatTheyWant.join(' ').includes('latest recorded U.S. offer'));
 assert(model.whatTheyWant.join(' ').includes('Canadian retaliatory-tariff relief'));
@@ -68,12 +71,17 @@ assert(model.evidenceSources.some(x=>x.agency==='Statistics Canada'));
 assert(model.whereWeAre.some(x=>x.includes('Dashboard evaluated state: U.S. tariff 35.0%')));
 assert(model.whereWeAre.some(x=>x.includes('Canada/U.S. priority 55/45')));
 assert(model.whereWeAre.some(x=>x.includes('displayed sector coverage averages U.S. 50.0% and Canada 75.0%')));
+assert(model.whereWeAre.some(x=>x.includes('Negotiation/search posture is intentionally separate')),'brief must distinguish displayed verified agreement from next search anchor');
+assert(model.whereWeAre.some(x=>x.includes('next search anchor averages U.S. 100.0% and Canada 100.0%')));
 assert(model.whereWeAre.some(x=>x.includes('Agreement verification: verified win-win')));
 assert(model.whereWeAre.some(x=>x.includes('global policy/sector search complete')));
+assert(model.whereWeAre.some(x=>x.includes('Dashboard leading policy scenario: Joint growth compact')));
 assert(model.whereWeAre.some(x=>x.includes('Dashboard inspection card: Reciprocal bridge')));
 assert(model.whereWeAre.some(x=>x.includes('Latest recorded decision status: Proposed on pareto-1')),'decision ledger must use newest timestamp, not array position');
 assert.strictEqual(model.dashboardState.usTariff,35);
 assert.strictEqual(model.dashboardState.verifiedWinWin,true);
+assert.deepStrictEqual(model.dashboardState.searchAnchor.us,searchUs);
+assert.strictEqual(model.leadingScenario.id,'joint-growth');
 assert.strictEqual(model.inspectedScenario.id,'bridge');
 
 const bytes=window.PrincipalBriefing.buildPdf(model);
@@ -86,7 +94,7 @@ assert(bytes.length>12000);
 assert(pdf.includes('/BaseFont /Helvetica-Bold'));
 assert(pdf.includes('/BaseFont /Helvetica-Oblique'));
 assert(pdf.includes('0.055 0.125 0.205 rg'));
-for(const heading of ['WHERE WE ARE','WHAT THEY WANT','WHAT WE WANT','WHAT CHANGED','RED LINES','BEST PACKAGE','BRIDGE PACKAGE','BATNA','KEY UNCERTAINTIES','DECISION REQUIRED TODAY','RECOMMENDED LANGUAGE','EVIDENCE SOURCES'])assert(pdf.includes(heading),`missing ${heading}`);
+for(const heading of ['WHERE WE ARE','WHAT THEY WANT','WHAT WE WANT','WHAT CHANGED','RED LINES','PRIMARY PACKAGE','BRIDGE PACKAGE','BATNA','KEY UNCERTAINTIES','DECISION REQUIRED TODAY','RECOMMENDED LANGUAGE','EVIDENCE SOURCES'])assert(pdf.includes(heading),`missing ${heading}`);
 assert((pdf.match(/\/Type \/Page /g)||[]).length>=3);
 assert(pdf.includes('WORKING BRIEF - ANALYTICAL SUPPORT'));
 assert(pdf.includes('Snapshot ca-us-2026-08-11'));
@@ -98,14 +106,53 @@ assert(noOffer.whatTheyWant.join(' ').includes('Do not describe model-implied U.
 const missingRobustResult=JSON.parse(JSON.stringify(result));
 missingRobustResult.robustness.packages=[];
 const missingRobust=window.PrincipalBriefing.buildModel({result:missingRobustResult,room,settings:{usTariff:35,retaliatoryTariff:10},now:'2026-08-11T12:00:00Z'});
+assert.strictEqual(missingRobust.robustPromoted,false);
+assert.strictEqual(missingRobust.primaryKind,'point-estimate');
+assert.strictEqual(missingRobust.best.id,'pareto-1');
 assert.strictEqual(missingRobust.best.metricsAvailable,false);
 assert.strictEqual(missingRobust.best.jointClear,null);
-assert(missingRobust.whereWeAre.some(x=>x.includes('second-stage robustness metrics are unavailable')));
+assert(missingRobust.whereWeAre.some(x=>x.includes('no second-stage robustness record')));
 assert(missingRobust.decisionRequired.some(x=>x.includes('robustness metrics are unavailable')));
 assert(window.PrincipalBriefing.previewHtml(missingRobust).includes('<b>n/a</b>'),'missing robustness data must render as unavailable, not zero');
 
+const withheldResult=JSON.parse(JSON.stringify(result));
+withheldResult.robustness.recommendedPackageId='pareto-2';
+withheldResult.robustness.candidateSetComplete=false;
+const withheld=window.PrincipalBriefing.buildModel({result:withheldResult,room,settings:{usTariff:35,retaliatoryTariff:10},now:'2026-08-11T12:00:00Z'});
+assert.strictEqual(withheld.robustPromoted,false);
+assert.strictEqual(withheld.best.id,'pareto-1','dashboard point-estimate package must remain primary when robust promotion gate is withheld');
+assert(withheld.whereWeAre.some(x=>x.includes('Second-stage robustness ranks pareto-2')));
+assert(withheld.whereWeAre.some(x=>x.includes('dashboard promotion is withheld')));
+assert(withheld.decisionRequired.some(x=>x.includes('Withhold a robust-best claim')));
+
+const staleRobustResult=JSON.parse(JSON.stringify(result));
+staleRobustResult.robustness.recommendedPackageId='missing-package';
+const staleRobust=window.PrincipalBriefing.buildModel({result:staleRobustResult,room,settings:{usTariff:35,retaliatoryTariff:10},now:'2026-08-11T12:00:00Z'});
+assert.strictEqual(staleRobust.robustPromoted,false);
+assert.strictEqual(staleRobust.best.id,'pareto-1');
+assert(staleRobust.whereWeAre.some(x=>x.includes('not present in the current negotiation frontier')));
+assert(staleRobust.whereWeAre.some(x=>x.includes('does not transfer robustness claims')));
+
+const staleRoom=JSON.parse(JSON.stringify(room));
+staleRoom.offers.push({revision:99,round:5,side:'us',packageId:'historical-us',note:'Historical U.S. package'});
+staleRoom.offers.push({revision:100,round:5,side:'canada',packageId:'historical-ca',note:'Historical Canadian package'});
+staleRoom.counteroffers.push({revision:101,category:'Bridge',packageId:'historical-bridge'});
+const staleRoomModel=window.PrincipalBriefing.buildModel({result,room:staleRoom,settings:{usTariff:35,retaliatoryTariff:10},now:'2026-08-11T12:00:00Z'});
+assert(staleRoomModel.whatTheyWant.some(x=>x.includes('latest recorded U.S. offer is historical-us')));
+assert(staleRoomModel.whatTheyWant.some(x=>x.includes('not present in the current model frontier')));
+assert(!staleRoomModel.whatTheyWant.some(x=>x.includes('No U.S. package has been recorded')));
+assert(staleRoomModel.whatWeWant.some(x=>x.includes("Canada's latest recorded offer is historical-ca")));
+assert(staleRoomModel.whatWeWant.some(x=>x.includes('not present in the current model frontier')));
+assert.strictEqual(staleRoomModel.bridge.id,'pareto-2','stale recorded bridge must fall back to current engine bridge');
+assert(staleRoomModel.whatChanged.some(x=>x.includes('latest recorded bridge counteroffer historical-bridge is not in the current frontier')));
+
 assert(principalSource.includes('function dashboardFingerprint()'),'principal brief must fingerprint visible dashboard inputs');
 assert(principalSource.includes('async function ensureDashboardCurrent()'),'principal brief must synchronize stale controls before generation');
+assert(principalSource.includes('waitForAdjustmentCommit()'),'principal brief must wait for an active range gesture to commit');
+assert(principalSource.includes('waitForRenderedState()'),'principal brief must wait for the evaluated state to actually render');
+assert(principalSource.includes('robust.candidateSetComplete===true&&robustMetrics?.clearsProbabilityGate===true'),'principal primary package must use the same robust promotion gate as dashboard negotiation UI');
+assert(principalSource.includes('async function refreshOpenBriefIfNeeded()'),'an open brief must be able to refresh if evaluated or room state changes');
+assert(principalSource.includes('startLiveBriefSync()'),'live brief synchronization must start when the dialog opens');
 assert(principalSource.includes("event.stopImmediatePropagation();void openPrincipalDialog()"),'principal open action must bypass the stale legacy briefing renderer');
 assert(principalSource.includes("event.stopImmediatePropagation();void savePrincipalPdf()"),'principal PDF action must use the synchronized model directly');
 assert(principalSource.includes("room=await roomState()"),'principal model must fetch current room state at generation time');
@@ -151,7 +198,7 @@ assert(principalSource.includes("room=await roomState()"),'principal model must 
   const context={
     window:{},document:fakeDocument,localStorage:{getItem(){return null;},setItem(){}},navigator:{},
     fetch:async()=>({ok:true,json:async()=>({})}),MutationObserver:FakeMutationObserver,
-    setTimeout,clearTimeout,URL,Blob,Uint8Array,Map,Date,Math,Number,String,Array,Object,JSON,console
+    setTimeout,clearTimeout,setInterval,clearInterval,URL,Blob,Uint8Array,Map,Date,Math,Number,String,Array,Object,JSON,console
   };
   vm.runInNewContext(principalSource,context);
   assert.strictEqual(saveButton.textContent,'Save principal PDF');
