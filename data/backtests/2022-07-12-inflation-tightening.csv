@@ -1,4 +1,4 @@
-# Canada Policy Studio historical backtest fixture v1
+# Canada Policy Studio historical backtest fixture v2
 META,fixture_id,ca-2022-07-12-inflation-tightening
 META,decision_date,2022-07-12
 META,horizon_quarters,12
@@ -8,6 +8,14 @@ INPUT,core_inflation,4.15,percent_yoy,2022-04-30,2022-06-01,boc_policy_2022_06_0
 INPUT,gdp_growth,3.2,percent_annualized,2022-03-31,2022-05-31,statcan_gdp_2022_q1,official-derived
 INPUT,unemployment,4.9,percent,2022-06-30,2022-07-08,statcan_lfs_2022_06,observed
 INPUT,wage_growth,5.2,percent_yoy,2022-06-30,2022-07-08,statcan_lfs_2022_06,observed
+INPUT,usdcad,1.2947,cad_per_usd,2022-07-08,2022-07-11,fed_h10_2022_07_11,observed-release
+INPUT,oil_price,106.09,usd_per_barrel,2022-07-11,2022-07-11,eia_wti_daily,market-observed
+INPUT,global_growth,3.5,percent_annual,2022-12-31,2022-04-13,boc_mpr_2022_04_13,official-forecast
+INPUT,us_growth,-1.6,percent_annualized,2022-03-31,2022-06-29,bea_us_gdp_2022_q1,observed
+INPUT,us_inflation,8.6,percent_yoy,2022-05-31,2022-06-10,bls_us_cpi_2022_05,observed
+INPUT,fiscal_balance_gdp,-2.0,percent_gdp,2023-03-31,2022-04-07,finance_canada_budget_2022,official-forecast
+INPUT,federal_debt_gdp,45.1,percent_gdp,2023-03-31,2022-04-07,finance_canada_budget_2022,official-forecast
+INPUT,household_debt_income,182.5,percent,2022-03-31,2022-06-13,statcan_nbs_2022_q1,observed
 INPUT,us_tariff_canada,0.0,percent,2022-07-12,2022-07-12,backtest_scope,scope-control
 INPUT,canada_retaliatory_tariff,0.0,percent,2022-07-12,2022-07-12,backtest_scope,scope-control
 BENCHMARK,first_move_bp,100,basis_points,2022-07-13,2022-07-13,boc_policy_2022_07_13,observed-policy
@@ -18,6 +26,13 @@ SOURCE,boc_policy_2022_06_01,Bank of Canada,Policy rate decision 2022-06-01,http
 SOURCE,statcan_cpi_2022_05,Statistics Canada,Consumer Price Index May 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220622/dq220622a-eng.htm
 SOURCE,statcan_gdp_2022_q1,Statistics Canada,Gross domestic product first quarter 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220531/dq220531b-eng.htm
 SOURCE,statcan_lfs_2022_06,Statistics Canada,Labour Force Survey June 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220708/dq220708a-eng.htm
+SOURCE,fed_h10_2022_07_11,Federal Reserve Board,Foreign Exchange Rates H10 2022-07-11,https://www.federalreserve.gov/releases/h10/20220711/
+SOURCE,eia_wti_daily,U.S. Energy Information Administration,Cushing OK WTI Spot Price FOB,https://www.eia.gov/dnav/pet/hist/rwtcd.htm
+SOURCE,boc_mpr_2022_04_13,Bank of Canada,Monetary Policy Report April 2022,https://www.bankofcanada.ca/2022/04/fad-press-release-2022-04-13/
+SOURCE,bea_us_gdp_2022_q1,U.S. Bureau of Economic Analysis,GDP third estimate 2022 Q1,https://www.bea.gov/news/2022/gross-domestic-product-third-estimate-gdp-industry-and-corporate-profits-revised-first
+SOURCE,bls_us_cpi_2022_05,U.S. Bureau of Labor Statistics,Consumer Price Index May 2022,https://www.bls.gov/news.release/archives/cpi_06102022.htm
+SOURCE,finance_canada_budget_2022,Department of Finance Canada,Budget 2022 Annex 1,https://www.budget.canada.ca/2022/report-rapport/anx1-en.html
+SOURCE,statcan_nbs_2022_q1,Statistics Canada,National balance sheet and financial flow accounts first quarter 2022,https://www150.statcan.gc.ca/n1/daily-quotidien/220613/dq220613a-eng.htm
 SOURCE,boc_policy_2022_07_13,Bank of Canada,Policy rate decision 2022-07-13,https://www.bankofcanada.ca/2022/07/fad-press-release-2022-07-13/
 SOURCE,statcan_cpi_2025_07,Statistics Canada,Consumer Price Index July 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250819/dq250819a-eng.htm
 SOURCE,statcan_lfs_2025_07,Statistics Canada,Labour Force Survey July 2025,https://www150.statcan.gc.ca/n1/daily-quotidien/250808/dq250808a-eng.htm
