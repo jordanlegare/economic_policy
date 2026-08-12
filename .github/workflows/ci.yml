@@ -21,7 +21,9 @@ jobs:
           node --check web/robust-room.js
           node --check web/principal-briefing.js
       - name: Verify finite evaluation controller
-        run: node tests/evaluation_controller_test.js
+        run: |
+          node tests/evaluation_controller_test.js
+          node tests/model_evidence_ui_test.js
       - name: Verify optimized Release build and active tests
         env:
           CXXFLAGS: -Werror
@@ -114,6 +116,10 @@ jobs:
           grep -q 'Computational negotiation support' web/negotiation-model.js
           grep -q 'Canada–U.S. trade diplomacy operations' web/trade-diplomacy.js
           grep -q 'Data provenance & calibration' web/calibration.js
+          grep -q 'Model evidence V2' web/calibration.js
+          grep -q '/api/v2/backtests' web/calibration.js
+          grep -q '/api/v2/welfare' web/calibration.js
+          grep -q '/api/v2/robustness' web/calibration.js
           grep -q 'Uncertainty & diplomat room' web/robust-room.js
           grep -q 'Principal Decision Brief' web/principal-briefing.js
           grep -q 'DECISION REQUIRED TODAY' web/principal-briefing.js
