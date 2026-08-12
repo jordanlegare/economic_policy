@@ -14,13 +14,7 @@ The active V2 robustness implementation is a **full nested decision sensitivity 
 6. Use 700 common-random-number paths for policy/finalist selection and 2,800 paths for verification.
 7. Re-rank the fully re-optimized decisions and report how often the reference control decision remains the winner.
 
-This closes the previous fixed-policy-control qualification. Both generated policy controls and sector coverage are now endogenous to every structural calibration.
-
-The deterministic sector Pareto screen depends on the observed economy, policy controls, priorities and cooperation envelope, but not on sampled macro structural coefficients. V2 therefore caches the 13 fixed-strategy frontiers plus the reference custom frontier. A new custom frontier is built only when a structural draw selects different generated controls. This preserves the exact search while avoiding repeated deterministic work.
-
-`policyControlsReoptimized=true` and `sectorPackagesReoptimized=true` identify an active full decision run. The robustness contract reports policy-control search counts, control changes, strategy-family wins, nested sector optimization counts and reference-package retention.
-
-With `uncertainty_scale=0`, full V2 must recover the production 288-control winner, production sector packages and production recommendation exactly. This is an explicit regression target.
+Both generated policy controls and sector coverage are endogenous to every structural calibration. With `uncertainty_scale=0`, full V2 must recover the production 288-control winner, production sector packages and production recommendation exactly.
 
 ## 1. Separate the model inputs
 
@@ -32,61 +26,29 @@ Research inputs are classified conceptually as:
 - **NegotiationPreferences** — Canada/U.S. priorities, risk tolerance, cooperation constraints and bilateral growth floors. These are mandates, not estimated parameters.
 - **CalibrationMetadata** — source, vintage, classification, sensitivity envelope and fallback status.
 
-Every V2 structural coefficient has a registry record specifying its baseline, unit, provenance kind, source ID, vintage, lower/upper bounds, distribution and whether it is sampled.
-
-The current envelopes are sensitivity ranges, not empirical confidence intervals. `assumed` and provisional `calibrated` entries remain visibly distinct from observed or mandated quantities.
+Every V2 structural coefficient has a registry record specifying its baseline, unit, provenance kind, source ID, vintage, lower/upper bounds, distribution and whether it is sampled. Current uncertainty envelopes are sensitivity ranges, not empirical confidence intervals.
 
 ## 2. Parameter uncertainty
 
 V2 samples structural parameters separately from stochastic macro innovations. The same structural seed reproduces the parameter ensemble, while common random numbers hold path innovations fixed across calibrations, policy alternatives and competing sector packages.
 
-The active set includes:
-
-- neutral rate;
-- monetary-policy inflation/output response coefficients;
-- maximum quarterly policy adjustment;
-- output persistence;
-- fiscal demand multiplier;
-- real-rate demand sensitivity;
-- productive-investment supply effect;
-- global-growth sensitivity;
-- inflation persistence and expectations composition;
-- Phillips-curve slope;
-- FX, import-price and oil-price inflation pass-through;
-- Canadian trade-drag and U.S. retaliation-drag scales;
-- tariff-ledger elasticity scale;
-- output, inflation, growth and export shock standard deviations.
+The active set includes the neutral rate; monetary-policy response coefficients; output/inflation persistence; fiscal, real-rate and productive-supply transmission; global-growth sensitivity; Phillips-curve and pass-through terms; trade-drag scales; tariff-ledger elasticity; and macro/export shock standard deviations.
 
 The 2% inflation target is a fixed mandate and is never sampled. The expectations weight is derived jointly with inflation persistence so the reference inflation anchor is preserved.
 
 The headline recommendation survival rate refers to the **same reference control decision**, not merely the same strategy label. If `custom` still wins but with different controls, that counts toward `strategyFamilyWinRate` but not toward `recommendationWinRate`.
 
-Project decision labels remain:
-
-- `robust`: recommendation win rate >= 80%;
-- `moderately-robust`: recommendation win rate >= 60%;
-- `fragile`: recommendation win rate >= 40%;
-- `unstable`: recommendation win rate < 40%.
-
-These are decision labels, not statistical confidence intervals.
+Project decision labels remain `robust` at >=80%, `moderately-robust` at >=60%, `fragile` at >=40%, and `unstable` below 40%. These are project decision labels, not statistical confidence intervals.
 
 ## 3. Full policy-control search
 
-The production generated-policy grid is rerun inside every structural draw:
+The production generated-policy grid is rerun inside every structural draw: three first monetary moves, four fiscal impulses, three productive shares, four cooperation factors and two diversification settings, for 288 generated candidates per structural calibration. The best generated candidate competes with the fixed expert strategies after nested sector re-optimization.
 
-- first monetary move: -25, 0 or +25 bp;
-- fiscal impulse: -0.15, 0.10, 0.35 or 0.60;
-- productive share: 0.35, 0.65 or 0.90;
-- cooperation factor: 0, 0.33, 0.67 or 1.0 of the permitted de-escalation envelope;
-- diversification boost: 0 or 0.15.
-
-This yields 288 generated control candidates per structural calibration. Each candidate is evaluated with the parameterized macro model under common random numbers. The best generated candidate then competes with the fixed expert strategies after nested sector re-optimization.
-
-The contract reports `policyControlCandidatesPerDraw`, total candidates examined, control changes, reference-control retention, strategy-family wins and strategy-family win rate.
+The contract reports policy-control candidates examined, control changes, reference-control retention, strategy-family wins and strategy-family win rate, in addition to the sector-package audit metrics.
 
 ## 4. Historical backtesting
 
-Historical vintage backtesting is now an active V2 diagnostic layer. It is deliberately separated from structural robustness because it answers a different question: how did the model behave when constrained to information that was actually available at a historical decision date?
+Historical vintage backtesting is a separate active V2 diagnostic layer. It asks how the model behaves when constrained to information available at a historical decision date.
 
 Every fixture declares a `decision_date` and separates rows into:
 
@@ -96,11 +58,19 @@ Every fixture declares a `decision_date` and separates rows into:
 
 A single date violation invalidates the entire fixture with `lookahead-failed`; the engine does not silently omit the offending datum. Empirical observations also require source provenance.
 
-The first shipped fixture, `ca-2022-07-12-inflation-tightening`, reconstructs the information set immediately before the Bank of Canada's July 13, 2022 policy decision. It uses then-available policy-rate, inflation, GDP, unemployment and wage data, keeps the tariff channel explicitly out of scope, and compares the model's recommendation with the next day's 100-basis-point move. Twelve-quarter macro diagnostics use realized 2025 inflation, unemployment and GDP data released only after the forecast horizon.
+The shipped suite now contains three independently dated monetary-policy episodes:
 
-The backtest contract reports policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, core-input coverage, provenance completeness and no-look-ahead status.
+- `ca-2015-01-20-oil-shock` — immediately before the Bank's January 21, 2015 oil-insurance cut;
+- `ca-2020-03-03-pandemic-onset` — immediately before the March 4, 2020 scheduled COVID cut;
+- `ca-2022-07-12-inflation-tightening` — immediately before the July 13, 2022 100-basis-point tightening move.
 
-Backtests are diagnostics, not claims that the simulator should reproduce realized history. One episode is not validation; aggregate claims require multiple independently sourced fixtures.
+Each fixture carries a 12-quarter ex-post outcome window and explicitly disables the bilateral tariff channel as a scope control. Headline and core inflation are distinct inputs where contemporaneous sources distinguish them.
+
+Per-episode diagnostics report policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, input coverage, provenance completeness and no-look-ahead status.
+
+`backtest_suite.hpp` adds cross-episode diagnostics: policy-direction accuracy and mean absolute first-move error, plus direction accuracy and mean absolute terminal error for inflation, GDP growth and unemployment. Aggregate diagnostics are exposed only when at least three fixtures are valid, provenance-complete and no-look-ahead clean. That threshold permits reporting; it does **not** imply statistical validation or adequate sample size.
+
+The current fixtures intentionally reconstruct the declared core macro state rather than every possible `Economy` field. Unspecified fields retain documented engine defaults, so backtest results remain diagnostic and should not be described as fully vintage-reconstructed forecasts until state coverage is broadened.
 
 ## 5. Welfare-weight sensitivity
 
@@ -118,30 +88,13 @@ Economic model -> Decision engine -> Presentation layer
 
 The economic model produces conditional outcome distributions. The decision engine applies mandates, institutional constraints, policy-control search, Pareto/Nash logic and robustness criteria. The presentation layer explains trade-offs, provenance, uncertainty and model disagreement without changing economic results.
 
-## 7. Robust recommendation contract
+## 7. Output contracts
 
-The active structural-robustness contract includes:
+The structural-robustness contract exposes recommendation survival, structural calibration identity, parameter provenance/bounds, common-random-number status, policy-control and sector re-optimization audit counts, retention metrics and robustness classification through `robustness_to_json()`.
 
-- selected strategy under the reference calibration;
-- structural parameter draw count;
-- exact recommendation wins and win rate;
-- broader strategy-family wins and win rate;
-- mean, P10 and P90 score of the reference control decision;
-- calibration and structural-registry identity;
-- sampled parameter count and provenance/bounds flags;
-- common-random-number status;
-- policy-control re-optimization status and search counts;
-- reference generated-control retention rate;
-- nested sector-reoptimization status;
-- cached/built sector-frontier count;
-- nested sector optimization and finalist counts;
-- number of sector-package changes;
-- reference-package retention rate;
-- robustness classification.
+Historical results remain separate. `backtest_to_json()` exposes a single vintage run, while `backtest_suite_to_json()` exposes cross-episode diagnostics. Keeping these endpoints distinct prevents ex-post forecast diagnostics from being confused with forward-looking structural robustness statistics.
 
-A dedicated `robustness_to_json()` serializer exposes this contract independently of the legacy full-result JSON surface. Historical backtests have a separate `backtest_to_json()` contract so ex-post diagnostics cannot be confused with forward-looking robustness statistics.
-
-A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Monte Carlo precision alone is insufficient.
+A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Historical backtests address empirical diagnostic performance instead; neither layer substitutes for the other.
 
 ## 8. Implementation sequence
 
@@ -157,16 +110,18 @@ Completed or active:
 8. Nested sector-package re-optimization inside every structural draw.
 9. Full 288-candidate generated policy-control re-optimization inside every structural draw.
 10. Exact recommendation-control survival separated from strategy-family survival.
-11. Historical vintage fixture schema, no-look-ahead validation and first source-backed 2022 episode.
-12. Native CI regression that deliberately injects future information and requires rejection.
+11. Historical vintage fixture schema and hard no-look-ahead validation.
+12. Source-backed 2015, 2020 and 2022 historical decision fixtures.
+13. Cross-episode direction/MAE diagnostics with a three-fixture reporting guard.
+14. Native CI contamination test that injects future information and requires rejection.
 
 Next:
 
-13. Add additional independently sourced historical episodes, beginning with 2015 and 2020.
-14. Surface structural provenance, decision robustness and historical diagnostics in the application/API.
-15. Replace provisional structural envelopes with empirical estimates where defensible.
-16. Add welfare-weight sensitivity as a separate analysis endpoint.
-17. Aggregate historical diagnostics only after enough fixtures exist for meaningful summaries.
+15. Broaden historical state coverage beyond the current core macro fields.
+16. Surface structural provenance, decision robustness and historical diagnostics in the application/API.
+17. Replace provisional structural envelopes with empirical estimates where defensible.
+18. Add welfare-weight sensitivity as a separate analysis endpoint.
+19. Add later-tightening, hold/soft-landing and eventually tariff-specific historical episodes.
 
 ## Research interpretation
 
