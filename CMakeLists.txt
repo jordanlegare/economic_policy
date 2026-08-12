@@ -21,7 +21,7 @@ function(cad_enable_warnings target)
   endif()
 endfunction()
 
-add_library(policy_engine src/policy_engine.cpp src/decision_robustness.cpp)
+add_library(policy_engine src/policy_engine.cpp src/decision_robustness.cpp src/welfare_sensitivity.cpp)
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
 
@@ -114,6 +114,7 @@ cad_add_test(robustness_sampler_tests tests/robustness_test.cpp robustness_sampl
 cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp robustness_integration)
 cad_add_test(backtest_tests tests/backtest_test.cpp historical_backtest)
 set_tests_properties(historical_backtest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+cad_add_test(welfare_sensitivity_tests tests/welfare_sensitivity_test.cpp welfare_sensitivity)
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
