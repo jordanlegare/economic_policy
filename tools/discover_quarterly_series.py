@@ -20,30 +20,27 @@ def flatten_text(value):
 def main():
     data = get_json("https://www.bankofcanada.ca/valet/lists/series/json")
     series = data.get("series", data)
-    rows = []
-    if isinstance(series, dict):
-        rows = [(code, meta) for code, meta in series.items()]
-    elif isinstance(series, list):
-        for item in series:
-            if isinstance(item, dict):
-                code = item.get("name") or item.get("series") or item.get("code") or "?"
-                rows.append((code, item))
-    needles = [
-        ("OUTPUT GAP", ["output gap"]),
-        ("CPI TRIM", ["cpi", "trim"]),
-        ("CPI MEDIAN", ["cpi", "median"]),
-        ("CORE CPI", ["core", "cpi"]),
-        ("WTI", ["west texas intermediate"]),
-    ]
+    rows = list(series.items()) if isinstance(series, dict) else []
     print(f"series_count={len(rows)}")
-    for label, tokens in needles:
+    categories = [
+        ("SWP POLICY", ["policy", "rate"]),
+        ("SWP EXCHANGE", ["exchange", "rate"]),
+        ("SWP OIL", ["oil"]),
+        ("SWP WTI", ["west texas"]),
+        ("SWP OUTPUT GAP", ["output gap"]),
+        ("SWP CORE CPI", ["core consumer price"]),
+    ]
+    for label, tokens in categories:
         print(f"\n## {label}")
         matches = []
         for code, meta in rows:
+            code_text = str(code)
+            if not code_text.upper().startswith("SWP-"):
+                continue
             text = flatten_text(meta).lower()
             if all(token in text for token in tokens):
-                matches.append((str(code), text[:500]))
-        for code, text in matches[:80]:
+                matches.append((code_text, text[:350]))
+        for code, text in matches[:60]:
             print(code, "|", text.replace("\n", " "))
         print(f"matches={len(matches)}")
 
