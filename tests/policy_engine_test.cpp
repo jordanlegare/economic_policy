@@ -1,5 +1,7 @@
 #include "policy_engine.hpp"
 #include "calibration.hpp"
+#include "negotiation_support.hpp"
+#include "robust_recommendation.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -133,7 +135,7 @@ int main() {
   // Production startup contract: on the current certified tariff baseline,
   // carry every generated policy mix through the joint sector search. The
   // winner must improve or preserve both national welfare scores relative to
-  // the same 2,800-draw starting posture, and the safety cap must not bind.
+  // the same 2,800-draw starting posture, and the sector safety cap must not bind.
   const auto calibration = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
   cad::Economy startup = cad::apply_calibration(cad::Economy{}, calibration);
   startup.exhaustive_policy_search = true;
@@ -156,6 +158,18 @@ int main() {
   assert(initial_json.find("\"globalSearchComplete\":true") != std::string::npos);
   assert(initial_json.find("\"baselineCanadaScore\":") != std::string::npos);
   assert(initial_json.find("\"baselineUsScore\":") != std::string::npos);
+
+  // The bargaining/robust layers must see the complete retained candidate set,
+  // not only the 12 cards displayed in the browser. This is what authorizes the
+  // UI to promote a robust package as the primary initial recommendation.
+  const auto initial_negotiation = cad::analyze_negotiation(startup, initial);
+  assert(initial_negotiation.frontier_complete);
+  assert(!initial_negotiation.frontier.empty());
+  const auto initial_robust = cad::analyze_robust_recommendations(
+      startup, initial, initial_negotiation, calibration, 200, 424242);
+  assert(initial_robust.candidate_set_complete);
+  assert(initial_robust.packages.size() == initial_negotiation.frontier.size());
+  assert(!initial_robust.recommended_package_id.empty());
 
   std::cout << "policy engine trust tests passed\n";
   return 0;
