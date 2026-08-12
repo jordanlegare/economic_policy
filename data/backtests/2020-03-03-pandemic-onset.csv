@@ -1,4 +1,4 @@
-# Canada Policy Studio historical backtest fixture v1
+# Canada Policy Studio historical backtest fixture v2
 META,fixture_id,ca-2020-03-03-pandemic-onset
 META,decision_date,2020-03-03
 META,horizon_quarters,12
@@ -8,17 +8,31 @@ INPUT,core_inflation,2.0,percent_yoy,2020-01-22,2020-01-22,boc_policy_2020_01_22
 INPUT,gdp_growth,0.4,percent_annualized,2019-12-31,2020-02-28,statcan_gdp_2019_q4,official-derived
 INPUT,unemployment,5.5,percent,2020-01-31,2020-02-07,statcan_lfs_2020_01,observed
 INPUT,wage_growth,4.24,percent_yoy,2020-01-31,2020-02-07,statcan_lfs_wages_2020_01,official-derived
+INPUT,usdcad,1.3411,cad_per_usd,2020-02-28,2020-03-02,fed_h10_2020_03_02,observed-release
+INPUT,oil_price,46.78,usd_per_barrel,2020-03-02,2020-03-02,eia_wti_daily,market-observed
+INPUT,global_growth,3.1,percent_annual,2020-12-31,2020-01-22,boc_policy_2020_01_22,official-forecast-rounded
+INPUT,us_growth,2.1,percent_annualized,2019-12-31,2020-02-27,bea_us_gdp_2019_q4,observed
+INPUT,us_inflation,2.5,percent_yoy,2020-01-31,2020-02-13,bls_us_cpi_2020_01,observed
+INPUT,fiscal_balance_gdp,-1.15,percent_gdp,2020-03-31,2019-12-16,finance_canada_efu_2019,official-derived
+INPUT,federal_debt_gdp,31.0,percent_gdp,2020-03-31,2019-12-16,finance_canada_efu_2019,official-forecast
+INPUT,household_debt_income,175.9,percent,2019-09-30,2019-12-13,statcan_nbs_2019_q3,observed
 INPUT,us_tariff_canada,0.0,percent,2020-03-03,2020-03-03,backtest_scope,scope-control
 INPUT,canada_retaliatory_tariff,0.0,percent,2020-03-03,2020-03-03,backtest_scope,scope-control
 BENCHMARK,first_move_bp,-50,basis_points,2020-03-04,2020-03-04,boc_policy_2020_03_04,observed-policy
 OUTCOME,inflation,5.2,percent_yoy,2023-02-28,2023-03-21,statcan_cpi_2023_02,observed
 OUTCOME,unemployment,5.0,percent,2023-02-28,2023-03-10,statcan_lfs_2023_02,observed
 OUTCOME,gdp_growth,0.0,percent_annualized,2022-12-31,2023-02-28,statcan_gdp_2022_q4,official-derived
-SOURCE,boc_policy_2020_01_22,Bank of Canada,Policy rate decision 2020-01-22,https://www.bankofcanada.ca/2020/01/fad-press-release-2020-01-22/
+SOURCE,boc_policy_2020_01_22,Bank of Canada,Policy rate decision and January MPR 2020-01-22,https://www.bankofcanada.ca/2020/01/fad-press-release-2020-01-22/
 SOURCE,statcan_cpi_2020_01,Statistics Canada,Consumer Price Index January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200219/dq200219a-eng.htm
 SOURCE,statcan_gdp_2019_q4,Statistics Canada,Gross domestic product fourth quarter 2019,https://www150.statcan.gc.ca/n1/daily-quotidien/200228/dq200228a-eng.htm
 SOURCE,statcan_lfs_2020_01,Statistics Canada,Labour Force Survey January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200207/dq200207a-eng.htm
 SOURCE,statcan_lfs_wages_2020_01,Statistics Canada,Average usual hours and wages January 2020,https://www150.statcan.gc.ca/n1/daily-quotidien/200207/t011a-eng.htm
+SOURCE,fed_h10_2020_03_02,Federal Reserve Board,Foreign Exchange Rates H10 2020-03-02,https://www.federalreserve.gov/RELEASES/h10/20200302
+SOURCE,eia_wti_daily,U.S. Energy Information Administration,Cushing OK WTI Spot Price FOB,https://www.eia.gov/dnav/pet/hist/rwtcd.htm
+SOURCE,bea_us_gdp_2019_q4,U.S. Bureau of Economic Analysis,GDP second estimate 2019 Q4,https://www.bea.gov/news/2020/gross-domestic-product-fourth-quarter-and-year-2019-second-estimate
+SOURCE,bls_us_cpi_2020_01,U.S. Bureau of Labor Statistics,Consumer Price Index January 2020,https://www.bls.gov/news.release/archives/cpi_02132020.htm
+SOURCE,finance_canada_efu_2019,Department of Finance Canada,Economic and Fiscal Update 2019,https://www.budget.canada.ca/efu-meb/2019/docs/statement-enonce/chap01-en.html
+SOURCE,statcan_nbs_2019_q3,Statistics Canada,National balance sheet and financial flow accounts third quarter 2019,https://www150.statcan.gc.ca/n1/daily-quotidien/191213/dq191213a-eng.htm
 SOURCE,boc_policy_2020_03_04,Bank of Canada,Policy rate decision 2020-03-04,https://www.bankofcanada.ca/2020/03/fad-press-release-2020-03-04/
 SOURCE,statcan_cpi_2023_02,Statistics Canada,Consumer Price Index February 2023,https://www150.statcan.gc.ca/n1/daily-quotidien/230321/dq230321a-eng.htm
 SOURCE,statcan_lfs_2023_02,Statistics Canada,Labour Force Survey February 2023,https://www150.statcan.gc.ca/n1/daily-quotidien/230310/dq230310a-eng.htm
