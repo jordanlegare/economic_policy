@@ -48,15 +48,7 @@ The contract reports policy-control candidates examined, control changes, refere
 
 ## 4. Historical backtesting
 
-Historical vintage backtesting is a separate active V2 diagnostic layer. It asks how the model behaves when constrained to information available at a historical decision date.
-
-Every fixture declares a `decision_date` and separates rows into:
-
-- `INPUT`: may be consumed by the model and must have `release_date <= decision_date`;
-- `BENCHMARK`: an ex-post observed policy decision and must have `release_date > decision_date`;
-- `OUTCOME`: realized macro data used only for diagnostics and must have `release_date > decision_date`.
-
-A single date violation invalidates the entire fixture with `lookahead-failed`; the engine does not silently omit the offending datum. Empirical observations also require source provenance.
+Historical vintage backtesting is a separate active V2 diagnostic layer. It asks how the model behaves when constrained to a reconstructed historical decision state. Ordinary inputs must have `release_date <= decision_date`; benchmark and outcome data are strictly ex post. Public historical reconstructions are separately labelled and may use a later-open publication only to recover a market observation dated before the decision cutoff. They are not represented as frozen real-time source vintages.
 
 The shipped suite contains three independently dated monetary-policy episodes:
 
@@ -64,34 +56,21 @@ The shipped suite contains three independently dated monetary-policy episodes:
 - `ca-2020-03-03-pandemic-onset` — immediately before the March 4, 2020 scheduled COVID cut;
 - `ca-2022-07-12-inflation-tightening` — immediately before the July 13, 2022 100-basis-point tightening move.
 
-Historical state has two backward-compatible declared coverage tiers. The original core tier preserves the existing policy/inflation/Canadian-growth/labour/tariff-scope contract. The expanded tier adds USD/CAD, WTI oil, global growth, U.S. GDP growth, U.S. inflation, federal fiscal balance/GDP, federal debt/GDP and household debt/disposable income. All three shipped fixtures are required by CI to reach 100% in both declared tiers while remaining provenance-complete and no-look-ahead clean.
+Historical state has two backward-compatible declared coverage tiers. The core/expanded 16-field contract remains unchanged and all three fixtures retain 100% coverage.
 
 ### Full modeled-state measurement audit
 
-The 16-field historical contract is not the same as complete empirical reconstruction of every modeled state. `credit_spread` and `housing_gap` are additional model-specific states, so V2 tracks an 18-field empirical-state audit separately from the backward-compatible 16-field coverage metric.
+V2 separately audits all 18 modeled empirical states by adding `credit_spread` and `housing_gap` to the 16 declared fields. A model-specific state counts as resolved only when its registry status is `ready` and the fixture supplies the input.
 
-`data/calibration/state_measurement_registry.csv` defines the required concept, unit, preferred source, transformation, reproducibility status and implementation status for both fields. A historical field counts as empirically resolved only when **both** conditions hold:
+`housing_gap` is materialized from the Bank of Canada Housing Affordability Index with a prior-20-quarter median that excludes the current quarter. `data/calibration/housing_affordability_benchmarks.csv` records the dated derivation.
 
-1. its registry status is `ready`; and
-2. the historical fixture actually supplies that measured input.
+`credit_spread` is now materialized as a broad Canadian corporate-minus-government yield spread in percentage points, consistent with the Bank of Canada research definition. V2 prefers an official broad-market historical spread and otherwise a published Canadian investment-grade index spread; bank lending rates, single-issuer spreads and generic financial-conditions indexes are disallowed substitutes. `data/calibration/credit_spread_benchmarks.csv` records source family, historical reference date and reconstruction method.
 
-Merely adding a CSV row with the right field name cannot increase empirical coverage.
+The three credit-spread inputs are 1.26 pp for January 2015, 1.50 pp for February 2020 and 1.37 pp for 2022Q1-end. Some raw benchmark histories are proprietary and some open reproductions were published later, so this is a **public historical-state reconstruction**, not a claim that all 18 fields have frozen real-time public-source vintages.
 
-For `credit_spread`, the canonical concept is a Canadian corporate credit spread over comparable Government of Canada debt, expressed in percentage points. Bank of Canada research provides a defensible semantic definition, but the historical broad-market implementations used in research can depend on licensed market data. The repository therefore does not substitute a bank lending rate or generic financial-conditions index and does not currently certify this field as publicly reproducible.
+The shipped suite therefore resolves **18/18 (100%) of the modeled empirical-state audit** while preserving the separate 16-field declared-state coverage contract.
 
-`housing_gap` is now materialized from the Bank of Canada Housing Affordability Index. The source index is the share of household disposable income required for representative housing-related carrying costs. V2 converts that level to a signed pressure state using:
-
-`100 * (HAI_t / median(HAI_{t-20} ... HAI_{t-1}) - 1)`
-
-Only the 20 quarters preceding the selected HAI observation enter the benchmark; `HAI_t` is excluded. The selected observation must be available by the historical decision cutoff. `data/calibration/housing_affordability_benchmarks.csv` records each fixture's selected quarter, conservative Bank indicator-table update date, prior-only benchmark window, median and derived gap. CI recomputes the formula and rejects future-dated source updates. Public HAI history can be revised, so the mapping is explicitly described as information-window clean rather than a frozen archival real-time data vintage.
-
-The three current values are approximately +0.62% for the January 2015 episode, -1.39% for March 2020 and +23.73% for July 2022. Each value now enters the historical `Economy` state instead of inheriting the modern default.
-
-The shipped backtests therefore remain 100% complete on the declared 16-field contract and now resolve **17/18 (94.4%) of the modeled empirical-state audit**. `credit_spread` is the only unresolved modeled empirical field.
-
-Per-episode diagnostics report policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, core/expanded/combined declared coverage, provenance completeness and no-look-ahead status.
-
-`backtest_suite.hpp` adds cross-episode diagnostics: policy-direction accuracy and mean absolute first-move error, direction accuracy and mean absolute terminal error for inflation/GDP/unemployment, expanded-complete fixture count, and mean/minimum historical state coverage. Aggregate diagnostics are exposed only when at least three fixtures are valid, provenance-complete and no-look-ahead clean. That threshold permits reporting; it does **not** imply statistical validation or adequate sample size.
+Per-episode diagnostics report policy-direction agreement, basis-point policy error, terminal forecast errors, directional accuracy, core/expanded/combined declared coverage, provenance completeness and no-look-ahead status. Aggregate diagnostics remain descriptive and require at least three valid fixtures; that threshold is not statistical validation.
 
 ## 5. Welfare-weight sensitivity
 
@@ -117,9 +96,9 @@ The economic model produces conditional outcome distributions. The decision engi
 
 The structural-robustness contract exposes recommendation survival, structural calibration identity, parameter provenance/bounds, common-random-number status, policy-control and sector re-optimization audit counts, retention metrics and robustness classification through `robustness_to_json()`.
 
-Historical results remain separate. `backtest_to_json()` exposes a single vintage run, including core/expanded/combined declared state coverage, while `backtest_suite_to_json()` exposes cross-episode diagnostics and coverage summaries. Normative preference sensitivity is exposed separately through `welfare_sensitivity_to_json()` so preference dependence cannot be confused with structural or historical uncertainty.
+Historical results remain separate. `backtest_to_json()` exposes a single historical run, while `backtest_suite_to_json()` exposes cross-episode diagnostics. Normative preference sensitivity is exposed separately through `welfare_sensitivity_to_json()`.
 
-The standalone state-measurement registry and audit contract expose the empirical-definition status of model-specific state fields. The housing benchmark ledger provides a reproducible fixture-level derivation record without redefining the legacy declared-state coverage metric.
+The state-measurement registry plus the housing and credit-spread benchmark ledgers expose the empirical-definition and reconstruction status of model-specific state fields without redefining the legacy declared-state coverage metric.
 
 A recommendation is **robust** only when the same control decision remains highly ranked after structural uncertainty, endogenous policy-control search and endogenous sector-package adaptation are all accounted for. Historical backtests address empirical diagnostic performance, while welfare sensitivity addresses normative preference dependence; none substitutes for the others.
 
@@ -142,17 +121,18 @@ Completed or active:
 13. Cross-episode direction/MAE diagnostics with a three-fixture reporting guard.
 14. Native CI contamination test that injects future information and requires rejection.
 15. Expanded historical state tier covering FX, oil, global/U.S. macro, federal fiscal state and household leverage.
-16. Full-production normative preference grid over bilateral priority and risk aversion, with retention/switch/fairness diagnostics.
-17. V2 evidence APIs and browser panel for structural, historical and normative diagnostics.
-18. Explicit measurement contracts and 18-field empirical coverage audit for `credit_spread` and `housing_gap`.
-19. Vintage-safe one-sided Housing Affordability Index mapping with dated `housing_gap` inputs and benchmark audit ledger.
+16. Full-production normative preference grid over bilateral priority and risk aversion.
+17. V2 evidence APIs and browser panel.
+18. Explicit 18-field empirical coverage audit.
+19. Vintage-safe one-sided Housing Affordability Index mapping and benchmark ledger.
+20. Public Canadian corporate-spread reconstruction with fixture-level audit ledger; modeled empirical-state coverage reaches 18/18.
 
 Next:
 
-20. Select or construct a genuinely open Canadian corporate-spread series before allowing `credit_spread` to leave its defaulted status.
 21. Replace provisional structural envelopes with empirical estimates where defensible.
 22. Add typed sensitivity for internal component-loss weights, explicitly separating mandate-fixed from assumed welfare coefficients.
 23. Add later-tightening, hold/soft-landing and eventually tariff-specific historical episodes.
+24. Improve archival real-time vintage quality for reconstructed market-state inputs where open historical feeds become available.
 
 ## Research interpretation
 

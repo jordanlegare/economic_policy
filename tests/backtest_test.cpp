@@ -63,8 +63,6 @@ int main() {
   assert(pandemic.fixture_id == "ca-2020-03-03-pandemic-onset");
   assert(inflation.fixture_id == "ca-2022-07-12-inflation-tightening");
 
-  // Vintage-state spot checks prevent fixture drift and ensure both core and
-  // expanded state fields replace modern engine defaults.
   cad::Economy base;
   const auto oil_state = cad::apply_backtest_fixture(base, oil);
   assert(std::abs(oil_state.policy_rate - 1.0) < 1e-12);
@@ -82,6 +80,7 @@ int main() {
   assert(std::abs(oil_state.federal_debt_gdp - 31.5) < 1e-12);
   assert(std::abs(oil_state.household_debt_income - 162.6) < 1e-12);
   assert(std::abs(oil_state.housing_gap - 0.621118012422) < 1e-12);
+  assert(std::abs(oil_state.credit_spread - 1.26) < 1e-12);
 
   const auto pandemic_state = cad::apply_backtest_fixture(base, pandemic);
   assert(std::abs(pandemic_state.policy_rate - 1.75) < 1e-12);
@@ -99,6 +98,7 @@ int main() {
   assert(std::abs(pandemic_state.federal_debt_gdp - 31.0) < 1e-12);
   assert(std::abs(pandemic_state.household_debt_income - 175.9) < 1e-12);
   assert(std::abs(pandemic_state.housing_gap + 1.388888888889) < 1e-12);
+  assert(std::abs(pandemic_state.credit_spread - 1.50) < 1e-12);
 
   const auto inflation_state = cad::apply_backtest_fixture(base, inflation);
   assert(std::abs(inflation_state.policy_rate - 1.5) < 1e-12);
@@ -116,13 +116,11 @@ int main() {
   assert(std::abs(inflation_state.federal_debt_gdp - 45.1) < 1e-12);
   assert(std::abs(inflation_state.household_debt_income - 182.5) < 1e-12);
   assert(std::abs(inflation_state.housing_gap - 23.731138545953) < 1e-12);
+  assert(std::abs(inflation_state.credit_spread - 1.37) < 1e-12);
 
-  // Housing pressure now has a source-backed one-sided mapping. Credit spread
-  // remains intentionally defaulted until an open Canadian corporate-spread
-  // series satisfies the measurement contract.
-  assert(std::abs(oil_state.credit_spread - base.credit_spread) < 1e-12);
-  assert(std::abs(pandemic_state.credit_spread - base.credit_spread) < 1e-12);
-  assert(std::abs(inflation_state.credit_spread - base.credit_spread) < 1e-12);
+  assert(std::abs(oil_state.credit_spread - base.credit_spread) > 1e-6);
+  assert(std::abs(pandemic_state.credit_spread - base.credit_spread) > 1e-6);
+  assert(std::abs(inflation_state.credit_spread - base.credit_spread) > 1e-6);
   assert(std::abs(oil_state.housing_gap - base.housing_gap) > 1e-6);
   assert(std::abs(pandemic_state.housing_gap - base.housing_gap) > 1e-6);
   assert(std::abs(inflation_state.housing_gap - base.housing_gap) > 1e-6);
@@ -179,8 +177,6 @@ int main() {
   assert(suite_json.find("\"aggregateDiagnosticsPermitted\":true") != std::string::npos);
   assert(suite_json.find("\"meanAbsoluteErrorBp\":") != std::string::npos);
 
-  // CI guard: a future release inserted into the input set invalidates the
-  // entire fixture. The engine must not silently drop or consume it.
   const std::string invalid_path = "backtest-lookahead-test.csv";
   {
     std::ofstream out(invalid_path);
