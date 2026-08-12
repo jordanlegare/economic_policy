@@ -24,6 +24,11 @@ struct StateMeasurementRegistry {
   bool loaded = false;
   std::vector<StateMeasurementDefinition> entries;
 
+  StateMeasurementDefinition* find(const std::string& name) {
+    for (auto& entry : entries) if (entry.name == name) return &entry;
+    return nullptr;
+  }
+
   const StateMeasurementDefinition* find(const std::string& name) const {
     for (const auto& entry : entries) if (entry.name == name) return &entry;
     return nullptr;
