@@ -36,6 +36,17 @@ struct TradeNetworkInput {
   double price_pass_through = 0.24;
   std::array<double, kTradeSectorCount> us_coverage{};
   std::array<double, kTradeSectorCount> canada_coverage{};
+
+  // Optional directional/sector overrides. Non-positive entries deliberately
+  // fall back to the aggregate scalar above. This allows the calibration layer
+  // to activate sector estimates only when their estimand is production-
+  // compatible, without treating reference-only literature as direct evidence.
+  // `us_*` describes U.S. imports from Canada (the U.S. tariff direction);
+  // `canada_*` describes Canadian imports from the United States.
+  std::array<double, kTradeSectorCount> us_trade_elasticity{};
+  std::array<double, kTradeSectorCount> canada_trade_elasticity{};
+  std::array<double, kTradeSectorCount> us_price_pass_through{};
+  std::array<double, kTradeSectorCount> canada_price_pass_through{};
 };
 
 struct TradeSourceContribution {
@@ -73,13 +84,28 @@ struct TradeNetworkResult {
 };
 
 const std::array<TradeSectorProfile, kTradeSectorCount>& trade_sector_profiles();
+
+// Country-specific direct-requirements matrices. Canada is the certified 2024
+// Statistics Canada aggregation. The U.S. accessor is intentionally separate;
+// until a BEA artifact is generated and certified it returns the explicitly
+// labelled structural proxy rather than pretending the Canadian cells are U.S.
+// observations.
+const TradeInputOutputMatrix& canada_trade_input_output_matrix();
+const TradeInputOutputMatrix& us_trade_input_output_matrix();
+bool canada_trade_input_output_empirical();
+bool us_trade_input_output_empirical();
+
+// Backward-compatible alias for callers that historically requested the one
+// production matrix; it continues to mean the Canadian empirical matrix.
 const TradeInputOutputMatrix& trade_input_output_matrix();
+
 TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
                                               std::size_t source,
                                               double us_coverage,
                                               double canada_coverage);
 TradeNetworkResult evaluate_trade_network(const TradeNetworkInput& input);
 double maximum_trade_input_share();
+double maximum_us_trade_input_share();
 std::string trade_network_methodology();
 
 }  // namespace cad
