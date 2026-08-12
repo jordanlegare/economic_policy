@@ -1,0 +1,30 @@
+name: Export clean final branch
+on:
+  push:
+    branches: [agent/finish-model-realism]
+permissions:
+  contents: write
+jobs:
+  export:
+    if: github.event.head_commit.message != 'Trigger clean final branch export'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/finish-model-realism
+          fetch-depth: 0
+      - name: Build clean tree on current main
+        run: |
+          set -euxo pipefail
+          git fetch origin main
+          # No branch-only automation or workflow edits are allowed in the clean PR.
+          git checkout origin/main -- .github/workflows
+          rm -f tools/fix_oecd_denominators_once.py
+          git add -A
+          tree=$(git write-tree)
+          parent=$(git rev-parse origin/main)
+          commit=$(printf '%s\n\n%s\n' \
+            'Finish dynamic policy, tail risk, and welfare sensitivity' \
+            'Clean export of the final realism tranche; branch-only helper/workflow files excluded.' \
+            | git commit-tree "$tree" -p "$parent")
+          git push --force origin "$commit:refs/heads/agent/finish-model-realism-clean"
