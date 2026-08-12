@@ -44,6 +44,9 @@ int main() {
   assert(std::abs(parameters.fx_pass_through - 0.35) < 1e-12);
   assert(std::abs(parameters.import_price_pass_through - 0.022) < 1e-12);
   assert(std::abs(parameters.growth_shock_sd - 0.25) < 1e-12);
+  assert(std::abs(parameters.shock_tail_threshold - 2.0) < 1e-12);
+  assert(std::abs(parameters.shock_tail_scale - 1.75) < 1e-12);
+  assert(std::abs(parameters.stress_regime_shock_scale - 1.35) < 1e-12);
 
   const auto* realized_growth = evidence.find("growth_shock_sd");
   assert(realized_growth);
@@ -60,11 +63,11 @@ int main() {
   assert(residual_correlation_evidence->mapping_status == "reference-only");
 
   const auto completeness = cad::audit_structural_calibration_completeness(structural);
-  assert(completeness.parameter_count == 26);
-  assert(completeness.calibration_target_count == 24);
+  assert(completeness.parameter_count == 29);
+  assert(completeness.calibration_target_count == 27);
   assert(completeness.direct_empirical_count == 3);
-  assert(completeness.provisional_count == 21);
-  assert(std::abs(completeness.direct_empirical_coverage - 12.5) < 1e-12);
+  assert(completeness.provisional_count == 24);
+  assert(std::abs(completeness.direct_empirical_coverage - 11.11111111111111) < 1e-10);
 
   const auto json = cad::empirical_structural_audit_to_json(audit);
   assert(json.find("\"statisticallyAnchoredCount\":14") != std::string::npos);
