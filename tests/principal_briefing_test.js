@@ -20,7 +20,9 @@ const p2={id:'pareto-2',strategyId:'bridge',strategyName:'Reciprocal bridge',ver
 const result={
   scenarios:[
     {id:'joint-growth',name:'Joint growth compact',growth:1.8,usGrowth:2.1,inflation:2.4,recessionRisk:18},
-    {id:'bridge',name:'Reciprocal bridge',growth:1.6,usGrowth:2.0,inflation:2.3,recessionRisk:16}
+    {id:'bridge',name:'Reciprocal bridge',growth:1.6,usGrowth:2.0,inflation:2.3,recessionRisk:16},
+    {id:'canada-batna',name:'Canada outside option',growth:.9,usGrowth:1.7,inflation:2.6,unemployment:6.8,recessionRisk:28,exportChange:-3.2,realIncomeGrowth:.4,costOfLiving:2.8,debtGdp:43.1,usExportChange:-1.1,usTariffRevenueUsd:42.0},
+    {id:'us-batna',name:'U.S. outside option',growth:1.0,usGrowth:2.2,inflation:2.5,unemployment:6.7,recessionRisk:24,exportChange:-2.7,realIncomeGrowth:.5,costOfLiving:2.7,debtGdp:42.8,usExportChange:1.3,usTariffRevenueUsd:58.4}
   ],
   recommendation:{verifiedWinWin:true,growthConstraintMet:true,globalSearchComplete:true,policyCandidatesVerified:301,sectorFinalistsResimulated:18},
   negotiation:{recommendedPackage:p1,frontier:[p1,p2],frontierComplete:true,trust:{dataIntegrityPass:true},batna:{canada:51.2,us:50.4,canadaStrategy:'Canada outside option',usStrategy:'U.S. outside option'},reservation:{canada:52.1,us:51.3}},
@@ -66,6 +68,19 @@ assert(model.redLines.mandate.join(' ').toLowerCase().includes('procurement'));
 assert(model.whatChanged.length>0);
 assert(model.decisionRequired.join(' ').includes('authority')||model.decisionRequired.join(' ').includes('reciprocity'));
 assert.strictEqual(model.batna.canada,51.2);
+assert.strictEqual(model.batna.us,50.4);
+assert.strictEqual(model.batna.canadaScenario.id,'canada-batna','Canadian BATNA economics must come from the BATNA strategy, not the selected card');
+assert.strictEqual(model.batna.usScenario.id,'us-batna','U.S. BATNA economics must come from the independently selected U.S. outside option');
+assert.strictEqual(model.batna.independentOutsideOptions,true);
+assert(Math.abs(model.batna.primary.canadaOverBatna-14.8)<1e-9);
+assert(Math.abs(model.batna.primary.usOverBatna-13.6)<1e-9);
+assert(Math.abs(model.batna.primary.canadaOverReservation-13.9)<1e-9);
+assert(Math.abs(model.batna.primary.usOverReservation-12.7)<1e-9);
+assert(Math.abs(model.batna.bridge.canadaOverBatna-11.8)<1e-9);
+assert(Math.abs(model.batna.bridge.usOverBatna-14.6)<1e-9);
+assert(model.decisionRequired.some(x=>x.includes('improves modeled utility over walking away')));
+assert(model.whereWeAre.some(x=>x.includes('outside options are selected independently')));
+assert(model.whereWeAre.some(x=>x.includes('do not change when the dashboard inspection card changes')));
 assert(model.uncertainties.some(x=>x.includes('Missing/uncertified layers')));
 assert(model.evidenceSources.some(x=>x.agency==='Statistics Canada'));
 assert(model.whereWeAre.some(x=>x.includes('Dashboard evaluated state: U.S. tariff 35.0%')));
@@ -77,12 +92,27 @@ assert(model.whereWeAre.some(x=>x.includes('Agreement verification: verified win
 assert(model.whereWeAre.some(x=>x.includes('global policy/sector search complete')));
 assert(model.whereWeAre.some(x=>x.includes('Dashboard leading policy scenario: Joint growth compact')));
 assert(model.whereWeAre.some(x=>x.includes('Dashboard inspection card: Reciprocal bridge')));
+assert(model.whereWeAre.some(x=>x.includes('does not replace the primary bargaining anchor or either side\'s BATNA')));
 assert(model.whereWeAre.some(x=>x.includes('Latest recorded decision status: Proposed on pareto-1')),'decision ledger must use newest timestamp, not array position');
 assert.strictEqual(model.dashboardState.usTariff,35);
 assert.strictEqual(model.dashboardState.verifiedWinWin,true);
 assert.deepStrictEqual(model.dashboardState.searchAnchor.us,searchUs);
 assert.strictEqual(model.leadingScenario.id,'joint-growth');
 assert.strictEqual(model.inspectedScenario.id,'bridge');
+
+const differentInspection=window.PrincipalBriefing.buildModel({result,room,settings:{usTariff:35,retaliatoryTariff:10},selectedScenario:result.scenarios[0],now:'2026-08-11T12:00:00Z'});
+assert.strictEqual(differentInspection.inspectedScenario.id,'joint-growth');
+assert.strictEqual(differentInspection.batna.canadaScenario.id,'canada-batna');
+assert.strictEqual(differentInspection.batna.usScenario.id,'us-batna');
+assert.strictEqual(differentInspection.batna.primary.canadaOverBatna,model.batna.primary.canadaOverBatna,'BATNA/deal premium must be invariant to inspected scenario');
+
+const preview=window.PrincipalBriefing.previewHtml(model);
+assert(preview.includes('Deal vs. walk-away (BATNA)'));
+assert(preview.includes('Canada outside option'));
+assert(preview.includes('U.S. outside option'));
+assert(preview.includes('14.80'));
+assert(preview.includes('Canada vs BATNA'));
+assert(preview.includes('Country-specific BATNA · independent of inspected card'));
 
 const bytes=window.PrincipalBriefing.buildPdf(model);
 fs.mkdirSync('artifacts',{recursive:true});
@@ -95,6 +125,10 @@ assert(pdf.includes('/BaseFont /Helvetica-Bold'));
 assert(pdf.includes('/BaseFont /Helvetica-Oblique'));
 assert(pdf.includes('0.055 0.125 0.205 rg'));
 for(const heading of ['WHERE WE ARE','WHAT THEY WANT','WHAT WE WANT','WHAT CHANGED','RED LINES','PRIMARY PACKAGE','BRIDGE PACKAGE','BATNA','KEY UNCERTAINTIES','DECISION REQUIRED TODAY','RECOMMENDED LANGUAGE','EVIDENCE SOURCES'])assert(pdf.includes(heading),`missing ${heading}`);
+assert(pdf.includes('DEAL VS WALK-AWAY (BATNA)'));
+assert(pdf.includes('AGREEMENT PREMIUM OVER WALK-AWAY'));
+assert(pdf.includes('Canada walk-away: Canada outside option'));
+assert(pdf.includes('U.S. walk-away: U.S. outside option'));
 assert((pdf.match(/\/Type \/Page /g)||[]).length>=3);
 assert(pdf.includes('WORKING BRIEF - ANALYTICAL SUPPORT'));
 assert(pdf.includes('Snapshot ca-us-2026-08-11'));
@@ -102,6 +136,12 @@ assert(pdf.includes('Snapshot ca-us-2026-08-11'));
 const noOffer=window.PrincipalBriefing.buildModel({result,room:{round:1,phase:'preparation',mandate:[],offers:[],debriefs:[],concessionBalance:{}},settings:{},redlines:{minCanada:45,minUs:45,maxRecession:40,minGrowth:0,maxInflation:3.5},now:'2026-08-11T12:00:00Z'});
 assert(noOffer.whatTheyWant.join(' ').includes('No U.S. package has been recorded'));
 assert(noOffer.whatTheyWant.join(' ').includes('Do not describe model-implied U.S. utility as a stated U.S. ask'));
+
+const missingBatnaScenarioResult=JSON.parse(JSON.stringify(result));
+missingBatnaScenarioResult.negotiation.batna.canadaStrategy='Historical Canadian outside option';
+const missingBatnaScenario=window.PrincipalBriefing.buildModel({result:missingBatnaScenarioResult,room,settings:{},now:'2026-08-11T12:00:00Z'});
+assert.strictEqual(missingBatnaScenario.batna.canadaScenario,null);
+assert(window.PrincipalBriefing.previewHtml(missingBatnaScenario).includes('matching scenario detail is unavailable'));
 
 const missingRobustResult=JSON.parse(JSON.stringify(result));
 missingRobustResult.robustness.packages=[];
@@ -146,6 +186,8 @@ assert(staleRoomModel.whatWeWant.some(x=>x.includes('not present in the current 
 assert.strictEqual(staleRoomModel.bridge.id,'pareto-2','stale recorded bridge must fall back to current engine bridge');
 assert(staleRoomModel.whatChanged.some(x=>x.includes('latest recorded bridge counteroffer historical-bridge is not in the current frontier')));
 
+assert(principalSource.includes('function scenarioByStrategy('),'principal brief must resolve BATNA economics from the negotiation-engine strategy, not the inspected card');
+assert(principalSource.includes('function gainSummary('),'principal brief must calculate deal premiums over BATNA and reservation values');
 assert(principalSource.includes('function dashboardFingerprint()'),'principal brief must fingerprint visible dashboard inputs');
 assert(principalSource.includes('async function ensureDashboardCurrent()'),'principal brief must synchronize stale controls before generation');
 assert(principalSource.includes('waitForAdjustmentCommit()'),'principal brief must wait for an active range gesture to commit');
