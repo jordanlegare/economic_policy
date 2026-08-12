@@ -17,8 +17,10 @@ int main() {
   assert(std::abs(matrix[3][4] - 0.283987709074) < 1e-12);  // construction <- manufacturing
   assert(std::abs(matrix[15][4] - 0.093370094078) < 1e-12); // health care <- manufacturing
   assert(std::abs(matrix[19][15] - 0.131880191344) < 1e-12); // public admin <- health care
+  // Individual coefficients are frozen to 12 decimals, so a 20-term row sum
+  // is compared at 1e-10 rather than against full-precision extraction output.
   assert(std::abs(cad::maximum_trade_input_share()
-      - cad::generated::kStatCanIoMaximumDomesticIntermediateShare) < 1e-12);
+      - cad::generated::kStatCanIoMaximumDomesticIntermediateShare) < 1e-10);
   for (const auto& row : matrix) {
     const double sum = std::accumulate(row.begin(), row.end(), 0.0);
     assert(sum > 0.17);
