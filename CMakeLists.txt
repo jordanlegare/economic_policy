@@ -21,7 +21,11 @@ function(cad_enable_warnings target)
   endif()
 endfunction()
 
-add_library(policy_engine src/policy_engine.cpp src/decision_robustness.cpp src/welfare_sensitivity.cpp)
+add_library(policy_engine
+  src/policy_engine.cpp
+  src/decision_robustness.cpp
+  src/welfare_sensitivity.cpp
+  src/model_evidence.cpp)
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
 
@@ -49,6 +53,10 @@ if(WIN32)
     web/principal-briefing.css
     web/principal-briefing.js
     data/calibration/current.snapshot.csv
+    data/calibration/structural_parameter_registry.csv
+    data/backtests/2015-01-20-oil-shock.csv
+    data/backtests/2020-03-03-pandemic-onset.csv
+    data/backtests/2022-07-12-inflation-tightening.csv
   )
   set(CAD_EMBEDDED_DEPENDS)
   foreach(asset IN LISTS CAD_EMBEDDED_FILES)
@@ -63,7 +71,7 @@ if(WIN32)
             --output "${CAD_EMBEDDED_HEADER}"
             ${CAD_EMBEDDED_FILES}
     DEPENDS "${CMAKE_SOURCE_DIR}/tools/embed_assets.py" ${CAD_EMBEDDED_DEPENDS}
-    COMMENT "Embedding browser assets and calibration snapshot"
+    COMMENT "Embedding browser assets and V2 model-evidence data"
     VERBATIM
   )
   add_custom_target(cad_embedded_assets DEPENDS "${CAD_EMBEDDED_HEADER}")
@@ -115,6 +123,8 @@ cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp 
 cad_add_test(backtest_tests tests/backtest_test.cpp historical_backtest)
 set_tests_properties(historical_backtest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(welfare_sensitivity_tests tests/welfare_sensitivity_test.cpp welfare_sensitivity)
+cad_add_test(model_evidence_tests tests/model_evidence_test.cpp model_evidence)
+set_tests_properties(model_evidence PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)
