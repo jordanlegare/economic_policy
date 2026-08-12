@@ -3,6 +3,7 @@
 #include "calibration.hpp"
 #include "policy_engine.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -26,6 +27,23 @@ inline std::vector<std::string> required_structural_parameter_names() {
   };
 }
 
+inline std::vector<std::string> structural_shock_parameter_names() {
+  return {
+    "output_shock_sd", "inflation_shock_sd", "growth_shock_sd",
+    "us_growth_shock_sd", "export_shock_sd", "us_export_shock_sd"
+  };
+}
+
+inline std::vector<std::string> structural_multiplier_parameter_names() {
+  return {
+    "fiscal_demand_multiplier", "real_rate_demand_sensitivity",
+    "productive_supply_multiplier", "global_growth_sensitivity",
+    "phillips_curve_slope", "fx_pass_through", "import_price_pass_through",
+    "oil_inflation_sensitivity", "canada_trade_drag_scale",
+    "us_retaliation_drag_scale", "tariff_revenue_elasticity_scale"
+  };
+}
+
 inline bool structural_parameter_registry_complete(
     const StructuralParameterRegistry& registry) {
   if (!registry.loaded) return false;
@@ -43,6 +61,81 @@ inline int sampled_structural_parameter_count(
   int count = 0;
   for (const auto& entry : registry.entries) if (entry.sampled) ++count;
   return count;
+}
+
+inline bool direct_empirical_structural_kind(const std::string& kind) {
+  return kind == "empirical_estimate"
+      || kind == "official_assessment"
+      || kind == "realized_residual_estimate";
+}
+
+inline bool contains_structural_name(
+    const std::vector<std::string>& names, const std::string& name) {
+  return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+struct StructuralCalibrationCompleteness {
+  int parameter_count = 0;
+  int calibration_target_count = 0;
+  int direct_empirical_count = 0;
+  int provisional_count = 0;
+  int shock_target_count = 0;
+  int direct_empirical_shock_count = 0;
+  int realized_residual_shock_count = 0;
+  int multiplier_target_count = 0;
+  int direct_empirical_multiplier_count = 0;
+  double direct_empirical_coverage = 0.0;
+  double shock_coverage = 0.0;
+  double multiplier_coverage = 0.0;
+  std::string grade = "registry-incomplete";
+};
+
+inline StructuralCalibrationCompleteness audit_structural_calibration_completeness(
+    const StructuralParameterRegistry& registry) {
+  StructuralCalibrationCompleteness out;
+  const auto required = required_structural_parameter_names();
+  const auto shocks = structural_shock_parameter_names();
+  const auto multipliers = structural_multiplier_parameter_names();
+  out.parameter_count = static_cast<int>(required.size());
+  out.shock_target_count = static_cast<int>(shocks.size());
+  out.multiplier_target_count = static_cast<int>(multipliers.size());
+
+  if (!structural_parameter_registry_complete(registry)) return out;
+
+  for (const auto& name : required) {
+    const auto* entry = registry.find(name);
+    if (!entry) continue;
+    // Mandates are policy-framework constants and derived parameters are
+    // algebraic constraints.  Neither should inflate or depress the empirical
+    // calibration denominator.
+    if (entry->kind == "mandate" || entry->kind == "derived") continue;
+    ++out.calibration_target_count;
+    const bool direct = direct_empirical_structural_kind(entry->kind);
+    if (direct) ++out.direct_empirical_count;
+    else ++out.provisional_count;
+
+    if (contains_structural_name(shocks, name)) {
+      if (direct) ++out.direct_empirical_shock_count;
+      if (entry->kind == "realized_residual_estimate") ++out.realized_residual_shock_count;
+    }
+    if (contains_structural_name(multipliers, name) && direct)
+      ++out.direct_empirical_multiplier_count;
+  }
+
+  if (out.calibration_target_count > 0)
+    out.direct_empirical_coverage = 100.0 * out.direct_empirical_count
+        / static_cast<double>(out.calibration_target_count);
+  if (out.shock_target_count > 0)
+    out.shock_coverage = 100.0 * out.direct_empirical_shock_count
+        / static_cast<double>(out.shock_target_count);
+  if (out.multiplier_target_count > 0)
+    out.multiplier_coverage = 100.0 * out.direct_empirical_multiplier_count
+        / static_cast<double>(out.multiplier_target_count);
+
+  if (out.direct_empirical_coverage >= 95.0) out.grade = "empirically-calibrated";
+  else if (out.direct_empirical_coverage >= 50.0) out.grade = "partially-empirical";
+  else out.grade = "mostly-provisional";
+  return out;
 }
 
 inline StructuralParameterRegistry load_structural_parameter_registry(
@@ -121,6 +214,7 @@ inline StructuralParameters apply_structural_parameter_registry(
 
 inline std::string structural_parameter_registry_to_json(
     const StructuralParameterRegistry& registry) {
+  const auto completeness = audit_structural_calibration_completeness(registry);
   std::ostringstream out;
   out << std::fixed << std::setprecision(6)
       << "{\"registryId\":\"" << calibration_detail::esc(registry.registry_id)
@@ -130,6 +224,19 @@ inline std::string structural_parameter_registry_to_json(
       << (structural_parameter_registry_complete(registry) ? "true" : "false")
       << ",\"sampledParameterCount\":"
       << sampled_structural_parameter_count(registry)
+      << ",\"calibrationCompleteness\":{\"parameterCount\":" << completeness.parameter_count
+      << ",\"calibrationTargetCount\":" << completeness.calibration_target_count
+      << ",\"directEmpiricalCount\":" << completeness.direct_empirical_count
+      << ",\"provisionalCount\":" << completeness.provisional_count
+      << ",\"directEmpiricalCoverage\":" << completeness.direct_empirical_coverage
+      << ",\"shockTargetCount\":" << completeness.shock_target_count
+      << ",\"directEmpiricalShockCount\":" << completeness.direct_empirical_shock_count
+      << ",\"realizedResidualShockCount\":" << completeness.realized_residual_shock_count
+      << ",\"shockCoverage\":" << completeness.shock_coverage
+      << ",\"multiplierTargetCount\":" << completeness.multiplier_target_count
+      << ",\"directEmpiricalMultiplierCount\":" << completeness.direct_empirical_multiplier_count
+      << ",\"multiplierCoverage\":" << completeness.multiplier_coverage
+      << ",\"grade\":\"" << calibration_detail::esc(completeness.grade) << "\"}"
       << ",\"parameters\":[";
   for (std::size_t i = 0; i < registry.entries.size(); ++i) {
     if (i) out << ',';
