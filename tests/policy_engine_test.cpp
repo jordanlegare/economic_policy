@@ -1,4 +1,5 @@
 #include "policy_engine.hpp"
+#include "calibration.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -39,6 +40,7 @@ int main() {
   assert(baseline.recommendation.base_monte_carlo_draws == 700);
   assert(baseline.recommendation.verification_monte_carlo_draws == 2800);
   assert(baseline.recommendation.verified_win_win);
+  assert(!baseline.recommendation.global_search_complete);
   assert(baseline.recommendation.growth_constraint_met);
 
   for (std::size_t i = 0; i < baseline.recommendation.us_sector_coverage.size(); ++i) {
@@ -122,10 +124,38 @@ int main() {
   assert(json.find("\"sectorParetoFrontierSize\":") != std::string::npos);
   assert(json.find("\"verificationMonteCarloDraws\":2800") != std::string::npos);
   assert(json.find("\"verifiedWinWin\":true") != std::string::npos);
+  assert(json.find("\"globalSearchComplete\":false") != std::string::npos);
   assert(json.find("\"independentUsTradeChannel\":true") != std::string::npos);
   assert(json.find("\"tradeBalanceIsObjective\":false") != std::string::npos);
   assert(json.find("\"mandateWeightsFixed\":true") != std::string::npos);
   assert(json.find("\"allocationsExamined\":1") != std::string::npos);
+
+  // Production startup contract: on the current certified tariff baseline,
+  // carry every generated policy mix through the joint sector search. The
+  // winner must improve or preserve both national welfare scores relative to
+  // the same 2,800-draw starting posture, and the safety cap must not bind.
+  const auto calibration = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
+  cad::Economy startup = cad::apply_calibration(cad::Economy{}, calibration);
+  startup.exhaustive_policy_search = true;
+  const auto initial = engine.evaluate(startup);
+  assert(initial.candidates_examined == 288);
+  assert(initial.recommendation.policy_candidates_verified == 301);
+  assert(initial.scenarios.size() == 302); // 13 expert + 288 generated + baseline fallback.
+  assert(initial.recommendation.global_search_complete);
+  assert(initial.recommendation.verified_win_win);
+  assert(initial.recommendation.growth_constraint_met);
+  assert(initial.recommendation.verified_canada_score + 1e-9
+      >= initial.recommendation.baseline_canada_score);
+  assert(initial.recommendation.verified_us_score + 1e-9
+      >= initial.recommendation.baseline_us_score);
+  assert(initial.recommendation.sector_finalists_resimulated
+      == initial.recommendation.sector_pareto_frontier_size
+      || initial.recommendation.sector_pareto_frontier_size == 0);
+  const auto initial_json = cad::to_json(initial);
+  assert(initial_json.find("\"policyCandidatesVerified\":301") != std::string::npos);
+  assert(initial_json.find("\"globalSearchComplete\":true") != std::string::npos);
+  assert(initial_json.find("\"baselineCanadaScore\":") != std::string::npos);
+  assert(initial_json.find("\"baselineUsScore\":") != std::string::npos);
 
   std::cout << "policy engine trust tests passed\n";
   return 0;
