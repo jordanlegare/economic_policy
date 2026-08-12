@@ -17,12 +17,14 @@ int main() {
   const auto negotiation = cad::analyze_negotiation(economy, result);
   assert(!negotiation.frontier.empty());
   assert(negotiation.frontier_complete);
+  assert(static_cast<int>(negotiation.frontier.size()) == negotiation.pareto_frontier_size);
 
   const auto robust = cad::analyze_robust_recommendations(
       economy, result, negotiation, calibration, 600, 123456);
   assert(robust.second_stage_monte_carlo_draws == 600);
   assert(robust.common_random_numbers);
   assert(robust.parameter_uncertainty_included);
+  assert(robust.bounded_memory_two_pass);
   assert(!robust.political_acceptance_probability_estimated);
   assert(!robust.candidate_set_complete);
   assert(!robust.recommended_package_id.empty());
@@ -62,6 +64,29 @@ int main() {
     assert(std::abs(repeat.packages[i].max_regret - robust.packages[i].max_regret) < 1e-12);
   }
 
+  // Regression for the former 512-package truncation. A synthetic 513-package
+  // complete epsilon frontier must be evaluated in full. Reusing the economic
+  // terms is intentional: this tests candidate-set completeness/memory behavior,
+  // not the bargaining utility equations themselves.
+  auto large_negotiation = negotiation;
+  large_negotiation.frontier.clear();
+  large_negotiation.frontier.reserve(513);
+  for (int i = 0; i < 513; ++i) {
+    auto package = negotiation.frontier[static_cast<std::size_t>(i) % negotiation.frontier.size()];
+    package.id = "synthetic-pareto-" + std::to_string(i + 1);
+    large_negotiation.frontier.push_back(std::move(package));
+  }
+  large_negotiation.pareto_frontier_size = 513;
+  large_negotiation.frontier_complete = true;
+  const auto large_robust = cad::analyze_robust_recommendations(
+      economy, result, large_negotiation, calibration, 200, 987654);
+  assert(large_robust.bounded_memory_two_pass);
+  assert(large_robust.packages.size() == 513);
+  double large_rank_probability_sum = 0.0;
+  for (const auto& metrics : large_robust.packages)
+    large_rank_probability_sum += metrics.rank_win_probability;
+  assert(std::abs(large_rank_probability_sum - 1.0) < 1e-9);
+
   // Candidate-set completeness is a trust property, not an optimizer side
   // effect. A complete upstream joint search plus complete epsilon-frontier
   // should permit robust promotion without changing the numerical selection.
@@ -77,6 +102,7 @@ int main() {
   const auto json = cad::robustness_to_json(robust);
   assert(json.find("\"secondStageMonteCarloDraws\":600") != std::string::npos);
   assert(json.find("\"politicalAcceptanceProbabilityEstimated\":false") != std::string::npos);
+  assert(json.find("\"boundedMemoryTwoPass\":true") != std::string::npos);
   assert(json.find("\"candidateSetComplete\":false") != std::string::npos);
   assert(json.find("\"maxRegret\"") != std::string::npos);
   assert(json.find("\"canadaCvar10Surplus\"") != std::string::npos);
