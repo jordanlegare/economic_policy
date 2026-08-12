@@ -21,6 +21,8 @@ jobs:
           git checkout origin/main -- .github/workflows
           rm -f tools/fix_oecd_denominators_once.py
           git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           tree=$(git write-tree)
           parent=$(git rev-parse origin/main)
           commit=$(printf '%s\n\n%s\n' \
