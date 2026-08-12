@@ -33,7 +33,7 @@ std::map<std::string, double> load_numeric_fixture(const std::string& path) {
   return values;
 }
 
-const cad::Scenario& find_scenario(const cad::Result& result, const std::string& id) {
+const cad::Scenario& find_scenario(const cad::Result& result, const char* id) {
   for (const auto& scenario : result.scenarios)
     if (scenario.id == id) return scenario;
   assert(false && "expected scenario not found");
