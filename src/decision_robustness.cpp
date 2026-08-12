@@ -351,6 +351,28 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
   terminal_debt.reserve(static_cast<std::size_t>(draws));
   terminal_inflation.reserve(static_cast<std::size_t>(draws));
 
+  // Structural parameters vary across the outer ensemble, but these terms are
+  // invariant inside one draw's 700/2,800 x 12 path simulation.
+  const double coordinated = policy.productive_share * policy.fiscal_impulse;
+  const double us_tariff = std::max(
+      0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation));
+  const double ca_tariff = std::max(
+      0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation));
+  const double exposed_exports = e.exports_to_us_share / 100.0
+      * (1.0 - clamp(policy.diversification + e.trade_diversification, 0.0, 0.75));
+  const double trade_drag = p.canada_trade_drag_scale
+      * exposed_exports * e.exports_gdp / 100.0
+      * e.trade_elasticity * (us_tariff + e.border_friction) / 100.0;
+  const double us_trade_drag = p.us_retaliation_drag_scale
+      * e.imports_from_us_share / 100.0 * e.trade_elasticity
+      * (ca_tariff + .45 * e.border_friction) / 100.0;
+  const double import_price = e.imports_from_us_share / 100.0
+      * e.import_content_consumption / 100.0 * ca_tariff;
+  const double supply = coordinated * p.productive_supply_multiplier
+      + e.productivity_growth * .035;
+  const double relief_cost = policy.targeted_relief + e.tariff_relief;
+  const double fx = (e.usdcad - 1.34) * p.fx_pass_through;
+
   for (int d = 0; d < draws; ++d) {
     double rate = e.policy_rate;
     double inf = e.core_inflation;
@@ -364,22 +386,6 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
     bool recession = false;
 
     for (int q = 0; q < 12; ++q) {
-      const double coordinated = policy.productive_share * policy.fiscal_impulse;
-      const double us_tariff = std::max(
-          0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation));
-      const double ca_tariff = std::max(
-          0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation));
-      const double exposed_exports = e.exports_to_us_share / 100.0
-          * (1.0 - clamp(policy.diversification + e.trade_diversification, 0.0, 0.75));
-      const double trade_drag = p.canada_trade_drag_scale
-          * exposed_exports * e.exports_gdp / 100.0
-          * e.trade_elasticity * (us_tariff + e.border_friction) / 100.0;
-      const double us_trade_drag = p.us_retaliation_drag_scale
-          * e.imports_from_us_share / 100.0 * e.trade_elasticity
-          * (ca_tariff + .45 * e.border_friction) / 100.0;
-      const double import_price = e.imports_from_us_share / 100.0
-          * e.import_content_consumption / 100.0 * ca_tariff;
-
       const double rate_target = clamp(p.neutral_rate
           + p.rate_inflation_response * (inf - p.inflation_target)
           + p.rate_output_response * gap, .25, 7.0);
@@ -393,8 +399,6 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
       const double demand = policy.fiscal_impulse * (1.0 - policy.productive_share)
           * p.fiscal_demand_multiplier
           - (rate - p.neutral_rate) * p.real_rate_demand_sensitivity;
-      const double supply = coordinated * p.productive_supply_multiplier
-          + e.productivity_growth * .035;
 
       export_change = -100.0 * trade_drag + .35 * (e.us_growth - 2.0)
           + 2.0 * policy.diversification + shock(rng) * p.export_shock_sd;
@@ -404,7 +408,6 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
       gap = p.output_persistence * gap + demand - trade_drag
           + p.global_growth_sensitivity * (e.global_growth - 2.7)
           + shock(rng) * p.output_shock_sd;
-      const double fx = (e.usdcad - 1.34) * p.fx_pass_through;
       inf = p.inflation_persistence * inf
           + p.inflation_expectations_weight * e.inflation_expectations
           + p.phillips_curve_slope * gap + fx - supply
@@ -419,7 +422,6 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
       u = clamp(u - .10 * (growth - 1.7) + shock(rng) * .035, 3.5, 11.0);
       housing = clamp(.78 * housing - 1.15 * (rate - p.neutral_rate)
           + .08 * (e.population_growth - 1.2) + shock(rng) * .5, -15.0, 30.0);
-      const double relief_cost = policy.targeted_relief + e.tariff_relief;
       debt += (-e.fiscal_balance_gdp + policy.fiscal_impulse * .8 + relief_cost * .55
           + .045 * (rate - p.neutral_rate) * debt - .18 * growth) / 4.0;
       cost = .56 * inf + .22 * std::max(0.0, housing / 10.0)
@@ -481,10 +483,8 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
   s.export_change = export_sum / denom;
   s.us_export_change = us_export_sum / denom;
 
-  const double effective_us_rate = std::max(
-      0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation)) / 100.0;
-  const double effective_ca_rate = std::max(
-      0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation)) / 100.0;
+  const double effective_us_rate = us_tariff / 100.0;
+  const double effective_ca_rate = ca_tariff / 100.0;
   const double ledger_elasticity = e.trade_elasticity * p.tariff_revenue_elasticity_scale;
   const double ca_exports = e.canada_exports_to_us_cad
       * std::max(.05, 1.0 - ledger_elasticity * effective_us_rate);
@@ -505,11 +505,13 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
       * (1.0 - s.trade_balance_gap_usd / std::max(.001, initial_gap));
   s.zero_trade_deficit = s.trade_balance_gap_usd < .05;
 
-  std::sort(terminal_debt.begin(), terminal_debt.end());
-  std::sort(terminal_inflation.begin(), terminal_inflation.end());
   const auto p90_index = static_cast<std::size_t>(draws * 9 / 10);
-  s.debt_stress_p90 = terminal_debt[p90_index];
-  s.inflation_stress_p90 = terminal_inflation[p90_index];
+  auto debt_p90 = terminal_debt.begin() + static_cast<std::ptrdiff_t>(p90_index);
+  auto inflation_p90 = terminal_inflation.begin() + static_cast<std::ptrdiff_t>(p90_index);
+  std::nth_element(terminal_debt.begin(), debt_p90, terminal_debt.end());
+  std::nth_element(terminal_inflation.begin(), inflation_p90, terminal_inflation.end());
+  s.debt_stress_p90 = *debt_p90;
+  s.inflation_stress_p90 = *inflation_p90;
 
   const double mandate_loss = 3.8 * sq(s.inflation - p.inflation_target)
       + 1.2 * sq(std::max(0.0, s.unemployment - 5.8))

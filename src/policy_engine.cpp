@@ -313,6 +313,25 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   us_barrier_coverage /= std::max(1e-9, ca_export_weight);
   ca_barrier_coverage /= std::max(1e-9, us_export_weight);
 
+  // Everything below is invariant across stochastic paths and quarters. Keep
+  // it out of the 700/2,800 x 12 hot loop while preserving the exact model.
+  const double coordinated = productive * fiscal;
+  const double us_tariff = std::max(
+      0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation));
+  const double ca_tariff = std::max(
+      0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation));
+  const double exposed_exports = e.exports_to_us_share / 100.0
+      * (1.0 - clamp(diversification + e.trade_diversification, 0.0, 0.75));
+  const double trade_drag = exposed_exports * e.exports_gdp / 100.0
+      * e.trade_elasticity * (us_tariff + e.border_friction) / 100.0;
+  const double us_trade_drag = e.imports_from_us_share / 100.0
+      * e.trade_elasticity * (ca_tariff + .45 * e.border_friction) / 100.0;
+  const double import_price = e.imports_from_us_share / 100.0
+      * e.import_content_consumption / 100.0 * ca_tariff;
+  const double supply = coordinated * .22 + e.productivity_growth * .035;
+  const double relief_cost = targeted_relief + e.tariff_relief;
+  const double fx = (e.usdcad - 1.34) * .35;
+
   for (int d = 0; d < draws; ++d) {
     double rate = e.policy_rate, inf = e.core_inflation, gap = e.output_gap, u = e.unemployment;
     double debt = e.federal_debt_gdp, housing = e.housing_gap;
@@ -320,24 +339,10 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
     bool recession = false;
 
     for (int q = 0; q < 12; ++q) {
-      const double coordinated = productive * fiscal;
-      const double us_tariff = std::max(
-          0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation));
-      const double ca_tariff = std::max(
-          0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation));
-      const double exposed_exports = e.exports_to_us_share / 100.0
-          * (1.0 - clamp(diversification + e.trade_diversification, 0.0, 0.75));
-      const double trade_drag = exposed_exports * e.exports_gdp / 100.0
-          * e.trade_elasticity * (us_tariff + e.border_friction) / 100.0;
-      const double us_trade_drag = e.imports_from_us_share / 100.0
-          * e.trade_elasticity * (ca_tariff + .45 * e.border_friction) / 100.0;
-      const double import_price = e.imports_from_us_share / 100.0
-          * e.import_content_consumption / 100.0 * ca_tariff;
       const double rate_target = clamp(2.5 + .75 * (inf - 2.0) + .25 * gap, .25, 7.0);
       if (q == 0) rate = clamp(rate + move / 100.0, 0.0, 8.0);
       else rate = clamp(rate + clamp(rate_target - rate, -.25, .25), 0.0, 8.0);
       const double demand = fiscal * (1.0 - productive) * .36 - (rate - 2.5) * .18;
-      const double supply = coordinated * .22 + e.productivity_growth * .035;
 
       export_change = -100.0 * trade_drag + .35 * (e.us_growth - 2.0)
           + 2.0 * diversification + shock(rng) * .35;
@@ -349,7 +354,6 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
 
       gap = .72 * gap + demand - trade_drag + .08 * (e.global_growth - 2.7)
           + shock(rng) * .16;
-      const double fx = (e.usdcad - 1.34) * .35;
       inf = .68 * inf + .32 * e.inflation_expectations + .12 * gap + fx
           - supply + .022 * import_price - .018 * (e.oil_price - 75.0) + shock(rng) * .11;
       const double growth = clamp(1.75 + gap - .18 * e.credit_spread
@@ -360,7 +364,6 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
       u = clamp(u - .10 * (growth - 1.7) + shock(rng) * .035, 3.5, 11.0);
       housing = clamp(.78 * housing - 1.15 * (rate - 2.5)
           + .08 * (e.population_growth - 1.2) + shock(rng) * .5, -15.0, 30.0);
-      const double relief_cost = targeted_relief + e.tariff_relief;
       debt += (-e.fiscal_balance_gdp + fiscal * .8 + relief_cost * .55
           + .045 * (rate - 2.5) * debt - .18 * growth) / 4.0;
       cost = .56 * inf + .22 * std::max(0.0, housing / 10.0)
@@ -407,10 +410,8 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
   s.export_change = export_sum / draws;
   s.us_export_change = us_export_sum / draws;
 
-  const double effective_us_rate = std::max(
-      0.0, e.us_tariff_canada * us_barrier_coverage * (1.0 - deescalation)) / 100.0;
-  const double effective_ca_rate = std::max(
-      0.0, e.canada_retaliatory_tariff * ca_barrier_coverage * (1.0 - deescalation)) / 100.0;
+  const double effective_us_rate = us_tariff / 100.0;
+  const double effective_ca_rate = ca_tariff / 100.0;
   const double ca_exports = e.canada_exports_to_us_cad
       * std::max(.05, 1.0 - e.trade_elasticity * effective_us_rate);
   const double ca_imports = e.canada_imports_from_us_cad
@@ -433,10 +434,13 @@ Scenario simulate(const Economy& e, std::string id, std::string name, std::strin
       * (1.0 - s.trade_balance_gap_usd / std::max(.001, initial_gap));
   s.zero_trade_deficit = s.trade_balance_gap_usd < .05;
 
-  std::sort(terminal_debt.begin(), terminal_debt.end());
-  std::sort(terminal_inflation.begin(), terminal_inflation.end());
-  s.debt_stress_p90 = terminal_debt[static_cast<std::size_t>(draws * 9 / 10)];
-  s.inflation_stress_p90 = terminal_inflation[static_cast<std::size_t>(draws * 9 / 10)];
+  const auto p90_index = static_cast<std::size_t>(draws * 9 / 10);
+  auto debt_p90 = terminal_debt.begin() + static_cast<std::ptrdiff_t>(p90_index);
+  auto inflation_p90 = terminal_inflation.begin() + static_cast<std::ptrdiff_t>(p90_index);
+  std::nth_element(terminal_debt.begin(), debt_p90, terminal_debt.end());
+  std::nth_element(terminal_inflation.begin(), inflation_p90, terminal_inflation.end());
+  s.debt_stress_p90 = *debt_p90;
+  s.inflation_stress_p90 = *inflation_p90;
 
   const double mandate_loss = 3.8 * sq(s.inflation - 2.0)
       + 1.2 * sq(std::max(0.0, s.unemployment - 5.8))
@@ -623,6 +627,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
 
   Scenario custom;
   bool have_custom = false;
+  double best_custom_score = -std::numeric_limits<double>::infinity();
   int candidate = 0;
   const double max_deescalation = clamp(e.cooperation_ceiling / 100.0, 0.0, 1.0);
   for (double move : {-25.0, 0.0, 25.0})
@@ -640,7 +645,9 @@ Result PolicyEngine::evaluate(const Economy& e) const {
                 move, fiscal, productive, deescalation, relief, diversification,
                 seed_, kBaseDraws);
             ++candidate;
-            if (!have_custom || deal_score(s, e, false) > deal_score(custom, e, false)) {
+            const double candidate_score = deal_score(s, e, false);
+            if (!have_custom || candidate_score > best_custom_score) {
+              best_custom_score = candidate_score;
               custom = std::move(s);
               have_custom = true;
             }
