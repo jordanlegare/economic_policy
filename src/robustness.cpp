@@ -1,5 +1,6 @@
 #include "policy_engine.hpp"
 #include "robustness.hpp"
+#include "structural_calibration.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,20 +20,279 @@ namespace {
 double clamp(double x, double lo, double hi) { return std::max(lo, std::min(hi, x)); }
 double sq(double x) { return x * x; }
 
+constexpr int kRobustBaseDraws = 700;
 constexpr int kRobustVerificationDraws = 2800;
+constexpr std::size_t kRobustSectorFinalists = 8;
 
-struct SectorWeights {
+struct SectorProfile {
+  const char* code;
+  const char* name;
   double trade;
   double import;
+  double jobs;
+  double cyclical;
 };
 
-// Keep the directional aggregation weights identical to the verified V1 engine.
-constexpr std::array<SectorWeights, 20> kSectorWeights{{
-  {.82,.42}, {.88,.18}, {.16,.10}, {.18,.28}, {.94,.76},
-  {.68,.58}, {.30,.72}, {.72,.48}, {.34,.30}, {.22,.20},
-  {.10,.12}, {.38,.26}, {.20,.18}, {.28,.24}, {.08,.10},
-  {.06,.14}, {.14,.16}, {.18,.52}, {.16,.30}, {.04,.08}
+// This is the same production sector screen used by PolicyEngine::evaluate().
+// Structural macro parameters do not enter this deterministic Pareto screen;
+// they enter the stochastic finalist ranking below. That makes the frontier
+// safe to cache once per policy without changing the nested optimization.
+constexpr std::array<SectorProfile, 20> kSectorProfiles{{
+  {"11","Agriculture, forestry, fishing & hunting",.82,.42,.72,.65},
+  {"21","Mining, quarrying, oil & gas",.88,.18,.32,.75},
+  {"22","Utilities",.16,.10,.25,.25},
+  {"23","Construction",.18,.28,.82,.88},
+  {"31-33","Manufacturing",.94,.76,.68,.92},
+  {"42","Wholesale trade",.68,.58,.64,.74},
+  {"44-45","Retail trade",.30,.72,.88,.62},
+  {"48-49","Transportation & warehousing",.72,.48,.70,.86},
+  {"51","Information & cultural industries",.34,.30,.48,.44},
+  {"52","Finance & insurance",.22,.20,.34,.55},
+  {"53","Real estate, rental & leasing",.10,.12,.30,.78},
+  {"54","Professional, scientific & technical services",.38,.26,.58,.48},
+  {"55","Management of companies & enterprises",.20,.18,.24,.40},
+  {"56","Administrative, support & waste services",.28,.24,.86,.72},
+  {"61","Educational services",.08,.10,.82,.18},
+  {"62","Health care & social assistance",.06,.14,.94,.16},
+  {"71","Arts, entertainment & recreation",.14,.16,.88,.68},
+  {"72","Accommodation & food services",.18,.52,.96,.82},
+  {"81","Other services (except public administration)",.16,.30,.90,.58},
+  {"91","Public administration",.04,.08,.62,.12}
 }};
+
+struct SectorUtility {
+  double canada = 0.0;
+  double us = 0.0;
+  SectorImpact impact;
+};
+
+std::vector<double> coverage_levels(double current, double cooperation_ceiling,
+                                    double negotiated_relief) {
+  const double start = clamp(current, 0.0, 100.0);
+  const double cap = clamp(cooperation_ceiling / 100.0, 0.0, 1.0);
+  const double rate_relief = clamp(negotiated_relief / 100.0, 0.0, cap);
+  const double minimum_coverage_ratio = (1.0 - rate_relief) > 1e-12
+      ? clamp((1.0 - cap) / (1.0 - rate_relief), 0.0, 1.0)
+      : 1.0;
+  const double max_coverage_relief = 1.0 - minimum_coverage_ratio;
+  std::vector<double> levels;
+  for (double fraction : {0.0, .25, .50, .75, 1.0})
+    levels.push_back(start * (1.0 - max_coverage_relief * fraction));
+  std::sort(levels.begin(), levels.end());
+  levels.erase(std::unique(levels.begin(), levels.end(),
+      [](double a, double b) { return std::abs(a - b) < 1e-9; }), levels.end());
+  return levels;
+}
+
+SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size_t sector,
+                             double us_coverage, double canada_coverage) {
+  const auto& p = kSectorProfiles[sector];
+  const double deescalation = clamp(policy.negotiated_relief / 100.0, 0.0, 1.0);
+  const double diversification = clamp(
+      policy.diversification + e.trade_diversification, 0.0, 0.75);
+  const double uc = clamp(us_coverage / 100.0, 0.0, 1.0);
+  const double cc = clamp(canada_coverage / 100.0, 0.0, 1.0);
+  const double us_tariff = e.us_tariff_canada * (1.0 - deescalation) / 100.0 * uc;
+  const double ca_tariff = e.canada_retaliatory_tariff * (1.0 - deescalation) / 100.0 * cc;
+  const double supply = policy.productive_share * policy.fiscal_impulse
+      * (.16 + .12 * p.cyclical);
+  const double ca_shock = us_tariff * p.trade * (.72 - .28 * diversification)
+      + e.border_friction / 100.0 * p.trade * .18;
+  const double us_shock = ca_tariff * p.import * .46 + us_tariff * p.import * .12;
+  const double us_protection = us_tariff * p.trade * .24 * (1.0 - .5 * uc);
+
+  SectorUtility out;
+  out.impact.code = p.code;
+  out.impact.name = p.name;
+  out.impact.exposure = 100.0 * p.trade;
+  out.impact.canada_output = 100.0
+      * (-ca_shock + supply + policy.targeted_relief * .10 * p.jobs);
+  out.impact.us_output = 100.0
+      * (-us_shock + us_protection + deescalation * .012 * p.trade);
+  out.impact.canada_jobs = out.impact.canada_output * (.30 + .42 * p.jobs);
+  out.impact.us_jobs = out.impact.us_output * (.28 + .38 * p.jobs);
+  out.impact.canada_prices = 100.0
+      * (ca_tariff * p.import * .30 + us_tariff * p.import * .05 - supply * .10);
+  out.impact.us_prices = 100.0
+      * (us_tariff * p.import * .24 + ca_tariff * p.import * .10);
+
+  const double price_weight = .65 + .70 * clamp(e.risk_aversion / 100.0, 0.0, 1.0)
+      + .18 * std::max(0.0, (e.inflation + e.us_inflation) / 2.0 - 2.0);
+  const double ca_jobs_weight = .45 + .08 * std::max(0.0, e.unemployment - 5.0);
+  const double us_jobs_weight = .45 + .08 * std::max(0.0, 4.5 - e.us_growth);
+  const double leverage = 100.0 * ca_tariff * p.trade * .16 * (1.0 - .65 * cc);
+
+  out.canada = p.trade * (out.impact.canada_output
+      + ca_jobs_weight * out.impact.canada_jobs
+      - price_weight * out.impact.canada_prices + leverage);
+  out.us = p.import * (out.impact.us_output
+      + us_jobs_weight * out.impact.us_jobs
+      - price_weight * out.impact.us_prices);
+  return out;
+}
+
+struct CoverageCandidate {
+  double canada_raw = 0.0;
+  double us_raw = 0.0;
+  double canada_score = 0.0;
+  double us_score = 0.0;
+  double objective = -1e100;
+  std::array<double, 20> us_coverage{};
+  std::array<double, 20> canada_coverage{};
+};
+
+struct SectorSearch {
+  std::vector<CoverageCandidate> finalists;
+  int candidates_examined = 0;
+  int pareto_frontier_size = 0;
+  double baseline_canada_score = 0.0;
+  double baseline_us_score = 0.0;
+};
+
+double normalize_utility(double value, double lo, double hi) {
+  return 100.0 * (value - lo) / std::max(1e-9, hi - lo);
+}
+
+SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
+  SectorSearch search;
+  std::vector<CoverageCandidate> frontier(1);
+  double ca_global_min = 0.0, ca_global_max = 0.0;
+  double us_global_min = 0.0, us_global_max = 0.0;
+  double baseline_ca_raw = 0.0, baseline_us_raw = 0.0;
+
+  for (std::size_t sector = 0; sector < kSectorProfiles.size(); ++sector) {
+    const auto us_levels = coverage_levels(
+        e.us_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);
+    const auto ca_levels = coverage_levels(
+        e.canada_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);
+
+    struct Option { double uc, cc, ca, us; };
+    std::vector<Option> options;
+    options.reserve(us_levels.size() * ca_levels.size());
+    double sector_ca_min = std::numeric_limits<double>::infinity();
+    double sector_ca_max = -std::numeric_limits<double>::infinity();
+    double sector_us_min = std::numeric_limits<double>::infinity();
+    double sector_us_max = -std::numeric_limits<double>::infinity();
+
+    for (double uc : us_levels) for (double cc : ca_levels) {
+      const auto value = sector_utility(e, policy, sector, uc, cc);
+      options.push_back({uc, cc, value.canada, value.us});
+      sector_ca_min = std::min(sector_ca_min, value.canada);
+      sector_ca_max = std::max(sector_ca_max, value.canada);
+      sector_us_min = std::min(sector_us_min, value.us);
+      sector_us_max = std::max(sector_us_max, value.us);
+    }
+    ca_global_min += sector_ca_min;
+    ca_global_max += sector_ca_max;
+    us_global_min += sector_us_min;
+    us_global_max += sector_us_max;
+
+    const auto baseline = sector_utility(
+        e, policy, sector, e.us_sector_coverage[sector], e.canada_sector_coverage[sector]);
+    baseline_ca_raw += baseline.canada;
+    baseline_us_raw += baseline.us;
+
+    std::vector<CoverageCandidate> expanded;
+    expanded.reserve(frontier.size() * options.size());
+    for (const auto& partial : frontier) {
+      for (const auto& option : options) {
+        CoverageCandidate candidate = partial;
+        candidate.canada_raw += option.ca;
+        candidate.us_raw += option.us;
+        candidate.us_coverage[sector] = option.uc;
+        candidate.canada_coverage[sector] = option.cc;
+        expanded.push_back(std::move(candidate));
+      }
+    }
+    search.candidates_examined += static_cast<int>(expanded.size());
+
+    std::sort(expanded.begin(), expanded.end(),
+        [](const CoverageCandidate& a, const CoverageCandidate& b) {
+          if (std::abs(a.canada_raw - b.canada_raw) > 1e-9)
+            return a.canada_raw > b.canada_raw;
+          return a.us_raw > b.us_raw;
+        });
+    frontier.clear();
+    double best_us = -std::numeric_limits<double>::infinity();
+    for (auto& candidate : expanded) {
+      if (candidate.us_raw > best_us + 1e-9) {
+        best_us = candidate.us_raw;
+        frontier.push_back(std::move(candidate));
+      }
+    }
+  }
+
+  search.baseline_canada_score = normalize_utility(
+      baseline_ca_raw, ca_global_min, ca_global_max);
+  search.baseline_us_score = normalize_utility(
+      baseline_us_raw, us_global_min, us_global_max);
+  search.pareto_frontier_size = static_cast<int>(frontier.size());
+
+  const double ca_weight = clamp(e.canada_priority, 1.0, 100.0);
+  const double us_weight = clamp(e.us_priority, 1.0, 100.0);
+  const double weight_total = ca_weight + us_weight;
+  std::vector<CoverageCandidate> win_win;
+
+  for (auto& candidate : frontier) {
+    candidate.canada_score = normalize_utility(
+        candidate.canada_raw, ca_global_min, ca_global_max);
+    candidate.us_score = normalize_utility(
+        candidate.us_raw, us_global_min, us_global_max);
+    if (candidate.canada_score + 1e-9 < search.baseline_canada_score
+        || candidate.us_score + 1e-9 < search.baseline_us_score) continue;
+    const double nash = std::exp((ca_weight * std::log(std::max(.01, candidate.canada_score))
+        + us_weight * std::log(std::max(.01, candidate.us_score))) / weight_total);
+    const double fairness = std::min(candidate.canada_score, candidate.us_score);
+    double coverage_sum = 0.0;
+    for (std::size_t i = 0; i < candidate.us_coverage.size(); ++i)
+      coverage_sum += candidate.us_coverage[i] + candidate.canada_coverage[i];
+    candidate.objective = .72 * nash + .28 * fairness - .00002 * coverage_sum;
+    win_win.push_back(candidate);
+  }
+
+  if (win_win.empty()) {
+    CoverageCandidate baseline;
+    baseline.canada_raw = baseline_ca_raw;
+    baseline.us_raw = baseline_us_raw;
+    baseline.canada_score = search.baseline_canada_score;
+    baseline.us_score = search.baseline_us_score;
+    baseline.us_coverage = e.us_sector_coverage;
+    baseline.canada_coverage = e.canada_sector_coverage;
+    baseline.objective = std::min(baseline.canada_score, baseline.us_score);
+    win_win.push_back(baseline);
+  }
+
+  std::sort(win_win.begin(), win_win.end(),
+      [](const CoverageCandidate& a, const CoverageCandidate& b) {
+        return a.objective > b.objective;
+      });
+  const std::size_t keep = std::min<std::size_t>(kRobustSectorFinalists, win_win.size());
+  search.finalists.assign(win_win.begin(), win_win.begin() + keep);
+  return search;
+}
+
+void set_sector_package(Scenario& policy, const Economy& e,
+                        const std::array<double, 20>& us_coverage,
+                        const std::array<double, 20>& canada_coverage) {
+  policy.applied_us_sector_coverage = us_coverage;
+  policy.applied_canada_sector_coverage = canada_coverage;
+  policy.sectors.clear();
+  policy.sectors.reserve(kSectorProfiles.size());
+  for (std::size_t sector = 0; sector < kSectorProfiles.size(); ++sector) {
+    policy.sectors.push_back(sector_utility(
+        e, policy, sector, us_coverage[sector], canada_coverage[sector]).impact);
+  }
+}
+
+bool same_package(const Scenario& a, const Scenario& b) {
+  for (std::size_t i = 0; i < a.applied_us_sector_coverage.size(); ++i) {
+    if (std::abs(a.applied_us_sector_coverage[i]
+        - b.applied_us_sector_coverage[i]) > 1e-9) return false;
+    if (std::abs(a.applied_canada_sector_coverage[i]
+        - b.applied_canada_sector_coverage[i]) > 1e-9) return false;
+  }
+  return true;
+}
 
 void directional_coverage(const Economy& e, double& us_barrier_coverage,
                           double& ca_barrier_coverage) {
@@ -40,12 +300,12 @@ void directional_coverage(const Economy& e, double& us_barrier_coverage,
   double us_export_weight = 0.0;
   us_barrier_coverage = 0.0;
   ca_barrier_coverage = 0.0;
-  for (std::size_t i = 0; i < kSectorWeights.size(); ++i) {
-    ca_export_weight += kSectorWeights[i].trade;
-    us_export_weight += kSectorWeights[i].import;
-    us_barrier_coverage += kSectorWeights[i].trade
+  for (std::size_t i = 0; i < kSectorProfiles.size(); ++i) {
+    ca_export_weight += kSectorProfiles[i].trade;
+    us_export_weight += kSectorProfiles[i].import;
+    us_barrier_coverage += kSectorProfiles[i].trade
         * clamp(e.us_sector_coverage[i] / 100.0, 0.0, 1.0);
-    ca_barrier_coverage += kSectorWeights[i].import
+    ca_barrier_coverage += kSectorProfiles[i].import
         * clamp(e.canada_sector_coverage[i] / 100.0, 0.0, 1.0);
   }
   us_barrier_coverage /= std::max(1e-9, ca_export_weight);
@@ -54,13 +314,12 @@ void directional_coverage(const Economy& e, double& us_barrier_coverage,
 
 Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& policy,
                                 const StructuralParameters& p, std::uint64_t seed,
-                                int draws = kRobustVerificationDraws) {
+                                int draws) {
   Economy e = baseline_e;
   e.us_sector_coverage = policy.applied_us_sector_coverage;
   e.canada_sector_coverage = policy.applied_canada_sector_coverage;
 
   Scenario s = policy;
-  s.sectors = policy.sectors;  // Sector package is frozen by the V2 robustness contract.
   s.rates.fill(0.0);
   s.inflation_path.fill(0.0);
   s.growth_path.fill(0.0);
@@ -72,7 +331,6 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
 
   const double deescalation = std::min(policy.negotiated_relief / 100.0,
       clamp(e.cooperation_ceiling / 100.0, 0.0, 1.0));
-
   double us_barrier_coverage = 0.0;
   double ca_barrier_coverage = 0.0;
   directional_coverage(e, us_barrier_coverage, ca_barrier_coverage);
@@ -269,7 +527,8 @@ Scenario simulate_parameterized(const Economy& baseline_e, const Scenario& polic
 }
 
 double conditional_deal_score(const Scenario& s, const Economy& e) {
-  const double canada = std::sqrt(std::max(.01, s.boc_score) * std::max(.01, s.federal_score));
+  const double canada = std::sqrt(
+      std::max(.01, s.boc_score) * std::max(.01, s.federal_score));
   const double ca_weight = clamp(e.canada_priority, 1.0, 100.0);
   const double us_weight = clamp(e.us_priority, 1.0, 100.0);
   const double total = ca_weight + us_weight;
@@ -307,6 +566,54 @@ void rank_parameterized_scenario(Scenario& s, const Economy& e) {
   s.score = (growth_ok ? 0.0 : -1e6) + raw_score;
 }
 
+struct NestedSectorSelection {
+  Scenario scenario;
+  bool package_changed = false;
+  int finalists_resimulated = 0;
+};
+
+NestedSectorSelection reoptimize_sector_package(
+    const Economy& economy, const Scenario& reference_policy,
+    const SectorSearch& search, const StructuralParameters& parameters,
+    std::uint64_t common_macro_seed) {
+  Scenario selected_policy;
+  bool have_selected = false;
+  double selected_rank = -std::numeric_limits<double>::infinity();
+  int finalists_resimulated = 0;
+
+  for (const auto& coverage : search.finalists) {
+    Scenario candidate = reference_policy;
+    set_sector_package(candidate, economy, coverage.us_coverage, coverage.canada_coverage);
+    Scenario trial = simulate_parameterized(
+        economy, candidate, parameters, common_macro_seed, kRobustBaseDraws);
+    rank_parameterized_scenario(trial, economy);
+    ++finalists_resimulated;
+    if (!have_selected || trial.score > selected_rank) {
+      selected_rank = trial.score;
+      selected_policy = std::move(candidate);
+      have_selected = true;
+    }
+  }
+
+  if (!have_selected) {
+    selected_policy = reference_policy;
+    set_sector_package(selected_policy, economy,
+        reference_policy.applied_us_sector_coverage,
+        reference_policy.applied_canada_sector_coverage);
+  }
+
+  Scenario verified = simulate_parameterized(
+      economy, selected_policy, parameters, common_macro_seed,
+      kRobustVerificationDraws);
+  rank_parameterized_scenario(verified, economy);
+
+  NestedSectorSelection out;
+  out.package_changed = !same_package(verified, reference_policy);
+  out.finalists_resimulated = finalists_resimulated;
+  out.scenario = std::move(verified);
+  return out;
+}
+
 std::string json_escape(const std::string& value) {
   std::string out;
   for (char c : value) {
@@ -324,41 +631,71 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
   summary.parameter_draws = std::max(0, parameter_draws);
   summary.calibration_id = parameters_.calibration_id;
   summary.calibration_vintage = parameters_.calibration_vintage;
-  summary.methodology = "outer-structural-ensemble/fixed-verified-sector-packages/common-random-numbers";
+  summary.parameter_registry_id = parameters_.uncertainty_registry.loaded
+      ? parameters_.uncertainty_registry.registry_id : "none";
+  summary.sampled_parameter_count = sampled_structural_parameter_count(
+      parameters_.uncertainty_registry);
+  summary.parameter_bounds_active = summary.parameter_draws > 0
+      && parameters_.uncertainty_registry.loaded
+      && summary.sampled_parameter_count > 0;
+  summary.parameter_provenance_complete = structural_parameter_registry_complete(
+      parameters_.uncertainty_registry);
+  summary.methodology =
+      "outer-structural-ensemble/nested-sector-pareto-reoptimization/"
+      "cached-parameter-invariant-frontiers/common-random-numbers";
   summary.structural_parameters_active = summary.parameter_draws > 0;
   summary.common_random_numbers = summary.parameter_draws > 0;
-  summary.sector_packages_reoptimized = false;
+  summary.sector_packages_reoptimized = summary.parameter_draws > 0;
 
   if (summary.parameter_draws == 0 || baseline.scenarios.empty()) {
     summary.classification = "not-evaluated";
     return baseline;
   }
 
+  // The exact sector Pareto screen is deterministic conditional on Economy and
+  // policy controls. Build it once per policy, then re-rank all retained
+  // finalists under every structural calibration. Rebuilding an identical
+  // frontier inside every draw would add cost without changing the solution.
+  std::vector<SectorSearch> sector_frontiers;
+  sector_frontiers.reserve(baseline.scenarios.size());
+  for (const auto& policy : baseline.scenarios)
+    sector_frontiers.push_back(search_sector_frontier(economy, policy));
+  summary.sector_frontiers_built = static_cast<int>(sector_frontiers.size());
+
   const std::string baseline_strategy = baseline.recommendation.strategy_id;
   const auto ensemble = draw_structural_parameters(
       parameters_, summary.parameter_draws,
       static_cast<std::uint64_t>(seed_) ^ 0x9e3779b97f4a7c15ULL);
+  const std::uint64_t common_macro_seed = static_cast<std::uint64_t>(seed_);
 
   std::vector<double> selected_scores;
   selected_scores.reserve(ensemble.size());
-
-  // Common random numbers are deliberate: every structural calibration sees
-  // the same innovation sequence, and every candidate policy within that draw
-  // sees the same sequence. Winner changes therefore come from structural
-  // assumptions rather than accidental Monte Carlo seed changes.
-  const std::uint64_t common_macro_seed = static_cast<std::uint64_t>(seed_);
+  int reference_package_retained = 0;
 
   for (const auto& parameters : ensemble) {
     double best_score = -std::numeric_limits<double>::infinity();
     std::string best_strategy;
-    for (const auto& policy : baseline.scenarios) {
-      Scenario draw = simulate_parameterized(
-          economy, policy, parameters, common_macro_seed, kRobustVerificationDraws);
-      rank_parameterized_scenario(draw, economy);
-      if (draw.id == baseline_strategy) selected_scores.push_back(draw.score);
-      if (draw.score > best_score) {
-        best_score = draw.score;
-        best_strategy = draw.id;
+
+    for (std::size_t i = 0; i < baseline.scenarios.size(); ++i) {
+      const auto& policy = baseline.scenarios[i];
+      const auto& frontier = sector_frontiers[i];
+      auto nested = reoptimize_sector_package(
+          economy, policy, frontier, parameters, common_macro_seed);
+
+      ++summary.nested_sector_optimizations;
+      summary.nested_sector_candidates_examined +=
+          static_cast<std::uint64_t>(std::max(0, frontier.candidates_examined));
+      summary.nested_sector_finalists_resimulated +=
+          static_cast<std::uint64_t>(std::max(0, nested.finalists_resimulated));
+      if (nested.package_changed) ++summary.sector_package_changes;
+
+      if (nested.scenario.id == baseline_strategy) {
+        selected_scores.push_back(nested.scenario.score);
+        if (!nested.package_changed) ++reference_package_retained;
+      }
+      if (nested.scenario.score > best_score) {
+        best_score = nested.scenario.score;
+        best_strategy = nested.scenario.id;
       }
     }
     if (best_strategy == baseline_strategy) ++summary.recommendation_wins;
@@ -366,6 +703,9 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
 
   summary.recommendation_win_rate = ensemble.empty() ? 0.0
       : static_cast<double>(summary.recommendation_wins)
+          / static_cast<double>(ensemble.size());
+  summary.reference_package_retention_rate = ensemble.empty() ? 0.0
+      : static_cast<double>(reference_package_retained)
           / static_cast<double>(ensemble.size());
   if (!selected_scores.empty()) {
     summary.score_mean = std::accumulate(selected_scores.begin(), selected_scores.end(), 0.0)
@@ -376,12 +716,14 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
   summary.classification = classify_robustness(summary.recommendation_win_rate);
 
   std::ostringstream note;
-  note << " V2 structural robustness: " << summary.recommendation_wins << "/"
+  note << " V2 nested structural robustness: " << summary.recommendation_wins << "/"
        << summary.parameter_draws << " parameter calibrations retain "
        << baseline_strategy << " (" << std::fixed << std::setprecision(1)
        << 100.0 * summary.recommendation_win_rate << "%, " << summary.classification
-       << "). Common random numbers isolate parameter sensitivity; verified sector packages "
-       << "are held fixed rather than re-optimized inside each draw.";
+       << "). Each draw re-optimizes the verified 20-sector package across the production "
+       << "Pareto finalists using common random numbers; the reference strategy keeps its "
+       << "reference sector package in "
+       << 100.0 * summary.reference_package_retention_rate << "% of calibrations.";
   baseline.recommendation.explanation += note.str();
   return baseline;
 }
@@ -399,12 +741,24 @@ std::string robustness_to_json(const Result& result) {
     << ",\"classification\":\"" << json_escape(r.classification)
     << "\",\"calibrationId\":\"" << json_escape(r.calibration_id)
     << "\",\"calibrationVintage\":\"" << json_escape(r.calibration_vintage)
+    << "\",\"parameterRegistryId\":\"" << json_escape(r.parameter_registry_id)
     << "\",\"methodology\":\"" << json_escape(r.methodology)
-    << "\",\"structuralParametersActive\":"
+    << "\",\"sampledParameterCount\":" << r.sampled_parameter_count
+    << ",\"structuralParametersActive\":"
     << (r.structural_parameters_active ? "true" : "false")
     << ",\"commonRandomNumbers\":" << (r.common_random_numbers ? "true" : "false")
     << ",\"sectorPackagesReoptimized\":"
-    << (r.sector_packages_reoptimized ? "true" : "false") << "}";
+    << (r.sector_packages_reoptimized ? "true" : "false")
+    << ",\"parameterBoundsActive\":" << (r.parameter_bounds_active ? "true" : "false")
+    << ",\"parameterProvenanceComplete\":"
+    << (r.parameter_provenance_complete ? "true" : "false")
+    << ",\"sectorFrontiersBuilt\":" << r.sector_frontiers_built
+    << ",\"nestedSectorOptimizations\":" << r.nested_sector_optimizations
+    << ",\"nestedSectorCandidatesExamined\":" << r.nested_sector_candidates_examined
+    << ",\"nestedSectorFinalistsResimulated\":" << r.nested_sector_finalists_resimulated
+    << ",\"sectorPackageChanges\":" << r.sector_package_changes
+    << ",\"referencePackageRetentionRate\":"
+    << r.reference_package_retention_rate << "}";
   return o.str();
 }
 

@@ -151,6 +151,17 @@ struct RobustnessSummary {
   bool sector_packages_reoptimized = false;
   bool parameter_bounds_active = false;
   bool parameter_provenance_complete = false;
+
+  // Nested sector-robustness audit metrics. The deterministic Pareto frontiers
+  // are cached once per policy because structural macro parameters do not enter
+  // the sector screen; every structural draw still re-simulates and re-selects
+  // the strongest frontier package under that calibration.
+  int sector_frontiers_built = 0;
+  std::uint64_t nested_sector_optimizations = 0;
+  std::uint64_t nested_sector_candidates_examined = 0;
+  std::uint64_t nested_sector_finalists_resimulated = 0;
+  std::uint64_t sector_package_changes = 0;
+  double reference_package_retention_rate = 0.0;
 };
 
 struct WinWinRecommendation {
@@ -195,10 +206,9 @@ class PolicyEngine {
       parameters_.uncertainty_registry = std::move(parameter_registry);
   }
   Result evaluate(const Economy& economy) const;
-  // V2 robustness evaluates the verified V1 policy/sector packages under an
-  // outer structural-parameter ensemble using common random numbers. Sector
-  // packages are intentionally held fixed within each robustness run; the
-  // summary reports this limitation explicitly.
+  // V2 robustness samples structural calibrations, then re-optimizes the
+  // verified 20-sector negotiation package for every policy strategy inside
+  // each draw using the same Pareto screen and stochastic verification design.
   Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
   const StructuralParameters& parameters() const { return parameters_; }
   const StructuralParameterRegistry& parameter_registry() const {
