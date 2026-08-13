@@ -1,0 +1,351 @@
+name: Apply delegation scenario lock hotfix
+
+on:
+  push:
+    branches: [agent/lock-delegation-scenario]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/lock-delegation-scenario
+          fetch-depth: 0
+      - name: Apply scenario-lock patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual < count:
+                  raise SystemExit(f'{path}: expected at least {count} occurrence(s), found {actual}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, count))
+
+          # Public request/model contract: delegation coverage is an immutable
+          # constraint when lockDelegationSettings is supplied by the UI.
+          replace('include/policy_engine.hpp',
+              '  bool exhaustive_policy_search = false;\n  std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};',
+              '  bool exhaustive_policy_search = false;\n  // Interactive delegation runs treat submitted tariff/coverage settings as hard constraints.\n  bool lock_delegation_settings = false;\n  std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};')
+
+          replace('include/server_contracts.hpp',
+              '  CAD_SERVER_FIELD("cooperationCeiling", cooperation_ceiling, 0.0, 100.0);\n  CAD_SERVER_FIELD("minimumBilateralGrowth", minimum_bilateral_growth, -15.0, 15.0);',
+              '  CAD_SERVER_FIELD("cooperationCeiling", cooperation_ceiling, 0.0, 100.0);\n  if (!request_json::boolean_value(object, "lockDelegationSettings", false,\n                                   economy.lock_delegation_settings, error)) return false;\n  CAD_SERVER_FIELD("minimumBilateralGrowth", minimum_bilateral_growth, -15.0, 15.0);')
+
+          replace('src/policy_engine.cpp',
+              '    const auto us_levels = coverage_levels(e.us_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);\n    const auto ca_levels = coverage_levels(e.canada_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);',
+              '    const auto us_levels = e.lock_delegation_settings\n        ? std::vector<double>{clamp(e.us_sector_coverage[sector], 0.0, 100.0)}\n        : coverage_levels(e.us_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);\n    const auto ca_levels = e.lock_delegation_settings\n        ? std::vector<double>{clamp(e.canada_sector_coverage[sector], 0.0, 100.0)}\n        : coverage_levels(e.canada_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);',
+              1)
+
+          replace('src/policy_engine.cpp',
+              '  r.recommendation.trade_network_method = trade_network_methodology();\n  r.allocations_examined = 1;',
+              '  r.recommendation.trade_network_method = trade_network_methodology();\n  if (e.lock_delegation_settings) {\n    r.recommendation.sector_search_method =\n        "Delegation-locked scenario: submitted headline tariffs, mandate inputs and both 20-sector coverage vectors are immutable constraints; policy and bargaining packages are evaluated without re-optimizing those delegation settings";\n  }\n  r.allocations_examined = 1;')
+
+          # A truly empty bargaining frontier is a no-solution result. Preserve a
+          # diagnostic fallback separately, but do not place it in the Pareto set.
+          replace('include/negotiation_support.hpp',
+              '  bool data_integrity_pass = false;\n  NegotiationPackage recommended;',
+              '  bool data_integrity_pass = false;\n  bool solution_found = false;\n  NegotiationPackage recommended;')
+
+          replace('include/negotiation_support.hpp',
+              '''  if (frontier.empty()) {
+    Candidate fallback;
+    fallback.scenario = canada_batna_scenario;
+    fallback.evaluated = evaluate_terms(economy, *fallback.scenario, fallback.terms);
+    fallback.canada_surplus = fallback.evaluated.canada_utility - analysis.canada_reservation;
+    fallback.us_surplus = fallback.evaluated.us_utility - analysis.us_reservation;
+    fallback.nash_gain = 0.0;
+    frontier.push_back(fallback);
+  }
+
+  // Retain the complete epsilon-Pareto set.''',
+              '''  if (frontier.empty()) {
+    Candidate fallback;
+    fallback.scenario = canada_batna_scenario;
+    fallback.evaluated = evaluate_terms(economy, *fallback.scenario, fallback.terms);
+    fallback.canada_surplus = fallback.evaluated.canada_utility - analysis.canada_reservation;
+    fallback.us_surplus = fallback.evaluated.us_utility - analysis.us_reservation;
+    fallback.nash_gain = 0.0;
+    analysis.recommended = make_package(fallback, 0);
+    analysis.recommended.pareto_efficient = false;
+    analysis.recommended.verified_win_win = false;
+    analysis.frontier_complete = true;
+    analysis.solution_found = false;
+    analysis.sector_schedule_verified = analysis.recommended.sector_verified;
+    analysis.data_integrity_pass = false;
+    return analysis;
+  }
+
+  analysis.solution_found = true;
+
+  // Retain the complete epsilon-Pareto set.''')
+
+          replace('include/negotiation_support.hpp',
+              '      << ",\\"paretoFrontierSize\\":" << analysis.pareto_frontier_size\n      << ",\\"paretoDefinition\\":\\"epsilon\\""',
+              '      << ",\\"paretoFrontierSize\\":" << analysis.pareto_frontier_size\n      << ",\\"solutionFound\\":" << (analysis.solution_found ? "true" : "false")\n      << ",\\"paretoDefinition\\":\\"epsilon\\""')
+
+          # Production browser guard: automatic recommendation publication is
+          # display-only; explicit Apply remains a deliberate user action. Every
+          # /api/evaluate request is marked delegation-locked at the network edge.
+          replace('web/trade-incidence.js',
+              '''  const partyView = document.querySelector('#partyView');
+  const dashboardRun = document.querySelector('#run');
+  if (typeof schedule !== 'function' || !partyView || !dashboardRun) return;
+
+  let staged = false;''',
+              '''  const partyView = document.querySelector('#partyView');
+  const dashboardRun = document.querySelector('#run');
+  if (typeof schedule !== 'function' || !partyView || !dashboardRun) return;
+
+  const baseApplyRecommendation = typeof applyRecommendation === 'function'
+    ? applyRecommendation : null;
+  if (baseApplyRecommendation) {
+    applyRecommendation = function delegationLockedRecommendation(run = true, ...args) {
+      if (run) return baseApplyRecommendation(run, ...args);
+      return false;
+    };
+  }
+
+  const baseFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+  if (baseFetch) {
+    window.fetch = function delegationLockedFetch(input, init) {
+      if (String(input) === '/api/evaluate' && init?.method === 'POST'
+          && typeof init.body === 'string') {
+        try {
+          const payload = JSON.parse(init.body);
+          payload.lockDelegationSettings = true;
+          return baseFetch(input, {...init, body:JSON.stringify(payload)});
+        } catch (_) {}
+      }
+      return baseFetch(input, init);
+    };
+  }
+
+  let staged = false;''')
+
+          replace('web/trade-incidence.js',
+              "        : 'Optimizer runs only on an explicit Run again now / Run new run action. Slider edits remain as set until that run starts.';",
+              "        : 'Delegation settings are locked during optimizer runs. The program cannot replace your tariff, allocation, risk, cooperation, or sector-coverage inputs; recommendations are display-only unless you explicitly apply one.';")
+
+          replace('web/trade-incidence.js',
+              "      linked.textContent = 'Linked: moving either party automatically assigns the remainder to the other. Slider changes are staged only; they do not launch the optimizer until Run again now is clicked.';",
+              "      linked.textContent = 'Linked: moving either party automatically assigns the remainder to the other. Your submitted delegation settings are hard constraints for the next run and cannot be recalculated by the optimizer.';")
+
+          replace('web/trade-incidence.js',
+              "      liveNote.innerHTML = '<b>Staged search:</b> tariff, allocation, and sector slider changes are saved as set but never launch a policy search. Click <b>Run new run</b> to execute the same optimizer as Dashboard <b>Run again now</b>.';",
+              "      liveNote.innerHTML = '<b>Scenario locked:</b> tariff, allocation, risk, cooperation, and sector settings are evaluated exactly as submitted. The optimizer may rank policy/Pareto packages but cannot rewrite delegation inputs. Click <b>Run new run</b> to execute.';")
+
+          replace('web/trade-incidence.js',
+              "      boardCopy.textContent = 'Adjust sector tariffs freely. Values remain as set while you work; the expensive bilateral search starts only when Run new run is clicked.';",
+              "      boardCopy.textContent = 'Adjust sector tariffs freely. Those exact 20-sector values are immutable constraints during the next run; policy/Pareto search cannot substitute another coverage schedule.';")
+
+          # Keep the status truthful even though the legacy evaluation controller
+          # still emits an old auto-apply label internally.
+          replace('web/trade-incidence.js',
+              '''  if (typeof MutationObserver === 'function') {
+    new MutationObserver(syncRunButton).observe(dashboardRun, {
+      attributes:true,
+      attributeFilter:['disabled']
+    });
+  }
+
+  injectRunControl();''',
+              '''  if (typeof MutationObserver === 'function') {
+    new MutationObserver(syncRunButton).observe(dashboardRun, {
+      attributes:true,
+      attributeFilter:['disabled']
+    });
+    const autoStatus = document.querySelector('.auto span');
+    if (autoStatus) {
+      const enforceLockedStatus = () => {
+        if (/Auto-apply verified win-win agreement/i.test(autoStatus.textContent || '')) {
+          autoStatus.textContent = 'Scenario locked · optimizer recommendation is display-only. Delegation settings remain exactly as submitted.';
+        }
+      };
+      new MutationObserver(enforceLockedStatus).observe(autoStatus, {
+        childList:true, characterData:true, subtree:true
+      });
+    }
+  }
+
+  injectRunControl();''')
+
+          # Pareto panel: do not render a diagnostic fallback as a feasible deal.
+          replace('web/negotiation-model.js',
+              '''    const model = result.negotiation;
+    const primary = primaryPackage(model);
+    const package_ = primary.package_;
+    if (!package_) return;
+
+    document.querySelector('#negotiationSummary').innerHTML =''',
+              '''    const model = result.negotiation;
+    const noSolution = model.solutionFound === false
+      || Number(model.individuallyRationalCount || 0) === 0
+      || Number(model.paretoFrontierSize || 0) === 0;
+    if (noSolution) {
+      document.querySelector('#negotiationSummary').innerHTML = `<div><span>Canada BATNA</span><b>${fmt(model.batna.canada,1)}</b><small>${esc(model.batna.canadaStrategy)} · reservation ${fmt(model.reservation.canada,1)}</small></div>
+        <div><span>U.S. BATNA</span><b>${fmt(model.batna.us,1)}</b><small>${esc(model.batna.usStrategy)} · reservation ${fmt(model.reservation.us,1)}</small></div>
+        <div><span>Packages searched</span><b>${Number(model.candidatesExamined).toLocaleString()}</b><small>0 clear both reservation values</small></div>
+        <div><span>ε-Pareto frontier</span><b>0</b><small>${fmt(model.paretoUtilityTolerance,1)}-point utility indifference band</small></div>`;
+      const label = document.querySelector('#negotiationPrimaryLabel');
+      if (label) label.textContent = 'Scenario result';
+      document.querySelector('#negotiationPackageName').textContent = 'No feasible Pareto package found';
+      document.querySelector('#negotiationPackageMetrics').innerHTML = '<p><b>No solution was found within the Pareto packages searched window.</b> Your delegation settings were preserved exactly and were not replaced by an optimizer-generated sector schedule.</p>';
+      const stability = document.querySelector('#negotiationStability');
+      stability.classList.add('warning');
+      stability.innerHTML = `<b>No agreement cleared both reservation values.</b><span>${model.frontierComplete === false ? 'The search window was capped; this does not prove no solution exists outside the searched window.' : 'The declared bargaining window was completed with no feasible package.'}</span>`;
+      document.querySelector('#negotiationIssues').innerHTML = '<p>No feasible linked-concession package to display.</p>';
+      document.querySelector('#tradeChannels').innerHTML = '<div><span>Delegation scenario</span><b>UNCHANGED</b><small>Trade settings remain exactly as submitted.</small></div>';
+      document.querySelector('#negotiationTrust').innerHTML = '<b>NO FEASIBLE PARETO PACKAGE IN SEARCHED WINDOW</b> · delegation inputs remained locked throughout the run.';
+      document.querySelector('#paretoCount').textContent = '0 ε-frontier packages · no feasible solution in searched window';
+      document.querySelector('#paretoPackages').innerHTML = '<div class="negotiation-method"><b>No solution found.</b> Adjust the delegation scenario only if you choose to; the program will not do it automatically.</div>';
+      return;
+    }
+
+    const primary = primaryPackage(model);
+    const package_ = primary.package_;
+    if (!package_) return;
+
+    document.querySelector('#negotiationSummary').innerHTML =''')
+
+          # Native regression: an irregular submitted coverage vector must survive
+          # every policy candidate and the recommendation unchanged when locked.
+          replace('tests/policy_engine_test.cpp',
+              '''  // Separate directional tariff coverage must still affect the real sector
+  // channels under stress, not just labels in the recommendation UI.''',
+              '''  // Interactive delegation settings are hard scenario constraints. The
+  // policy search may rank monetary/fiscal/bargaining packages, but it may not
+  // substitute a different sector-coverage vector.
+  cad::Economy locked = defaults;
+  locked.lock_delegation_settings = true;
+  for (std::size_t i = 0; i < locked.us_sector_coverage.size(); ++i) {
+    locked.us_sector_coverage[i] = 7.0 + 3.0 * static_cast<double>(i);
+    locked.canada_sector_coverage[i] = 96.0 - 2.0 * static_cast<double>(i);
+  }
+  const auto locked_result = engine.evaluate(locked);
+  assert(locked_result.recommendation.sector_candidates_examined == 20);
+  assert(locked_result.recommendation.sector_pareto_frontier_size == 1);
+  assert(locked_result.recommendation.sector_finalists_resimulated == 1);
+  for (std::size_t i = 0; i < locked.us_sector_coverage.size(); ++i) {
+    assert(std::abs(locked_result.recommendation.us_sector_coverage[i]
+        - locked.us_sector_coverage[i]) < 1e-9);
+    assert(std::abs(locked_result.recommendation.canada_sector_coverage[i]
+        - locked.canada_sector_coverage[i]) < 1e-9);
+    for (const auto& scenario : locked_result.scenarios) {
+      assert(std::abs(scenario.applied_us_sector_coverage[i]
+          - locked.us_sector_coverage[i]) < 1e-9);
+      assert(std::abs(scenario.applied_canada_sector_coverage[i]
+          - locked.canada_sector_coverage[i]) < 1e-9);
+    }
+  }
+
+  // Separate directional tariff coverage must still affect the real sector
+  // channels under stress, not just labels in the recommendation UI.''')
+
+          # Browser regression: automatic result publication cannot apply a new
+          # delegation package; /api/evaluate is always lock-tagged in production.
+          replace('tests/delegation_staging_test.js',
+              '''let refreshCalls = 0;
+
+const autoStatus = {textContent:''};''',
+              '''let refreshCalls = 0;
+let explicitApplyCalls = 0;
+let lastEvaluatePayload = null;
+
+const autoStatus = {textContent:''};''')
+
+          replace('tests/delegation_staging_test.js',
+              '''global.window = {};
+global.schedule = () => { legacyScheduleCalls++; };''',
+              '''global.window = {
+  fetch(input, init) {
+    if (String(input) === '/api/evaluate' && init?.body)
+      lastEvaluatePayload = JSON.parse(init.body);
+    return Promise.resolve({ok:true, json:async()=>({})});
+  }
+};
+global.applyRecommendation = (run = true) => {
+  explicitApplyCalls++;
+  return run;
+};
+global.schedule = () => { legacyScheduleCalls++; };''')
+
+          replace('tests/delegation_staging_test.js',
+              '''schedule();
+assert.strictEqual(legacyScheduleCalls, 0,
+  'dashboard slider commits must never launch the legacy optimizer timer');''',
+              '''assert.strictEqual(applyRecommendation(false), false,
+  'automatic recommendation publication must not rewrite delegation inputs');
+assert.strictEqual(explicitApplyCalls, 0,
+  'automatic recommendation publication must not call the legacy apply path');
+assert.strictEqual(applyRecommendation(), true,
+  'explicit Apply current recommendation remains a deliberate user action');
+assert.strictEqual(explicitApplyCalls, 1);
+
+window.fetch('/api/evaluate', {
+  method:'POST', headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({usTariff:31, usSector0:47})
+});
+assert.strictEqual(lastEvaluatePayload.lockDelegationSettings, true,
+  'production evaluation requests must lock delegation settings server-side');
+assert.strictEqual(lastEvaluatePayload.usTariff, 31,
+  'locking must preserve the submitted scenario values');
+assert.strictEqual(lastEvaluatePayload.usSector0, 47,
+  'locking must preserve submitted sector coverage');
+
+schedule();
+assert.strictEqual(legacyScheduleCalls, 0,
+  'dashboard slider commits must never launch the legacy optimizer timer');''')
+
+          replace('tests/delegation_staging_test.js',
+              "console.log('global slider staging test passed');",
+              '''const negotiationSource = fs.readFileSync('web/negotiation-model.js', 'utf8');
+assert(negotiationSource.includes('No feasible Pareto package found'));
+assert(negotiationSource.includes('No solution was found within the Pareto packages searched window.'));
+assert(negotiationSource.includes('model.solutionFound === false'));
+
+console.log('global slider staging and delegation-lock test passed');''')
+
+          # Serialization regression for explicit no-solution status.
+          replace('tests/negotiation_support_test.cpp',
+              '  std::cout << "negotiation support tests passed\\n";',
+              '''  cad::NegotiationAnalysis no_solution;
+  no_solution.solution_found = false;
+  no_solution.pareto_frontier_size = 0;
+  const auto no_solution_json = cad::negotiation_to_json(no_solution);
+  assert(no_solution_json.find("\\\"solutionFound\\\":false") != std::string::npos);
+  assert(no_solution_json.find("\\\"paretoFrontierSize\\\":0") != std::string::npos);
+
+  std::cout << "negotiation support tests passed\\n";''')
+
+          print('scenario lock patch applied')
+          PY
+      - name: JavaScript checks
+        run: |
+          node --check web/trade-incidence.js
+          node --check web/negotiation-model.js
+          node tests/delegation_staging_test.js
+          node tests/evaluation_controller_test.js
+      - name: Configure Release build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j2
+      - name: Native tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          git rm .github/workflows/apply-scenario-lock-hotfix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add include/policy_engine.hpp include/server_contracts.hpp include/negotiation_support.hpp src/policy_engine.cpp web/trade-incidence.js web/negotiation-model.js tests/policy_engine_test.cpp tests/delegation_staging_test.js tests/negotiation_support_test.cpp
+          git commit -m "Lock delegation scenario inputs"
+          git push origin HEAD:agent/lock-delegation-scenario
