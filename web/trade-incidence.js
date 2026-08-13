@@ -86,55 +86,39 @@
   else start();
 })();
 
-// Delegation trade-table edits are staged. Their values remain live in the
-// negotiation state, but the expensive policy search runs only on an explicit run.
+// All slider and negotiation parameter edits are staged. Values remain live in
+// the UI/negotiation state, but the expensive optimizer runs only on an explicit run.
 (() => {
   'use strict';
 
-  const baseSchedule = typeof schedule === 'function' ? schedule : null;
   const partyView = document.querySelector('#partyView');
   const dashboardRun = document.querySelector('#run');
-  if (!baseSchedule || !partyView || !dashboardRun) return;
+  if (typeof schedule !== 'function' || !partyView || !dashboardRun) return;
 
   let staged = false;
-  let delegationEventDepth = 0;
   let partyRun = null;
   let partyRunStatus = null;
-
-  function isDelegationMutation(event) {
-    const target = event?.target;
-    if (!target?.closest?.('#partyView')) return false;
-    if (event.type === 'change')
-      return target.matches?.('input[type="range"]') === true;
-    if (event.type === 'click')
-      return !!target.closest?.('#resetSectors');
-    return false;
-  }
 
   function setStaged(value) {
     staged = value;
     if (partyRun) partyRun.dataset.staged = staged ? 'true' : 'false';
     if (partyRunStatus) {
       partyRunStatus.textContent = staged
-        ? 'Positions saved · optimizer not run yet'
+        ? 'Inputs saved · optimizer not run yet'
         : 'Uses Dashboard optimizer · Run again now';
     }
-  }
-
-  function markDelegationEvent(event) {
-    if (!isDelegationMutation(event)) return;
-    delegationEventDepth++;
-    Promise.resolve().then(() => {
-      delegationEventDepth = Math.max(0, delegationEventDepth - 1);
-    });
-  }
-
-  schedule = function stagedDelegationSchedule(...args) {
-    if (delegationEventDepth > 0) {
-      setStaged(true);
-      return;
+    const autoStatus = document.querySelector('.auto span');
+    if (autoStatus) {
+      autoStatus.textContent = staged
+        ? 'Inputs staged. No global search is running. Click Run again now (or Run new run in a delegation tab) to evaluate the values exactly as set.'
+        : 'Optimizer runs only on an explicit Run again now / Run new run action. Slider edits remain as set until that run starts.';
     }
-    return baseSchedule(...args);
+  }
+
+  // This is the single choke point used by every range commit in app.js.
+  // Scheduling now means "dirty/staged", never "launch evaluate after 350 ms".
+  schedule = function stageOptimizerInputs() {
+    setStaged(true);
   };
 
   function syncRunButton() {
@@ -143,16 +127,34 @@
     partyRun.setAttribute('aria-busy', dashboardRun.disabled ? 'true' : 'false');
   }
 
-  function updateDelegationCopy() {
+  function updateCopy() {
+    const linked = document.querySelector('.preferences .linked-note');
+    if (linked) {
+      linked.textContent = 'Linked: moving either party automatically assigns the remainder to the other. Slider changes are staged only; they do not launch the optimizer until Run again now is clicked.';
+    }
     const notes = [...partyView.querySelectorAll('.linked-note')];
-    const liveNote = notes.find(node => /Live model:/i.test(node.textContent || ''));
+    const liveNote = notes.find(node => /Live model:|Staged search:/i.test(node.textContent || ''));
     if (liveNote) {
-      liveNote.innerHTML = '<b>Staged search:</b> tariff, allocation, and sector slider changes are saved as set but do not launch a policy search. Click <b>Run new run</b> to execute the same optimizer as Dashboard <b>Run again now</b>.';
+      liveNote.innerHTML = '<b>Staged search:</b> tariff, allocation, and sector slider changes are saved as set but never launch a policy search. Click <b>Run new run</b> to execute the same optimizer as Dashboard <b>Run again now</b>.';
     }
     const boardCopy = partyView.querySelector('.sector-board-head p');
     if (boardCopy) {
       boardCopy.textContent = 'Adjust sector tariffs freely. Values remain as set while you work; the expensive bilateral search starts only when Run new run is clicked.';
     }
+  }
+
+  function stagePresetButtons() {
+    document.querySelectorAll('.presets button').forEach(button => {
+      button.onclick = () => {
+        tariff.value = button.dataset.rate;
+        updateTariff();
+        updatePosition();
+        syncPartyView();
+        refreshPartySectorMetrics();
+        publishNegotiation('us');
+        schedule();
+      };
+    });
   }
 
   function injectRunControl() {
@@ -179,8 +181,6 @@
     syncRunButton();
   }
 
-  document.addEventListener('change', markDelegationEvent, true);
-  document.addEventListener('click', markDelegationEvent, true);
   document.addEventListener('click', event => {
     if (event.target?.closest?.('#run')) setStaged(false);
   }, true);
@@ -193,11 +193,14 @@
   }
 
   injectRunControl();
-  updateDelegationCopy();
+  updateCopy();
+  stagePresetButtons();
   setStaged(false);
 
-  window.DelegationRunController = {
+  const controller = {
     state: () => ({staged}),
     run: () => dashboardRun.click()
   };
+  window.EvaluationRunController = controller;
+  window.DelegationRunController = controller;
 })();
