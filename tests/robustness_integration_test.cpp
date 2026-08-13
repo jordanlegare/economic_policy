@@ -17,8 +17,11 @@ int main() {
   assert(!skipped.recommendation.robustness.sector_packages_reoptimized);
   assert(!skipped.recommendation.robustness.policy_controls_reoptimized);
   assert(skipped.recommendation.robustness.policy_control_candidates_per_draw == 0);
+  assert(skipped.recommendation.robustness.correlation_matrix_valid);
+  assert(skipped.recommendation.robustness.structural_sampling_dependence
+      == "independent-with-derived-constraints");
 
-  // With zero structural uncertainty, the full V2 decision search must recover
+  // With zero structural uncertainty, the full V3 decision search must recover
   // both the production control winner and the production nested sector
   // solution. This guards against drift in either optimization layer.
   cad::StructuralParameters exact_parameters;
@@ -36,6 +39,10 @@ int main() {
   assert(exact_summary.common_random_numbers);
   assert(exact_summary.sector_packages_reoptimized);
   assert(exact_summary.policy_controls_reoptimized);
+  assert(exact_summary.correlation_pair_count == 0);
+  assert(exact_summary.correlation_matrix_valid);
+  assert(exact_summary.structural_sampling_dependence
+      == "independent-with-derived-constraints");
   assert(exact_summary.policy_control_candidates_per_draw == ordinary.candidates_examined);
   assert(exact_summary.policy_control_candidates_examined
       == static_cast<std::uint64_t>(ordinary.candidates_examined));
@@ -50,6 +57,8 @@ int main() {
   assert(std::abs(exact_summary.reference_package_retention_rate - 1.0) < 1e-15);
   assert(exact_summary.methodology.find("full-policy-control-search")
       != std::string::npos);
+  assert(exact_summary.methodology.find("declared-structural-dependence")
+      != std::string::npos);
   assert(exact.recommendation.explanation.find("Wilson 95% interval")
       != std::string::npos);
 
@@ -60,6 +69,8 @@ int main() {
   shifted_parameters.phillips_curve_slope = 0.22;
   shifted_parameters.canada_trade_drag_scale = 1.35;
   shifted_parameters.us_retaliation_drag_scale = 0.70;
+  shifted_parameters.network_supplier_demand_transmission = .44;
+  shifted_parameters.network_input_cost_incidence = .98;
   cad::PolicyEngine shifted_engine(20260810, shifted_parameters);
   const auto shifted = shifted_engine.evaluate_robust(economy, 1);
   assert(std::abs(shifted.recommendation.robustness.score_mean
@@ -84,6 +95,7 @@ int main() {
   assert(a.classification != "not-evaluated");
   assert(a.sector_packages_reoptimized);
   assert(a.policy_controls_reoptimized);
+  assert(a.correlation_matrix_valid);
   assert(a.policy_control_candidates_examined
       == static_cast<std::uint64_t>(ordinary.candidates_examined));
   assert(a.nested_sector_optimizations == ordinary.scenarios.size());
@@ -100,6 +112,8 @@ int main() {
   assert(a.policy_control_candidates_examined == b.policy_control_candidates_examined);
   assert(a.nested_sector_candidates_examined == b.nested_sector_candidates_examined);
   assert(a.nested_sector_finalists_resimulated == b.nested_sector_finalists_resimulated);
+  assert(a.structural_sampling_dependence == b.structural_sampling_dependence);
+  assert(a.correlation_pair_count == b.correlation_pair_count);
   assert(std::abs(a.reference_policy_control_retention_rate
       - b.reference_policy_control_retention_rate) < 1e-15);
   assert(std::abs(a.reference_package_retention_rate
@@ -110,6 +124,9 @@ int main() {
   assert(robustness_json.find("\"commonRandomNumbers\":true") != std::string::npos);
   assert(robustness_json.find("\"sectorPackagesReoptimized\":true") != std::string::npos);
   assert(robustness_json.find("\"policyControlsReoptimized\":true") != std::string::npos);
+  assert(robustness_json.find("\"structuralSamplingDependence\":\"independent-with-derived-constraints\"") != std::string::npos);
+  assert(robustness_json.find("\"correlationPairCount\":0") != std::string::npos);
+  assert(robustness_json.find("\"correlationMatrixValid\":true") != std::string::npos);
   assert(robustness_json.find("\"policyControlCandidatesPerDraw\":288") != std::string::npos);
   assert(robustness_json.find("\"policyControlCandidatesExamined\":288") != std::string::npos);
   assert(robustness_json.find("\"strategyFamilyWinRate\":") != std::string::npos);
@@ -124,6 +141,6 @@ int main() {
   assert(robustness_json.find("\"nestedSectorOptimizations\":") != std::string::npos);
   assert(robustness_json.find("\"calibrationId\":\"baseline-v1\"") != std::string::npos);
 
-  std::cout << "V2 full decision robustness integration tests passed\n";
+  std::cout << "V3 full decision robustness integration tests passed\n";
   return 0;
 }
