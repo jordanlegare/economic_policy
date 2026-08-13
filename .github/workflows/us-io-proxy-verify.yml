@@ -1,0 +1,92 @@
+name: U.S. IO proxy verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/trade_network.cpp'
+      - 'include/generated/trade_io_us_proxy.hpp'
+      - 'data/calibration/useeio_us_proxy_matrix.csv'
+      - 'data/calibration/useeio_us_proxy_provenance.json'
+      - 'tools/build_useeio_us_proxy.py'
+      - 'tests/useeio_us_proxy_builder_test.py'
+      - '.github/workflows/us-io-proxy-verify.yml'
+  pull_request:
+    paths:
+      - 'src/trade_network.cpp'
+      - 'include/generated/trade_io_us_proxy.hpp'
+      - 'data/calibration/useeio_us_proxy_matrix.csv'
+      - 'data/calibration/useeio_us_proxy_provenance.json'
+      - 'tools/build_useeio_us_proxy.py'
+      - 'tests/useeio_us_proxy_builder_test.py'
+      - '.github/workflows/us-io-proxy-verify.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check builder syntax and aggregation contract
+        run: |
+          python3 -m py_compile tools/build_useeio_us_proxy.py
+          python3 tests/useeio_us_proxy_builder_test.py
+      - name: Check frozen proxy artifact and provenance
+        run: |
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          matrix_path = Path('data/calibration/useeio_us_proxy_matrix.csv')
+          provenance_path = Path('data/calibration/useeio_us_proxy_provenance.json')
+          header_path = Path('include/generated/trade_io_us_proxy.hpp')
+          source_path = Path('src/trade_network.cpp')
+
+          with matrix_path.open(newline='', encoding='utf-8') as stream:
+              rows = list(csv.DictReader(stream))
+          assert len(rows) == 20, len(rows)
+          sector_columns = [
+              '11', '21', '22', '23', '31-33', '42', '44-45', '48-49',
+              '51', '52', '53', '54', '55', '56', '61', '62', '71', '72',
+              '81', '91',
+          ]
+          row_sums = []
+          for row in rows:
+              values = [float(row[column]) for column in sector_columns]
+              assert all(value >= 0.0 for value in values)
+              row_sums.append(sum(values))
+          assert min(row_sums) > 0.27, min(row_sums)
+          assert max(row_sums) < 0.58, max(row_sums)
+
+          provenance = json.loads(provenance_path.read_text(encoding='utf-8'))
+          assert provenance['dataset'] == 'USEEIO v2.5 Models'
+          assert provenance['model'] == 'USEEIOv2.5-catbird-22'
+          assert provenance['doi'] == '10.23719/1532178'
+          assert provenance['source_detail_commodities'] == 402
+          assert provenance['mapped_detail_commodities'] == 398
+          assert provenance['mapped_positive_cells'] == 84497
+          assert provenance['domestic_io_basis_year'] == 2017
+          assert provenance['model_reference_year'] == 2022
+          assert provenance['source_matrix'] == 'A_d'
+          assert provenance['weight_vector'] == 'q'
+          assert provenance['excluded_adjustment_codes'] == [
+              'S00300', 'S00401', 'S00402', 'S00900'
+          ]
+          assert provenance['empirical_us_current_vintage'] is False
+          assert provenance['activation_status'] == 'provisional_us_proxy_pending_current_bea_artifact'
+          assert provenance['source_sha256'] == 'e1122f0889dcf5449b7aa3526bfc757a9a60fa041dda9f137190ccd3a5e02a56'
+
+          header = header_path.read_text(encoding='utf-8')
+          assert 'USEEIO v2.5' in header
+          assert 'USEEIOv2.5-catbird-22' in header
+          assert 'A_d' in header
+          assert 'q commodity output' in header
+          assert 'kEpaUseeioUsProxyMatrix' in header
+          assert 'kEpaUseeioUsProxyMaximumDomesticIntermediateShare' in header
+
+          source = source_path.read_text(encoding='utf-8')
+          assert 'generated::kEpaUseeioUsProxyMatrix' in source
+          assert 'generated::kBeaUsIoMatrix' in source
+          assert 'trade_io_us_bea_certified.hpp' in source
+          assert 'kUsProxyMatrix = generated::kStatCanIo2024Matrix' not in source
+          PY

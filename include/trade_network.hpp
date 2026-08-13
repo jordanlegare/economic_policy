@@ -86,10 +86,11 @@ struct TradeNetworkResult {
 const std::array<TradeSectorProfile, kTradeSectorCount>& trade_sector_profiles();
 
 // Country-specific direct-requirements matrices. Canada is the certified 2024
-// Statistics Canada aggregation. The U.S. accessor is intentionally separate;
-// until a BEA artifact is generated and certified it returns the explicitly
-// labelled structural proxy rather than pretending the Canadian cells are U.S.
-// observations.
+// Statistics Canada aggregation. The U.S. accessor is intentionally separate:
+// it uses the EPA USEEIO U.S.-specific structural proxy until a generated BEA
+// artifact and an independent certification marker are both committed. The
+// empirical flag reports whether the selected U.S. matrix is that certified BEA
+// artifact rather than the provisional proxy.
 const TradeInputOutputMatrix& canada_trade_input_output_matrix();
 const TradeInputOutputMatrix& us_trade_input_output_matrix();
 bool canada_trade_input_output_empirical();
