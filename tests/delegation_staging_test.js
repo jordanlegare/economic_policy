@@ -101,4 +101,37 @@ assert.strictEqual(window.EvaluationRunController.state().staged, false,
 assert.strictEqual(partyRunStatus.textContent,
   'Uses Dashboard optimizer · Run again now');
 
-console.log('global slider staging test passed');
+assert(controllerSource.includes('delegationLockedRecommendation'),
+  'automatic verified recommendations must not rewrite delegation controls');
+assert(controllerSource.includes('if (run) return baseApplyRecommendation'),
+  'only an explicit Apply action may invoke the legacy recommendation write path');
+assert(controllerSource.includes('scenarioLockedEvaluate'),
+  'explicit runs must be guarded by a click-time delegation scenario snapshot');
+assert(controllerSource.includes('const snapshot = snapshotScenario();'),
+  'the run guard must snapshot the visible scenario before evaluation');
+assert(controllerSource.includes("payload['usSector' + i] = v"),
+  'the run guard must force submitted U.S. sector values into the primary request');
+assert(controllerSource.includes("payload['canadaSector' + i] = v"),
+  'the run guard must force submitted Canadian sector values into the primary request');
+assert(controllerSource.includes('restoreScenario(snapshot);'),
+  'the same submitted scenario must be restored after the run');
+assert(controllerSource.includes('No feasible Pareto package found'),
+  'the UI must expose a no-feasible-Pareto result');
+assert(controllerSource.includes(
+  'No solution was found within the Pareto Packages searched window.'),
+  'the no-solution result must be explicit about the searched Pareto window');
+assert(controllerSource.includes('Number(model.individuallyRationalCount || 0) > 0'),
+  'the diagnostic fallback must not be presented as a feasible Pareto solution');
+
+const engineSource = fs.readFileSync('src/policy_engine.cpp', 'utf8');
+const coverageStart = engineSource.indexOf('std::vector<double> coverage_levels');
+const coverageEnd = engineSource.indexOf('\n}\n\nTradeNetworkInput', coverageStart);
+assert(coverageStart >= 0 && coverageEnd > coverageStart,
+  'sector coverage generator must be present');
+const coverageSource = engineSource.slice(coverageStart, coverageEnd);
+assert(coverageSource.includes('return {clamp(current, 0.0, 100.0)};'),
+  'submitted sector coverage must be the only admissible engine value');
+assert(!coverageSource.includes('max_coverage_relief'),
+  'engine must not synthesize alternative delegation coverage levels');
+
+console.log('global slider staging and delegation scenario lock test passed');
