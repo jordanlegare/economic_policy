@@ -1,5 +1,7 @@
 #pragma once
 
+#include "trade_network.hpp"
+
 #include <array>
 #include <cstdint>
 #include <string>
@@ -153,6 +155,9 @@ struct Economy {
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   double minimum_bilateral_growth = 0.0;
   DecisionLossWeights loss_weights{};
+  // Internal structural tuning copied from the PolicyEngine before evaluation.
+  // It is intentionally absent from the public request contract.
+  TradeNetworkTuning trade_network_tuning{};
   // The web application's primary evaluation enables this mode after seeding
   // controls from the certified baseline. Low-level and robustness tests can
   // keep the staged mode when they are not claiming startup global optimality.
