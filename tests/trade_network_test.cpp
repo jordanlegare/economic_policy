@@ -1,5 +1,6 @@
 #include "trade_network.hpp"
 #include "generated/trade_io_2024.hpp"
+#include "generated/trade_io_us_proxy.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -13,7 +14,6 @@ int main() {
   // The Canadian production network is a frozen aggregation of the 2024
   // StatCan industry-by-industry table, not a hand-built bridge.
   assert(cad::canada_trade_input_output_empirical());
-  assert(!cad::us_trade_input_output_empirical());
   assert(std::abs(matrix[4][4] - 0.354414317655) < 1e-12);  // manufacturing <- manufacturing
   assert(std::abs(matrix[3][4] - 0.283987709074) < 1e-12);  // construction <- manufacturing
   assert(std::abs(matrix[15][4] - 0.093370094078) < 1e-12); // health care <- manufacturing
@@ -26,12 +26,28 @@ int main() {
     assert(sum < 0.73);
   }
 
-  // Until the BEA refresh artifact is certified, the U.S. object is a separate
-  // structural proxy. It currently reproduces the Canadian cells numerically,
-  // but its provenance flag prevents them from being called U.S. observations.
-  assert(std::abs(us_matrix[4][4] - matrix[4][4]) < 1e-15);
-  assert(std::abs(cad::maximum_us_trade_input_share()
-      - cad::maximum_trade_input_share()) < 1e-15);
+  // Until a BEA artifact and independent certification marker are both present,
+  // the U.S. object must use the U.S.-specific EPA USEEIO proxy rather than
+  // silently copying Canada's production coefficients.
+  if (!cad::us_trade_input_output_empirical()) {
+    assert(std::abs(us_matrix[4][4]
+        - cad::generated::kEpaUseeioUsProxyMatrix[4][4]) < 1e-15);
+    assert(std::abs(us_matrix[4][4] - 0.241110822962) < 1e-12);
+    assert(std::abs(us_matrix[3][4] - 0.190642231341) < 1e-12);
+    assert(std::abs(us_matrix[15][4] - 0.066993613516) < 1e-12);
+    assert(std::abs(us_matrix[4][4] - matrix[4][4]) > 1e-3);
+    assert(std::abs(cad::maximum_us_trade_input_share()
+        - cad::generated::kEpaUseeioUsProxyMaximumDomesticIntermediateShare) < 1e-10);
+  }
+  for (const auto& row : us_matrix) {
+    const double sum = std::accumulate(row.begin(), row.end(), 0.0);
+    assert(sum > 0.0);
+    assert(sum < 1.0);
+    if (!cad::us_trade_input_output_empirical()) {
+      assert(sum > 0.27);
+      assert(sum < 0.58);
+    }
+  }
 
   cad::TradeNetworkInput input;
   input.us_headline_tariff = 50.0;
@@ -50,7 +66,7 @@ int main() {
   assert(manufacturing.us_tariff.importer_absorption > 0.0);
 
   // A manufacturing tariff propagates into downstream U.S. industries through
-  // the U.S. network object and into Canadian suppliers through Canada's matrix.
+  // the selected U.S. network and into Canadian suppliers through Canada's matrix.
   assert(network.sectors[3].us_upstream_cost > 0.0);   // construction
   assert(network.sectors[6].us_upstream_cost > 0.0);   // retail
   assert(network.sectors[15].us_upstream_cost > 0.0);  // health care
@@ -100,7 +116,18 @@ int main() {
   assert(methodology.find("40,364") != std::string::npos);
   assert(methodology.find("213") != std::string::npos);
   assert(methodology.find("BEA") != std::string::npos);
-  assert(methodology.find("provisional") != std::string::npos);
-  assert(methodology.find("must not be described as empirical U.S.") != std::string::npos);
+  if (!cad::us_trade_input_output_empirical()) {
+    assert(methodology.find("USEEIO v2.5") != std::string::npos);
+    assert(methodology.find("USEEIOv2.5-catbird-22") != std::string::npos);
+    assert(methodology.find("A_d") != std::string::npos);
+    assert(methodology.find("402") != std::string::npos);
+    assert(methodology.find("398") != std::string::npos);
+    assert(methodology.find("2017") != std::string::npos);
+    assert(methodology.find("commodity-output") != std::string::npos);
+    assert(methodology.find("provisional") != std::string::npos);
+    assert(methodology.find("current-vintage empirical U.S. IO calibration")
+        != std::string::npos);
+    assert(methodology.find("certification marker") != std::string::npos);
+  }
   return 0;
 }

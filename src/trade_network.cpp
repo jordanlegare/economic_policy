@@ -1,5 +1,14 @@
 #include "trade_network.hpp"
 #include "generated/trade_io_2024.hpp"
+#include "generated/trade_io_us_proxy.hpp"
+
+#if __has_include("generated/trade_io_us_bea.hpp") && \
+    __has_include("generated/trade_io_us_bea_certified.hpp")
+#include "generated/trade_io_us_bea.hpp"
+#define CAD_HAS_CERTIFIED_BEA_US_IO 1
+#else
+#define CAD_HAS_CERTIFIED_BEA_US_IO 0
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -44,15 +53,18 @@ const std::array<TradeSectorProfile, kTradeSectorCount> kProfiles{{
 // [downstream][upstream], A[j][i] = Z_ij / X_j.
 const TradeInputOutputMatrix kCanadaMatrix = generated::kStatCanIo2024Matrix;
 
-// IMPORTANT EVIDENCE BOUNDARY: the U.S. network is now a distinct model object,
-// but no BEA-derived 20-sector artifact is committed yet. Until the reproducible
-// BEA builder is run and its output certified, use the Canadian empirical matrix
-// only as an explicitly labelled structural proxy. Keeping a separate object is
-// intentional: U.S. propagation can be replaced without touching Canadian
-// coefficients or silently changing their provenance.
-const TradeInputOutputMatrix kUsProxyMatrix = generated::kStatCanIo2024Matrix;
-constexpr bool kCanadaMatrixEmpirical = true;
+// U.S. evidence selector. The fallback is a U.S.-specific structural proxy from
+// EPA USEEIO v2.5, not the Canadian technology matrix. A BEA artifact only
+// activates after an independent certification marker is also committed, so a
+// locally generated/unreviewed BEA header cannot silently change production.
+#if CAD_HAS_CERTIFIED_BEA_US_IO
+const TradeInputOutputMatrix kUsMatrix = generated::kBeaUsIoMatrix;
+constexpr bool kUsMatrixEmpirical = true;
+#else
+const TradeInputOutputMatrix kUsMatrix = generated::kEpaUseeioUsProxyMatrix;
 constexpr bool kUsMatrixEmpirical = false;
+#endif
+constexpr bool kCanadaMatrixEmpirical = true;
 
 TariffIncidence incidence(double headline, double coverage,
                           double negotiated_relief, double pass_through,
@@ -90,7 +102,7 @@ const TradeInputOutputMatrix& canada_trade_input_output_matrix() {
 }
 
 const TradeInputOutputMatrix& us_trade_input_output_matrix() {
-  return kUsProxyMatrix;
+  return kUsMatrix;
 }
 
 bool canada_trade_input_output_empirical() {
@@ -130,7 +142,7 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
 
   // Reduced exporter demand feeds backwards through each exporter's own
   // domestic supplier network. Canada uses the certified StatCan matrix; the
-  // United States uses the separately identified U.S. matrix object/proxy.
+  // United States uses the selected U.S. matrix (EPA proxy or certified BEA).
   const double canada_direct_drag = -100.0 * (out.us_tariff.applied_tariff / 100.0)
       * us_elasticity * src.trade * (.72 - .28 * diversification);
   const double us_direct_drag = -100.0 * (out.canada_tariff.applied_tariff / 100.0)
@@ -138,7 +150,7 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
 
   for (std::size_t upstream = 0; upstream < kTradeSectorCount; ++upstream) {
     const double canada_requirement = kCanadaMatrix[source][upstream];
-    const double us_requirement = kUsProxyMatrix[source][upstream];
+    const double us_requirement = kUsMatrix[source][upstream];
     if (canada_requirement > 0.0)
       out.canada_output[upstream] += canada_direct_drag * canada_requirement * .30;
     if (us_requirement > 0.0)
@@ -146,10 +158,10 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
   }
 
   // Tariffs paid by the importing economy raise the cost of source-sector
-  // inputs used downstream. Country-specific matrices prevent a future BEA
-  // replacement from contaminating the certified Canadian requirements table.
+  // inputs used downstream. Country-specific matrices prevent a U.S. evidence
+  // refresh from contaminating the certified Canadian requirements table.
   for (std::size_t downstream = 0; downstream < kTradeSectorCount; ++downstream) {
-    const double us_requirement = kUsProxyMatrix[downstream][source];
+    const double us_requirement = kUsMatrix[downstream][source];
     const double canada_requirement = kCanadaMatrix[downstream][source];
     const auto& dst = kProfiles[downstream];
     if (us_requirement > 0.0) {
@@ -219,11 +231,15 @@ double maximum_trade_input_share() {
 }
 
 double maximum_us_trade_input_share() {
-  return maximum_row_share(kUsProxyMatrix);
+  return maximum_row_share(kUsMatrix);
 }
 
 std::string trade_network_methodology() {
-  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network is a separate matrix object but is currently an explicitly provisional structural proxy using the Canadian coefficients until the versioned BEA Input-Output artifact is generated and certified; it must not be described as empirical U.S. IO calibration. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to the declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+#if CAD_HAS_CERTIFIED_BEA_US_IO
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network uses the separately generated and certified BEA Input-Output domestic direct-requirements artifact. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to the declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+#else
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. Pending a current-vintage certified BEA artifact, the U.S. network uses a distinct provisional U.S.-specific structural proxy from EPA USEEIO v2.5 model USEEIOv2.5-catbird-22. The selected A_d matrix contains domestic direct requirements, and EPA documents that the detailed v2.5 model uses underlying U.S. input-output data for 2017. Four accounting/adjustment commodities are excluded, leaving 398 of 402 commodities mapped into the simulator's 20 sectors. Positive A_d requirements are aggregated using q commodity-output weights. This proxy must not be described as current-vintage empirical U.S. IO calibration. A generated BEA header activates only with a separately committed certification marker, preventing an unreviewed local artifact from silently changing production. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to the declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+#endif
 }
 
 }  // namespace cad
