@@ -11,6 +11,7 @@
 #include "structural_calibration.hpp"
 #include "trade_diplomacy_platform.hpp"
 #include "welfare_sensitivity.hpp"
+#include "request_json.hpp"
 
 #ifdef CAD_EMBEDDED_ASSETS
 #include "embedded_assets.hpp"
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -133,7 +135,8 @@ void open_browser(const std::string& url) {
 #ifdef _WIN32
   const auto result = reinterpret_cast<std::intptr_t>(
       ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
-  if (result <= 32) std::cerr << "Unable to open the default browser automatically. Open " << url << " manually.\n";
+  if (result <= 32)
+    std::cerr << "Unable to open the default browser automatically. Open " << url << " manually.\n";
 #else
   (void)url;
 #endif
@@ -166,43 +169,94 @@ std::string diplomatic_index() {
   return html;
 }
 
-double number(const std::string& body, const std::string& key, double fallback) {
-  auto pos = body.find("\"" + key + "\"");
-  if (pos == std::string::npos) return fallback;
-  pos = body.find(':', pos);
-  if (pos == std::string::npos) return fallback;
-  try { return std::stod(body.substr(pos + 1)); } catch (...) { return fallback; }
+std::string json_escape(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (const char c : value) {
+    if (c == '"' || c == '\\') out.push_back('\\');
+    if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else if (c != '"' && c != '\\') out.push_back(c);
+    else out.push_back(c);
+  }
+  return out;
 }
 
-cad::Economy parse(const std::string& body) {
-  cad::Economy economy;
-#define FIELD(k, f) economy.f = number(body, k, economy.f)
-  FIELD("policyRate", policy_rate); FIELD("inflation", inflation);
-  FIELD("coreInflation", core_inflation); FIELD("gdpGrowth", gdp_growth);
-  FIELD("outputGap", output_gap); FIELD("unemployment", unemployment);
-  FIELD("wageGrowth", wage_growth); FIELD("productivity", productivity_growth);
-  FIELD("population", population_growth); FIELD("usdcad", usdcad);
-  FIELD("oil", oil_price); FIELD("creditSpread", credit_spread);
-  FIELD("housingGap", housing_gap);
-  FIELD("fiscalBalance", fiscal_balance_gdp); FIELD("federalDebt", federal_debt_gdp);
-  FIELD("globalGrowth", global_growth);
-  FIELD("expectations", inflation_expectations); FIELD("usGrowth", us_growth);
-  FIELD("usInflation", us_inflation); FIELD("usTariff", us_tariff_canada);
-  FIELD("retaliatoryTariff", canada_retaliatory_tariff); FIELD("exportsUs", exports_to_us_share);
-  FIELD("importsUs", imports_from_us_share); FIELD("exportsGdp", exports_gdp);
-  FIELD("importContent", import_content_consumption); FIELD("tradeElasticity", trade_elasticity);
-  FIELD("borderFriction", border_friction); FIELD("tariffRelief", tariff_relief);
-  FIELD("tariffPricePassThrough", tariff_price_pass_through);
-  FIELD("diversification", trade_diversification); FIELD("bilateralExportsCad", canada_exports_to_us_cad);
-  FIELD("bilateralImportsCad", canada_imports_from_us_cad); FIELD("canadaPriority", canada_priority);
-  FIELD("usPriority", us_priority); FIELD("riskAversion", risk_aversion);
-  FIELD("cooperationCeiling", cooperation_ceiling); FIELD("minimumBilateralGrowth", minimum_bilateral_growth);
+std::string error_json(const std::string& error) {
+  return "{\"error\":\"" + json_escape(error) + "\"}";
+}
+
+bool parse_economy(const cad::request_json::Object& object,
+                   cad::Economy& economy, std::string& error) {
+  using cad::request_json::number_in_range;
+#define FIELD(k, f, lo, hi) \
+  if (!number_in_range(object, k, lo, hi, economy.f, error)) return false
+  FIELD("policyRate", policy_rate, 0.0, 10.0);
+  FIELD("inflation", inflation, -10.0, 30.0);
+  FIELD("coreInflation", core_inflation, -10.0, 30.0);
+  FIELD("gdpGrowth", gdp_growth, -30.0, 30.0);
+  FIELD("outputGap", output_gap, -30.0, 30.0);
+  FIELD("unemployment", unemployment, 0.0, 30.0);
+  FIELD("wageGrowth", wage_growth, -20.0, 40.0);
+  FIELD("productivity", productivity_growth, -20.0, 30.0);
+  FIELD("population", population_growth, -10.0, 20.0);
+  FIELD("usdcad", usdcad, 0.25, 5.0);
+  FIELD("oil", oil_price, 0.0, 500.0);
+  FIELD("creditSpread", credit_spread, 0.0, 25.0);
+  FIELD("housingGap", housing_gap, -100.0, 100.0);
+  FIELD("fiscalBalance", fiscal_balance_gdp, -50.0, 50.0);
+  FIELD("federalDebt", federal_debt_gdp, 0.0, 500.0);
+  FIELD("globalGrowth", global_growth, -30.0, 30.0);
+  FIELD("expectations", inflation_expectations, -10.0, 30.0);
+  FIELD("usGrowth", us_growth, -30.0, 30.0);
+  FIELD("usInflation", us_inflation, -10.0, 30.0);
+  FIELD("usTariff", us_tariff_canada, 0.0, 100.0);
+  FIELD("retaliatoryTariff", canada_retaliatory_tariff, 0.0, 100.0);
+  FIELD("exportsUs", exports_to_us_share, 0.0, 100.0);
+  FIELD("importsUs", imports_from_us_share, 0.0, 100.0);
+  FIELD("exportsGdp", exports_gdp, 0.0, 100.0);
+  FIELD("importContent", import_content_consumption, 0.0, 100.0);
+  FIELD("tradeElasticity", trade_elasticity, 0.01, 20.0);
+  FIELD("borderFriction", border_friction, 0.0, 50.0);
+  FIELD("tariffRelief", tariff_relief, 0.0, 5.0);
+  FIELD("tariffPricePassThrough", tariff_price_pass_through, 0.0, 1.0);
+  FIELD("diversification", trade_diversification, 0.0, 1.0);
+  FIELD("bilateralExportsCad", canada_exports_to_us_cad, 0.0, 5000.0);
+  FIELD("bilateralImportsCad", canada_imports_from_us_cad, 0.0, 5000.0);
+  FIELD("canadaPriority", canada_priority, 0.0, 100.0);
+  FIELD("usPriority", us_priority, 0.0, 100.0);
+  FIELD("riskAversion", risk_aversion, 0.0, 100.0);
+  FIELD("cooperationCeiling", cooperation_ceiling, 0.0, 100.0);
+  FIELD("minimumBilateralGrowth", minimum_bilateral_growth, -15.0, 15.0);
 #undef FIELD
   for (std::size_t i = 0; i < economy.us_sector_coverage.size(); ++i) {
-    economy.us_sector_coverage[i] = number(body, "usSector" + std::to_string(i), economy.us_sector_coverage[i]);
-    economy.canada_sector_coverage[i] = number(body, "canadaSector" + std::to_string(i), economy.canada_sector_coverage[i]);
+    if (!number_in_range(object, "usSector" + std::to_string(i), 0.0, 100.0,
+                         economy.us_sector_coverage[i], error)) return false;
+    if (!number_in_range(object, "canadaSector" + std::to_string(i), 0.0, 100.0,
+                         economy.canada_sector_coverage[i], error)) return false;
   }
-  return economy;
+  return true;
+}
+
+bool request_integer(const cad::request_json::Object& object, const std::string& key,
+                     int fallback, int lo, int hi, int& out, std::string& error) {
+  const auto* value = object.find(key);
+  if (!value) {
+    out = fallback;
+    return true;
+  }
+  if (value->kind != cad::request_json::Kind::number
+      || std::floor(value->number_value) != value->number_value) {
+    error = key + " must be an integer";
+    return false;
+  }
+  if (value->number_value < lo || value->number_value > hi) {
+    error = key + " is outside its allowed range";
+    return false;
+  }
+  out = static_cast<int>(value->number_value);
+  return true;
 }
 
 void send_all(socket_handle fd, const std::string& output) {
@@ -348,36 +402,49 @@ struct NegotiationState {
     return out.str();
   }
 
-  void update(const std::string& body) {
-    const bool canada = body.find("\"actor\":\"canada\"") != std::string::npos;
-    const bool us = body.find("\"actor\":\"us\"") != std::string::npos;
-    const bool automatic = body.find("\"actor\":\"automatic\"") != std::string::npos;
-    if (!canada && !us && !automatic) return;
-    auto bounded = [&](const std::string& key, double fallback) {
-      return std::clamp(number(body, key, fallback), 0.0, 100.0);
+  bool update(const cad::request_json::Object& object, std::string& error) {
+    const auto actor = object.string("actor");
+    if (!actor || (*actor != "canada" && *actor != "us" && *actor != "automatic")) {
+      error = "actor must be canada, us, or automatic";
+      return false;
+    }
+    const bool canada = *actor == "canada";
+    const bool us = *actor == "us";
+    const bool automatic = *actor == "automatic";
+    auto bounded = [&](const std::string& key, double lo, double hi, double& target) {
+      return cad::request_json::number_in_range(object, key, lo, hi, target, error);
     };
-    risk_aversion = bounded("riskAversion", risk_aversion);
-    cooperation_ceiling = bounded("cooperationCeiling", cooperation_ceiling);
+    if (!bounded("riskAversion", 0.0, 100.0, risk_aversion)
+        || !bounded("cooperationCeiling", 0.0, 100.0, cooperation_ceiling)) return false;
     if (canada) {
-      retaliatory_tariff = std::min(60.0, bounded("retaliatoryTariff", retaliatory_tariff));
-      canada_priority = bounded("canadaPriority", canada_priority); us_priority = 100 - canada_priority;
+      if (!bounded("retaliatoryTariff", 0.0, 60.0, retaliatory_tariff)
+          || !bounded("canadaPriority", 0.0, 100.0, canada_priority)) return false;
+      us_priority = 100.0 - canada_priority;
       updated_by = "Canada delegation";
     }
     if (us) {
-      us_tariff = std::min(60.0, bounded("usTariff", us_tariff));
-      us_priority = bounded("usPriority", us_priority); canada_priority = 100 - us_priority;
+      if (!bounded("usTariff", 0.0, 60.0, us_tariff)
+          || !bounded("usPriority", 0.0, 100.0, us_priority)) return false;
+      canada_priority = 100.0 - us_priority;
       updated_by = "U.S. delegation";
     }
     if (automatic) {
-      us_tariff = std::min(60.0, bounded("usTariff", us_tariff));
-      retaliatory_tariff = std::min(60.0, bounded("retaliatoryTariff", retaliatory_tariff));
+      if (!bounded("usTariff", 0.0, 60.0, us_tariff)
+          || !bounded("retaliatoryTariff", 0.0, 60.0, retaliatory_tariff)) return false;
       updated_by = "automatic win-win search";
     }
-    if (canada || automatic)
-      for (std::size_t i = 0; i < 20; ++i) canada_sectors[i] = bounded("canadaSector" + std::to_string(i), canada_sectors[i]);
-    if (us || automatic)
-      for (std::size_t i = 0; i < 20; ++i) us_sectors[i] = bounded("usSector" + std::to_string(i), us_sectors[i]);
+    if (canada || automatic) {
+      for (std::size_t i = 0; i < canada_sectors.size(); ++i)
+        if (!bounded("canadaSector" + std::to_string(i), 0.0, 100.0,
+                     canada_sectors[i])) return false;
+    }
+    if (us || automatic) {
+      for (std::size_t i = 0; i < us_sectors.size(); ++i)
+        if (!bounded("usSector" + std::to_string(i), 0.0, 100.0,
+                     us_sectors[i])) return false;
+    }
     ++revision;
+    return true;
   }
 };
 
@@ -471,6 +538,11 @@ int main(int argc, char** argv) {
 
   const auto structural_registry = cad::load_structural_parameter_registry(
       structural_registry_path);
+  if (!cad::structural_parameter_registry_complete(structural_registry)) {
+    std::cerr << "Structural parameter registry is incomplete or invalid\n";
+    close_socket(server);
+    return 1;
+  }
   const auto structural_parameters = cad::apply_structural_parameter_registry(
       cad::StructuralParameters{}, structural_registry);
   const auto decision_loss = cad::load_decision_loss_calibration(decision_loss_path);
@@ -523,7 +595,9 @@ int main(int argc, char** argv) {
     while ((count = ::recv(client, buffer, static_cast<int>(sizeof(buffer)), 0)) > 0) {
       request.append(buffer, static_cast<std::size_t>(count));
       if (request.size() > max_request_bytes) {
-        respond(client, 413, "text/plain", "Request too large"); rejected = true; break;
+        respond(client, 413, "text/plain", "Request too large");
+        rejected = true;
+        break;
       }
       const auto headers = request.find("\r\n\r\n");
       if (headers != std::string::npos) {
@@ -531,62 +605,108 @@ int main(int argc, char** argv) {
         const auto pos = request.find("Content-Length:");
         if (pos != std::string::npos) {
           try { length = std::stoul(request.substr(pos + 15)); }
-          catch (...) { respond(client, 400, "text/plain", "Invalid Content-Length"); rejected = true; break; }
+          catch (...) {
+            respond(client, 400, "application/json", error_json("Invalid Content-Length"));
+            rejected = true;
+            break;
+          }
         }
         if (length > max_request_bytes) {
-          respond(client, 413, "text/plain", "Request body too large"); rejected = true; break;
+          respond(client, 413, "text/plain", "Request body too large");
+          rejected = true;
+          break;
         }
         if (request.size() >= headers + 4 + length) break;
       }
     }
-    if (rejected) { close_socket(client); continue; }
+    if (rejected) {
+      close_socket(client);
+      continue;
+    }
 
     const auto first = request.substr(0, request.find("\r\n"));
     const auto split = request.find("\r\n\r\n");
     const std::string body = split == std::string::npos ? "" : request.substr(split + 4);
+    cad::request_json::Object json;
+    if (first.rfind("POST ", 0) == 0) {
+      json = cad::request_json::parse_object(body.empty() ? "{}" : body);
+      if (!json.valid) {
+        respond(client, 400, "application/json", error_json(json.error));
+        close_socket(client);
+        continue;
+      }
+    }
 
     if (first.rfind("POST /api/evaluate ", 0) == 0) {
-      auto economy = parse(body);
+      cad::Economy economy;
+      std::string error;
+      if (!parse_economy(json, economy, error)) {
+        respond(client, 400, "application/json", error_json(error));
+        close_socket(client);
+        continue;
+      }
+      bool comparison_only = false;
+      if (!cad::request_json::boolean_value(
+              json, "comparisonOnly", false, comparison_only, error)) {
+        respond(client, 400, "application/json", error_json(error));
+        close_socket(client);
+        continue;
+      }
       economy.loss_weights = decision_loss.weights;
-      auto result = engine.evaluate(economy);  // Reattaches non-control calibration before solving.
-      last_economy = economy;
-      const bool comparison_only = body.find("\"comparisonOnly\":true") != std::string::npos
-          || body.find("\"comparisonOnly\": true") != std::string::npos;
+      auto result = engine.evaluate(economy);
       if (comparison_only) {
         respond(client, 200, "application/json",
             cad::attach_calibration_json(cad::to_json(result), engine.snapshot()));
       } else {
         auto bargaining = cad::analyze_negotiation(economy, result);
         cad::align_negotiation_trade_channels(economy, result, bargaining);
-        auto robustness = cad::analyze_robust_recommendations(economy, result, bargaining, engine.snapshot());
+        auto robustness = cad::analyze_robust_recommendations(
+            economy, result, bargaining, engine.snapshot());
         auto platform = cad::build_trade_diplomacy_platform(economy, result, bargaining);
+        last_economy = economy;
         last_bargaining = bargaining;
         last_robustness = robustness;
         has_evaluation = true;
         auto with_calibration = cad::attach_calibration_json(cad::to_json(result), engine.snapshot());
         auto with_negotiation = cad::attach_negotiation_json(with_calibration, bargaining);
         auto with_robustness = cad::attach_robustness_json(with_negotiation, robustness);
-        respond(client, 200, "application/json", cad::attach_trade_diplomacy_json(with_robustness, platform));
+        respond(client, 200, "application/json",
+            cad::attach_trade_diplomacy_json(with_robustness, platform));
       }
     } else if (first.rfind("POST /api/v2/robustness ", 0) == 0) {
-      if (!cad::structural_parameter_registry_complete(structural_registry)) {
-        respond(client, 400, "application/json",
-            "{\"error\":\"structural parameter registry is incomplete\"}");
-      } else {
-        cad::Economy economy = body.empty()
-            ? last_economy
-            : cad::apply_non_control_calibration(parse(body), engine.snapshot());
-        economy.loss_weights = decision_loss.weights;
-        const int requested = static_cast<int>(number(body, "parameterDraws", 6.0));
-        const int draws = std::clamp(requested, 1, 24);
-        respond(client, 200, "application/json",
-            cad::robustness_to_json(evidence_engine.evaluate_robust(
-                economy, draws, cad::production_evaluation_options())));
+      cad::Economy economy = last_economy;
+      std::string error;
+      if (!body.empty()) {
+        economy = cad::Economy{};
+        if (!parse_economy(json, economy, error)) {
+          respond(client, 400, "application/json", error_json(error));
+          close_socket(client);
+          continue;
+        }
+        economy = cad::apply_non_control_calibration(std::move(economy), engine.snapshot());
       }
+      economy.loss_weights = decision_loss.weights;
+      int draws = 6;
+      if (!request_integer(json, "parameterDraws", 6, 1, 24, draws, error)) {
+        respond(client, 400, "application/json", error_json(error));
+        close_socket(client);
+        continue;
+      }
+      respond(client, 200, "application/json",
+          cad::robustness_to_json(evidence_engine.evaluate_robust(
+              economy, draws, cad::production_evaluation_options())));
     } else if (first.rfind("POST /api/v2/welfare ", 0) == 0) {
-      cad::Economy economy = body.empty()
-          ? last_economy
-            : cad::apply_non_control_calibration(parse(body), engine.snapshot());
+      cad::Economy economy = last_economy;
+      std::string error;
+      if (!body.empty()) {
+        economy = cad::Economy{};
+        if (!parse_economy(json, economy, error)) {
+          respond(client, 400, "application/json", error_json(error));
+          close_socket(client);
+          continue;
+        }
+        economy = cad::apply_non_control_calibration(std::move(economy), engine.snapshot());
+      }
       economy.loss_weights = decision_loss.weights;
       respond(client, 200, "application/json",
           cad::welfare_sensitivity_to_json(
@@ -635,7 +755,11 @@ int main(int argc, char** argv) {
           room.json(has_evaluation ? &last_bargaining : nullptr,
                     has_evaluation ? &last_robustness : nullptr));
     } else if (first.rfind("POST /api/negotiation ", 0) == 0) {
-      negotiation.update(body); respond(client, 200, "application/json", negotiation.json());
+      std::string error;
+      if (!negotiation.update(json, error))
+        respond(client, 400, "application/json", error_json(error));
+      else
+        respond(client, 200, "application/json", negotiation.json());
     } else if (first.rfind("GET /api/negotiation ", 0) == 0) {
       respond(client, 200, "application/json", negotiation.json());
     } else if (first.rfind("GET /api/calibration ", 0) == 0) {
@@ -645,20 +769,36 @@ int main(int argc, char** argv) {
           live_baseline(engine.snapshot(), decision_loss, state_measurements));
     } else if (first.rfind("GET / ", 0) == 0) {
       respond(client, 200, "text/html; charset=utf-8", diplomatic_index());
-    } else if (first.rfind("GET /app.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/app.css"));
-    else if (first.rfind("GET /app.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/app.js") + "\n" + read_file("web/evaluation-controller.js"));
-    else if (first.rfind("GET /trade-incidence.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/trade-incidence.js"));
-    else if (first.rfind("GET /diplomat.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/diplomat.css"));
-    else if (first.rfind("GET /diplomat.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/diplomat.js"));
-    else if (first.rfind("GET /negotiation-model.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/negotiation-model.css"));
-    else if (first.rfind("GET /negotiation-model.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/negotiation-model.js"));
-    else if (first.rfind("GET /trade-diplomacy.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/trade-diplomacy.css"));
-    else if (first.rfind("GET /trade-diplomacy.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/trade-diplomacy.js"));
-    else if (first.rfind("GET /calibration.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/calibration.css"));
-    else if (first.rfind("GET /calibration.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/calibration.js"));
-    else if (first.rfind("GET /robust-room.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/robust-room.css"));
-    else if (first.rfind("GET /robust-room.js ", 0) == 0) respond(client, 200, "application/javascript", read_file("web/robust-room.js"));
-    else respond(client, 404, "text/plain", "Not found");
+    } else if (first.rfind("GET /app.css ", 0) == 0) {
+      respond(client, 200, "text/css", read_file("web/app.css"));
+    } else if (first.rfind("GET /app.js ", 0) == 0) {
+      respond(client, 200, "application/javascript",
+          read_file("web/app.js") + "\n" + read_file("web/evaluation-controller.js"));
+    } else if (first.rfind("GET /trade-incidence.js ", 0) == 0) {
+      respond(client, 200, "application/javascript", read_file("web/trade-incidence.js"));
+    } else if (first.rfind("GET /diplomat.css ", 0) == 0) {
+      respond(client, 200, "text/css", read_file("web/diplomat.css"));
+    } else if (first.rfind("GET /diplomat.js ", 0) == 0) {
+      respond(client, 200, "application/javascript", read_file("web/diplomat.js"));
+    } else if (first.rfind("GET /negotiation-model.css ", 0) == 0) {
+      respond(client, 200, "text/css", read_file("web/negotiation-model.css"));
+    } else if (first.rfind("GET /negotiation-model.js ", 0) == 0) {
+      respond(client, 200, "application/javascript", read_file("web/negotiation-model.js"));
+    } else if (first.rfind("GET /trade-diplomacy.css ", 0) == 0) {
+      respond(client, 200, "text/css", read_file("web/trade-diplomacy.css"));
+    } else if (first.rfind("GET /trade-diplomacy.js ", 0) == 0) {
+      respond(client, 200, "application/javascript", read_file("web/trade-diplomacy.js"));
+    } else if (first.rfind("GET /calibration.css ", 0) == 0) {
+      respond(client, 200, "text/css", read_file("web/calibration.css"));
+    } else if (first.rfind("GET /calibration.js ", 0) == 0) {
+      respond(client, 200, "application/javascript", read_file("web/calibration.js"));
+    } else if (first.rfind("GET /robust-room.css ", 0) == 0) {
+      respond(client, 200, "text/css", read_file("web/robust-room.css"));
+    } else if (first.rfind("GET /robust-room.js ", 0) == 0) {
+      respond(client, 200, "application/javascript", read_file("web/robust-room.js"));
+    } else {
+      respond(client, 404, "text/plain", "Not found");
+    }
     close_socket(client);
   }
 }
