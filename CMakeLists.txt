@@ -9,6 +9,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -35,7 +37,6 @@ target_link_libraries(cad-policy-studio PRIVATE policy_engine)
 cad_enable_warnings(cad-policy-studio)
 
 if(WIN32)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   set(CAD_EMBEDDED_FILES
     web/index.html
     web/app.css
@@ -127,6 +128,8 @@ cad_add_test(negotiation_room_tests tests/negotiation_room_test.cpp negotiation_
 set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
 cad_add_test(trade_network_tests tests/trade_network_test.cpp trade_network)
+cad_add_test(bilateral_trade_tests tests/bilateral_trade_test.cpp bilateral_trade_state)
+cad_add_test(request_json_tests tests/request_json_test.cpp request_json_contract)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
 set_tests_properties(trade_episode_validation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(final_realism_tests tests/final_realism_test.cpp final_realism)
@@ -145,6 +148,12 @@ cad_add_test(empirical_calibration_tests tests/empirical_calibration_test.cpp em
 set_tests_properties(empirical_structural_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(quarterly_empirical_calibration_tests tests/quarterly_empirical_calibration_test.cpp quarterly_empirical_calibration)
 set_tests_properties(quarterly_empirical_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_test(NAME http_contract
+  COMMAND ${CMAKE_COMMAND} -E env
+          "CAD_POLICY_STUDIO=$<TARGET_FILE:cad-policy-studio>"
+          ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tests/http_contract_test.py")
+set_tests_properties(http_contract PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(release_assertions_tests tests/release_assertions_test.cpp)
 cad_enable_warnings(release_assertions_tests)

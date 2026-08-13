@@ -1,6 +1,7 @@
 #include "policy_engine.hpp"
 #include "policy_dynamics.hpp"
 #include "trade_network.hpp"
+#include "bilateral_trade.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,9 +39,6 @@ std::vector<double> coverage_levels(double current, double cooperation_ceiling,
   const double start = clamp(current, 0.0, 100.0);
   const double cap = clamp(cooperation_ceiling / 100.0, 0.0, 1.0);
   const double rate_relief = clamp(negotiated_relief / 100.0, 0.0, cap);
-  // The cooperation ceiling constrains total effective tariff relief, not each
-  // concession lever independently. If rate relief has already consumed part
-  // of the envelope, sector-coverage relief can use only the residual.
   const double minimum_coverage_ratio = (1.0 - rate_relief) > 1e-12
       ? clamp((1.0 - cap) / (1.0 - rate_relief), 0.0, 1.0)
       : 1.0;
@@ -95,9 +93,6 @@ SectorImpact direct_sector_impact(const Economy& e, const Scenario& policy,
   impact.us_output = 100.0 * (-us_shock + us_protection + deescalation * .012 * p.trade);
   impact.canada_jobs = impact.canada_output * (.30 + .42 * p.jobs);
   impact.us_jobs = impact.us_output * (.28 + .38 * p.jobs);
-  // Buyer pass-through is now explicit. The small cross-border term preserves
-  // the prior re-routing/supply-chain price channel; the 20x20 network adds the
-  // larger downstream input-cost propagation separately.
   impact.canada_prices = canada_incidence.buyer_pass_through * p.import
       + us_incidence.applied_tariff * p.import * .05 - 100.0 * supply * .10;
   impact.us_prices = us_incidence.buyer_pass_through * p.import
@@ -133,10 +128,6 @@ SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size
 
   const double price_weight = .65 + .70 * clamp(e.risk_aversion / 100.0, 0.0, 1.0)
       + .18 * std::max(0.0, (e.inflation + e.us_inflation) / 2.0 - 2.0);
-
-  // Each source-sector tariff decision is still additive, but its utility now
-  // includes all downstream cost and upstream supplier-demand externalities.
-  // This preserves the exact finite Pareto dynamic program on the declared grid.
   for (std::size_t downstream = 0; downstream < std::size(sector_profiles); ++downstream) {
     const auto& p = sector_profiles[downstream];
     double canada_output = network.canada_output[downstream];
@@ -223,7 +214,6 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
   for (std::size_t sector = 0; sector < std::size(sector_profiles); ++sector) {
     const auto us_levels = coverage_levels(e.us_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);
     const auto ca_levels = coverage_levels(e.canada_sector_coverage[sector], e.cooperation_ceiling, policy.negotiated_relief);
-
     struct Option { double uc, cc, ca, us; };
     std::vector<Option> options;
     options.reserve(us_levels.size() * ca_levels.size());
@@ -244,7 +234,6 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
     ca_global_max += sector_ca_max;
     us_global_min += sector_us_min;
     us_global_max += sector_us_max;
-
     const auto baseline = sector_utility(
         e, policy, sector, e.us_sector_coverage[sector], e.canada_sector_coverage[sector]);
     baseline_ca_raw += baseline.canada;
@@ -263,7 +252,6 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
       }
     }
     search.candidates_examined += static_cast<int>(expanded.size());
-
     std::sort(expanded.begin(), expanded.end(), [](const CoverageCandidate& a, const CoverageCandidate& b) {
       if (std::abs(a.canada_raw - b.canada_raw) > 1e-9) return a.canada_raw > b.canada_raw;
       return a.us_raw > b.us_raw;
@@ -285,7 +273,6 @@ SectorSearch search_sector_frontier(const Economy& e, const Scenario& policy) {
   search.baseline_canada_score = normalize_utility(baseline_ca_raw, ca_global_min, ca_global_max);
   search.baseline_us_score = normalize_utility(baseline_us_raw, us_global_min, us_global_max);
   search.pareto_frontier_size = static_cast<int>(frontier.size());
-
   const double ca_weight = clamp(e.canada_priority, 1.0, 100.0);
   const double us_weight = clamp(e.us_priority, 1.0, 100.0);
   const double weight_total = ca_weight + us_weight;
@@ -358,9 +345,6 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   terminal_debt.reserve(draws);
   terminal_inflation.reserve(draws);
 
-  // Directional weights matter. U.S. tariff coverage is weighted by Canada's
-  // sectoral export exposure; Canadian retaliation is weighted by U.S. sales
-  // into Canada rather than reusing the Canadian export weights.
   double us_barrier_coverage = 0.0, ca_barrier_coverage = 0.0;
   double ca_export_weight = 0.0, us_export_weight = 0.0;
   for (std::size_t i = 0; i < std::size(sector_profiles); ++i) {
@@ -374,9 +358,6 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   us_barrier_coverage /= std::max(1e-9, ca_export_weight);
   ca_barrier_coverage /= std::max(1e-9, us_export_weight);
 
-  // The search chooses amplitudes; deterministic implementation rules convert
-  // those amplitudes into explicit 12-quarter policy paths. Trade networks are
-  // precomputed once per quarter outside the Monte Carlo path loop.
   const auto implementation = build_policy_implementation_paths(
       fiscal, productive, 100.0 * deescalation, targeted_relief, diversification);
   s.fiscal_path = implementation.fiscal;
@@ -386,6 +367,7 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   s.diversification_path = implementation.diversification;
 
   std::array<TradeNetworkResult, 12> networks{};
+  std::array<BilateralTradeState, 12> trade_states{};
   std::array<double, 12> deescalation_path{}, us_tariff_path{}, ca_tariff_path{};
   std::array<double, 12> trade_drag_path{}, us_trade_drag_path{}, import_price_path{};
   std::array<double, 12> supply_path{}, relief_cost_path{};
@@ -393,23 +375,18 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
     const auto qi = static_cast<std::size_t>(q);
     deescalation_path[qi] = clamp(implementation.negotiated_relief[qi] / 100.0, 0.0,
         clamp(e.cooperation_ceiling / 100.0, 0.0, 1.0));
-    us_tariff_path[qi] = std::max(0.0, e.us_tariff_canada * us_barrier_coverage
-        * (1.0 - deescalation_path[qi]));
-    ca_tariff_path[qi] = std::max(0.0, e.canada_retaliatory_tariff * ca_barrier_coverage
-        * (1.0 - deescalation_path[qi]));
 
     Scenario quarter_policy = s;
     quarter_policy.negotiated_relief = implementation.negotiated_relief[qi];
     quarter_policy.diversification = implementation.diversification[qi];
     networks[qi] = evaluate_trade_network(make_trade_network_input(e, quarter_policy));
+    trade_states[qi] = build_bilateral_trade_state(e, quarter_policy, p, networks[qi]);
+    us_tariff_path[qi] = trade_states[qi].effective_us_tariff;
+    ca_tariff_path[qi] = trade_states[qi].effective_canada_tariff;
 
-    const double exposed_exports = e.exports_to_us_share / 100.0
-        * (1.0 - clamp(implementation.diversification[qi] + e.trade_diversification, 0.0, 0.75));
-    trade_drag_path[qi] = p.canada_trade_drag_scale * exposed_exports * e.exports_gdp / 100.0
-        * e.trade_elasticity * (us_tariff_path[qi] + e.border_friction) / 100.0
+    trade_drag_path[qi] = trade_states[qi].canada_macro_trade_drag
         + networks[qi].canada_supply_chain_drag;
-    us_trade_drag_path[qi] = p.us_retaliation_drag_scale * e.imports_from_us_share / 100.0
-        * e.trade_elasticity * (ca_tariff_path[qi] + .45 * e.border_friction) / 100.0
+    us_trade_drag_path[qi] = trade_states[qi].us_macro_trade_drag
         + networks[qi].us_supply_chain_drag;
     import_price_path[qi] = e.imports_from_us_share / 100.0
         * e.import_content_consumption / 100.0 * ca_tariff_path[qi]
@@ -436,11 +413,6 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
       } else {
         double policy_step = clamp(rate_target - rate,
             -p.max_quarterly_rate_step, p.max_quarterly_rate_step);
-        // The optimized control remains the auditable first-quarter move. In
-        // quarter 2 it can receive one same-direction, state-contingent follow-
-        // up when the incoming data still justify the original action. This
-        // adds a dynamic policy path without expanding or obscuring the declared
-        // 288-control startup search grid.
         if (q == 1 && std::abs(move) > 1e-9) {
           const double followup = std::min(.25, p.max_quarterly_rate_step);
           const bool continue_easing = move < 0.0
@@ -458,17 +430,14 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
           - (rate - p.neutral_rate) * p.real_rate_demand_sensitivity;
 
       const double export_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      export_change = -100.0 * trade_drag_path[qi] + .35 * (e.us_growth - 2.0)
+      export_change = 100.0 * (trade_states[qi].canada_total_export_quantity_ratio - 1.0)
+          + .35 * (e.us_growth - 2.0)
           + 2.0 * implementation.diversification[qi] + export_z * p.export_shock_sd;
-      // Independent U.S. channel: this responds to Canadian market access,
-      // Canadian demand, de-escalation and its own shock. It never references
-      // Canada's export-change variable.
       const double us_export_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      us_export_change = -100.0 * us_trade_drag_path[qi] + .30 * (e.gdp_growth - 1.5)
+      us_export_change = 100.0 * (trade_states[qi].us_bilateral_quantity_ratio - 1.0)
+          + .30 * (e.gdp_growth - 1.5)
           + 1.5 * deescalation_path[qi] + us_export_z * p.us_export_shock_sd;
 
-      // Preserve common-random-number ordering while allowing the measured
-      // output/inflation dependence plus explicit assumed tail/regime mechanics.
       const double raw_output_z = shock(rng);
       const double inflation_independent_z = shock(rng);
       const double rho = clamp(p.output_inflation_shock_correlation, -.999, .999);
@@ -547,23 +516,14 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   s.export_change = export_sum / draws;
   s.us_export_change = us_export_sum / draws;
 
-  const double effective_us_rate = us_tariff_path.back() / 100.0;
-  const double effective_ca_rate = ca_tariff_path.back() / 100.0;
-  const double ledger_elasticity = e.trade_elasticity * p.tariff_revenue_elasticity_scale;
-  const double ca_exports = e.canada_exports_to_us_cad
-      * std::max(.05, 1.0 - ledger_elasticity * effective_us_rate);
-  const double ca_imports = e.canada_imports_from_us_cad
-      * std::max(.05, 1.0 - ledger_elasticity * effective_ca_rate);
-
-  // Trade balance is a reported bilateral outcome, not a welfare target. No
-  // artificial exports/imports are created to force the balance to zero.
+  const auto& terminal_trade = trade_states.back();
   s.us_export_expansion_usd = 0.0;
-  s.canada_export_redirection_cad = 0.0;
-  s.us_tariff_revenue_cad = effective_us_rate * ca_exports;
+  s.canada_export_redirection_cad = terminal_trade.canada_export_redirection_cad;
+  s.us_tariff_revenue_cad = terminal_trade.us_tariff_revenue_cad;
   s.us_tariff_revenue_usd = s.us_tariff_revenue_cad / e.usdcad;
-  s.canada_tariff_revenue_cad = effective_ca_rate * ca_imports;
+  s.canada_tariff_revenue_cad = terminal_trade.canada_tariff_revenue_cad;
   s.canada_tariff_revenue_usd = s.canada_tariff_revenue_cad / e.usdcad;
-  s.canada_trade_balance_cad = ca_exports - ca_imports;
+  s.canada_trade_balance_cad = terminal_trade.canada_trade_balance_cad;
   s.us_trade_balance_usd = -s.canada_trade_balance_cad / e.usdcad;
   s.trade_balance_gap_usd = std::abs(s.us_trade_balance_usd);
   const double initial_gap = std::abs(e.canada_exports_to_us_cad - e.canada_imports_from_us_cad)
@@ -595,13 +555,12 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
       * std::max(.01, s.federal_score));
 
   const double us_inflation_pressure = std::max(
-      0.0, e.us_inflation - 2.0 + e.us_tariff_canada * us_barrier_coverage * .025
+      0.0, e.us_inflation - 2.0 + terminal_trade.effective_us_tariff * .025
       + .10 * networks.back().us_input_cost_pressure);
   const double us_loss = w.us_exports * sq(std::max(0.0, -s.us_export_change))
       + w.us_inflation * sq(us_inflation_pressure)
       + w.us_growth * sq(std::max(0.0, 1.8 - s.us_growth))
-      + w.us_retaliation * sq(e.canada_retaliatory_tariff * ca_barrier_coverage
-          * (1.0 - deescalation_path.back()));
+      + w.us_retaliation * sq(terminal_trade.effective_canada_tariff);
   s.us_score = 100.0 / (1.0 + us_loss);
 
   const double canada = s.canada_score;
@@ -624,7 +583,6 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
 double deal_score(const Scenario& s, const Economy& e, bool enforce_growth = true) {
   if (enforce_growth && s.bilateral_growth_floor + 1e-9 < e.minimum_bilateral_growth)
     return -1e100;
-
   const double canada = s.canada_score;
   const double ca_weight = clamp(e.canada_priority, 1.0, 100.0);
   const double us_weight = clamp(e.us_priority, 1.0, 100.0);
@@ -636,7 +594,6 @@ double deal_score(const Scenario& s, const Economy& e, bool enforce_growth = tru
   const double tail_penalty = safety * (.10 * s.recession_risk
       + .35 * std::max(0.0, s.inflation_stress_p90 - 3.0)
       + .08 * std::max(0.0, s.debt_stress_p90 - e.federal_debt_gdp - 5.0));
-
   double sector_floor = std::numeric_limits<double>::infinity();
   double sector_sum = 0.0;
   std::size_t count = 0;
@@ -652,10 +609,6 @@ double deal_score(const Scenario& s, const Economy& e, bool enforce_growth = tru
     }
   }
   const double sector_average = count ? sector_sum / static_cast<double>(count) : 0.0;
-
-  // Trade balance is intentionally absent. A deal is preferred because it
-  // improves bilateral welfare, not because accounting identities happen to
-  // move toward zero.
   return .66 * nash + .26 * floor - .05 * tail_penalty
       + .055 * sector_floor + .018 * sector_average;
 }
@@ -708,10 +661,8 @@ void fill_sector_display_metrics(const Economy& e, const Scenario& policy,
     }
     const auto selected = sector_utility(e, policy, i,
         recommendation.us_sector_coverage[i], recommendation.canada_sector_coverage[i]);
-    recommendation.canada_sector_value[i] =
-        normalize_utility(selected.canada, ca_min, ca_max);
-    recommendation.us_sector_output[i] =
-        normalize_utility(selected.us, us_min, us_max);
+    recommendation.canada_sector_value[i] = normalize_utility(selected.canada, ca_min, ca_max);
+    recommendation.us_sector_output[i] = normalize_utility(selected.us, us_min, us_max);
   }
 }
 
@@ -835,7 +786,6 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
     r.scenarios.push_back(std::move(custom));
   }
 
-  // Mandate weights are inputs, not variables the optimizer is allowed to tune.
   const double priority_total = std::max(1e-9, std::max(0.0, e.canada_priority)
       + std::max(0.0, e.us_priority));
   r.recommendation.canada_priority = 100.0 * std::max(0.0, e.canada_priority) / priority_total;
@@ -865,10 +815,6 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
     r.recommendation.baseline_us_score = baseline_us;
   }
 
-  // Unified sector/macro verification pass. Exhaustive startup mode carries
-  // all 288 generated policy-control mixes plus the expert strategies into the
-  // sector search. Every retained sector Pareto package is evaluated with the
-  // full verification draw count before its policy strategy can be selected.
   std::vector<ScenarioMeta> meta;
   meta.reserve(r.scenarios.size());
   bool all_sector_frontiers_verified = true;
@@ -940,8 +886,6 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
         + deal_score(starting_baseline, e, false);
     r.scenarios.push_back(std::move(starting_baseline));
   } else {
-    // Staged mode retains the historical two-pass structure for low-level tests
-    // and robustness draws that do not claim startup global optimality.
     for (auto& scenario : r.scenarios) {
       Economy verified_e = e;
       verified_e.us_sector_coverage = scenario.applied_us_sector_coverage;
@@ -1006,7 +950,7 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
         << " frontier schedules per strategy, then rechecks each selected strategy with "
         << kVerificationDraws << " common-random-number draws. ";
   }
-  recommendation << "Sector welfare includes upstream supplier-demand and downstream input-cost propagation through country-specific 20-sector production-network objects. The Canadian matrix is the directly aggregated Statistics Canada 2024 table. The U.S. matrix is a separately identified but explicitly provisional structural proxy pending a certified BEA extraction, and must not be described as empirical U.S. IO calibration. Directional sector elasticity and pass-through inputs fall back to audited aggregate anchors unless production-compatible sector evidence is supplied. Monetary policy can make one state-contingent quarter-2 follow-up after the optimized first move, and the measured output/inflation residual correlation is propagated without claiming a fully identified multivariate shock process. Canadian and U.S. export channels are independent. Bilateral trade balance is reported for diplomatic context but is not rewarded in the welfare objective.";
+  recommendation << "The macro trade block and tariff ledger now share one sector-weighted bilateral trade state. Sector-specific elasticities feed a bounded constant-elasticity quantity response, so large tariff stress cases remain positive without an arbitrary trade floor; the same quantities drive macro trade drag, export outcomes, tariff receipts and the reported bilateral balance. Sector welfare also includes production-network supplier-demand and input-cost propagation through country-specific 20-sector objects. Canadian and U.S. export channels remain independent, and bilateral trade balance remains report-only rather than a welfare objective.";
   r.recommendation.explanation = recommendation.str();
 
   for (auto& scenario : r.scenarios)
