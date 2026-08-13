@@ -167,8 +167,21 @@ class NegotiationRoom {
                    bool persist = true) {
     const auto event = room_action::parse(body);
     if (!event.valid) return false;
-    const auto& action = event.action;
 
+    // Persistent room writes are transactional with respect to process memory:
+    // stage the mutation in a detached copy, require a successful checked append,
+    // then publish the staged state. A disk/path failure therefore cannot leave
+    // memory ahead of durable history. If the process dies after append but before
+    // assignment, replay on the next launch recovers the committed event.
+    if (persist) {
+      NegotiationRoom candidate = *this;
+      if (!candidate.apply_event(body, negotiation, robustness, false)) return false;
+      if (!append_event(room_action::to_json(event))) return false;
+      *this = std::move(candidate);
+      return true;
+    }
+
+    const auto& action = event.action;
     if (action == "set-round") {
       if (event.round) round_ = *event.round;
       if (event.phase) phase_ = *event.phase;
@@ -226,7 +239,6 @@ class NegotiationRoom {
 
     ++revision_;
     trim_history();
-    if (persist) append_event(room_action::to_json(event));
     (void)robustness;
     return true;
   }
@@ -282,8 +294,8 @@ class NegotiationRoom {
     out << std::fixed << std::setprecision(4);
     out << "{\"sessionId\":\"local-room-1\",\"revision\":" << revision_
         << ",\"round\":" << round_ << ",\"phase\":\"" << esc(phase_)
-        << "\",\"persistence\":{\"mode\":\"local-append-only-event-log\",\"path\":\""
-        << esc(event_log_path_) << "\",\"eventSchemaVersion\":1,\"secureForProtectedInformation\":false},\"mandate\":[";
+        << "\",\"persistence\":{\"mode\":\"checked-append-only-event-log\",\"path\":\""
+        << esc(event_log_path_) << "\",\"eventSchemaVersion\":1,\"writeFailureRejectsMutation\":true,\"secureForProtectedInformation\":false},\"mandate\":[";
     std::size_t index = 0;
     for (const auto& item : mandate_) {
       if (index++) out << ',';
@@ -374,12 +386,19 @@ class NegotiationRoom {
     trim(offers_); trim(concessions_); trim(playbooks_); trim(debriefs_);
   }
 
-  void append_event(std::string body) const {
-    for (char& c : body) if (c == '\n' || c == '\r') c = ' ';
-    const std::filesystem::path path(event_log_path_);
-    if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
-    std::ofstream out(event_log_path_, std::ios::app);
-    if (out) out << body << '\n';
+  bool append_event(std::string body) const {
+    try {
+      for (char& c : body) if (c == '\n' || c == '\r') c = ' ';
+      const std::filesystem::path path(event_log_path_);
+      if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+      std::ofstream out(event_log_path_, std::ios::app | std::ios::binary);
+      if (!out) return false;
+      out << body << '\n';
+      out.flush();
+      return out.good();
+    } catch (...) {
+      return false;
+    }
   }
 
   void load() {
