@@ -3,15 +3,19 @@ const vm = require('vm');
 const assert = require('assert');
 
 const source = fs.readFileSync('web/trade-incidence.js', 'utf8');
-const marker = '// Delegation trade-table edits are staged.';
+const marker = '// All slider and negotiation parameter edits are staged.';
 const start = source.indexOf(marker);
-assert(start >= 0, 'delegation staging controller must be present');
+assert(start >= 0, 'global staging controller must be present');
 const controllerSource = source.slice(start);
 
-const listeners = {change:[], click:[]};
-let scheduleCalls = 0;
+const listeners = {click:[]};
+let legacyScheduleCalls = 0;
 let dashboardRunClicks = 0;
+let publishCalls = 0;
+let refreshCalls = 0;
 
+const autoStatus = {textContent:''};
+const linkedNote = {textContent:''};
 const partyView = {
   querySelectorAll() { return []; },
   querySelector() { return null; }
@@ -31,16 +35,29 @@ const dashboardRun = {
     listeners.click.forEach(listener => listener({type:'click', target}));
   }
 };
+const preset = {dataset:{rate:'25'}, onclick:null};
 
 global.window = {};
-global.schedule = () => { scheduleCalls++; };
+global.schedule = () => { legacyScheduleCalls++; };
+global.tariff = {value:'50'};
+global.updateTariff = () => {};
+global.updatePosition = () => {};
+global.syncPartyView = () => {};
+global.refreshPartySectorMetrics = () => { refreshCalls++; };
+global.publishNegotiation = () => { publishCalls++; };
 global.document = {
   querySelector(selector) {
     if (selector === '#partyView') return partyView;
     if (selector === '#run') return dashboardRun;
     if (selector === '#partyRun') return partyRun;
     if (selector === '#partyRunStatus') return partyRunStatus;
+    if (selector === '.auto span') return autoStatus;
+    if (selector === '.preferences .linked-note') return linkedNote;
     return null;
+  },
+  querySelectorAll(selector) {
+    if (selector === '.presets button') return [preset];
+    return [];
   },
   addEventListener(type, handler) {
     if (listeners[type]) listeners[type].push(handler);
@@ -50,33 +67,38 @@ global.MutationObserver = undefined;
 
 vm.runInThisContext(controllerSource);
 
-(async () => {
-  const delegationRange = {
-    closest(selector) { return selector === '#partyView' ? partyView : null; },
-    matches(selector) { return selector === 'input[type="range"]'; }
-  };
+schedule();
+assert.strictEqual(legacyScheduleCalls, 0,
+  'dashboard slider commits must never launch the legacy optimizer timer');
+assert.strictEqual(window.EvaluationRunController.state().staged, true,
+  'dashboard slider commit must mark inputs staged');
+assert.strictEqual(autoStatus.textContent.includes('No global search is running'), true,
+  'staged state must tell the user no global search is running');
 
-  listeners.change.forEach(listener => listener({type:'change', target:delegationRange}));
-  schedule();
-  assert.strictEqual(scheduleCalls, 0,
-    'delegation slider commit must not schedule an optimizer run');
-  assert.strictEqual(window.DelegationRunController.state().staged, true,
-    'delegation slider commit must be retained as staged state');
-  assert.strictEqual(partyRunStatus.textContent, 'Positions saved · optimizer not run yet');
+schedule();
+assert.strictEqual(legacyScheduleCalls, 0,
+  'repeated slider commits must remain search-free');
 
-  await Promise.resolve();
-  schedule();
-  assert.strictEqual(scheduleCalls, 1,
-    'non-delegation scheduling must retain the existing dashboard behavior');
+assert.strictEqual(typeof preset.onclick, 'function',
+  'tariff presets must be rebound to staged behavior');
+preset.onclick();
+assert.strictEqual(tariff.value, '25', 'preset must retain the selected tariff value');
+assert.strictEqual(publishCalls, 1, 'preset must still publish the selected negotiation input');
+assert.strictEqual(refreshCalls, 1, 'preset must refresh displayed sector metrics');
+assert.strictEqual(legacyScheduleCalls, 0,
+  'preset selection must not launch a global search');
+assert.strictEqual(window.EvaluationRunController.state().staged, true,
+  'preset selection must remain staged until explicit run');
 
-  assert(controllerSource.includes(
-    "partyRun.addEventListener('click', () => dashboardRun.click())"),
-    'delegation Run new run button must be wired to the Dashboard run button');
-  window.DelegationRunController.run();
-  assert.strictEqual(dashboardRunClicks, 1,
-    'delegation Run new run must invoke the Dashboard Run again now button');
-  assert.strictEqual(window.DelegationRunController.state().staged, false,
-    'explicit run must clear the staged marker');
+assert(controllerSource.includes(
+  "partyRun.addEventListener('click', () => dashboardRun.click())"),
+  'delegation Run new run button must be wired to the Dashboard run button');
+window.EvaluationRunController.run();
+assert.strictEqual(dashboardRunClicks, 1,
+  'explicit run controller must invoke Dashboard Run again now');
+assert.strictEqual(window.EvaluationRunController.state().staged, false,
+  'explicit run must clear the staged marker');
+assert.strictEqual(partyRunStatus.textContent,
+  'Uses Dashboard optimizer · Run again now');
 
-  console.log('delegation staging test passed');
-})().catch(error => { console.error(error); process.exit(1); });
+console.log('global slider staging test passed');
