@@ -23,11 +23,22 @@ struct StructuralParameterProvenance {
   std::string notes;
 };
 
+struct StructuralParameterCorrelation {
+  std::string left;
+  std::string right;
+  double correlation = 0.0;
+  std::string kind;
+  std::string source_id;
+  std::string vintage;
+  std::string notes;
+};
+
 struct StructuralParameterRegistry {
   std::string registry_id = "none";
   std::string as_of;
   bool loaded = false;
   std::vector<StructuralParameterProvenance> entries;
+  std::vector<StructuralParameterCorrelation> correlations;
 
   const StructuralParameterProvenance* find(const std::string& name) const {
     for (const auto& entry : entries) if (entry.name == name) return &entry;
@@ -62,6 +73,18 @@ struct StructuralParameters {
   double canada_trade_drag_scale = 1.0;
   double us_retaliation_drag_scale = 1.0;
   double tariff_revenue_elasticity_scale = 1.0;
+
+  // Production-network transmission coefficients. These were historically
+  // embedded in trade_network.cpp; keeping them here makes their provenance,
+  // bounds and structural uncertainty executable and auditable.
+  double network_supplier_demand_transmission = 0.30;
+  double network_input_cost_incidence = 0.85;
+  double network_downstream_cost_transmission = 0.85;
+  double network_price_cost_pass_through = 0.70;
+  double network_output_cost_base = 0.12;
+  double network_output_cost_cyclical = 0.18;
+  double network_jobs_output_base = 0.20;
+  double network_jobs_output_exposure = 0.35;
 
   double output_shock_sd = 0.16;
   double inflation_shock_sd = 0.11;
@@ -218,7 +241,10 @@ struct RobustnessSummary {
   std::string calibration_vintage;
   std::string parameter_registry_id = "none";
   std::string methodology = "not-evaluated";
+  std::string structural_sampling_dependence = "not-evaluated";
   int sampled_parameter_count = 0;
+  int correlation_pair_count = 0;
+  bool correlation_matrix_valid = false;
   bool structural_parameters_active = false;
   bool common_random_numbers = false;
   bool sector_packages_reoptimized = false;
