@@ -65,6 +65,15 @@ int main() {
   assert(manufacturing.us_tariff.exporter_absorption > 0.0);
   assert(manufacturing.us_tariff.importer_absorption > 0.0);
 
+  // The direct sector layer, macro ledger and first production-network shock
+  // share one bounded constant-elasticity quantity response. At 50% with
+  // elasticity .65 the loss is exactly 1 - 1.5^(-.65), not tariff*elasticity.
+  const double expected_loss = 1.0 - std::pow(1.5, -0.65);
+  assert(std::abs(manufacturing.us_tariff.quantity_loss - expected_loss) < 1e-12);
+  assert(std::abs(manufacturing.canada_quantity_loss - expected_loss) < 1e-12);
+  assert(std::abs(manufacturing.canada_direct_trade_drag
+      - (-100.0 * expected_loss * .94 * .72)) < 1e-10);
+
   // A manufacturing tariff propagates into downstream U.S. industries through
   // the selected U.S. network and into Canadian suppliers through Canada's matrix.
   assert(network.sectors[3].us_upstream_cost > 0.0);   // construction
@@ -76,6 +85,19 @@ int main() {
   assert(network.us_supply_chain_drag > 0.0);
   assert(network.us_input_cost_pressure > 0.0);
   assert(std::abs(network.sectors[3].canada_upstream_cost) < 1e-12);
+
+  // Network coefficients are executable structural inputs. Increasing the
+  // downstream transmission must increase propagated costs without changing
+  // the source tariff incidence/quantity response itself.
+  cad::TradeNetworkInput stronger = input;
+  stronger.tuning.downstream_cost_transmission = .94;
+  stronger.tuning.input_cost_incidence = .98;
+  stronger.tuning.supplier_demand_transmission = .42;
+  const auto stronger_network = cad::evaluate_trade_network(stronger);
+  assert(stronger_network.us_input_cost_pressure > network.us_input_cost_pressure);
+  assert(stronger_network.canada_supply_chain_drag > network.canada_supply_chain_drag);
+  assert(std::abs(stronger_network.sectors[4].us_tariff.quantity_loss
+      - manufacturing.us_tariff.quantity_loss) < 1e-15);
 
   // Directional sector overrides are independent. A U.S.-side manufacturing
   // pass-through override changes U.S. incidence without changing Canada's
@@ -92,6 +114,18 @@ int main() {
   assert(std::abs(directional_source.canada_tariff.buyer_pass_through - 0.5) < 1e-9);
   assert(directional_source.us_tariff.exporter_absorption
       < network.sectors[4].us_tariff.exporter_absorption);
+  assert(directional_source.us_tariff.quantity_loss
+      > network.sectors[4].us_tariff.quantity_loss);
+
+  // Even a 100% tariff with an extreme elasticity leaves a positive quantity
+  // ratio: no linear response or arbitrary quantity floor is reintroduced.
+  cad::TradeNetworkInput extreme = input;
+  extreme.us_headline_tariff = 100.0;
+  extreme.us_trade_elasticity[4] = 20.0;
+  const auto extreme_source = cad::evaluate_trade_source(extreme, 4, 100.0, 0.0);
+  assert(extreme_source.us_tariff.quantity_loss > .99);
+  assert(extreme_source.us_tariff.quantity_loss < 1.0);
+  assert(1.0 - extreme_source.us_tariff.quantity_loss > 0.0);
 
   cad::TradeNetworkInput retaliation = input;
   retaliation.us_headline_tariff = 0.0;
@@ -116,6 +150,8 @@ int main() {
   assert(methodology.find("40,364") != std::string::npos);
   assert(methodology.find("213") != std::string::npos);
   assert(methodology.find("BEA") != std::string::npos);
+  assert(methodology.find("constant-elasticity") != std::string::npos);
+  assert(methodology.find("structural-registry") != std::string::npos);
   if (!cad::us_trade_input_output_empirical()) {
     assert(methodology.find("USEEIO v2.5") != std::string::npos);
     assert(methodology.find("USEEIOv2.5-catbird-22") != std::string::npos);
