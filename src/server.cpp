@@ -23,7 +23,6 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -401,7 +400,6 @@ struct RuntimeContext {
   bool auth_required = false;
   std::string auth_token;
   std::size_t worker_count = 1;
-  std::atomic<std::size_t>* queued_jobs = nullptr;
 };
 
 Economy session_economy(const std::shared_ptr<SessionState>& session) {
@@ -464,6 +462,14 @@ void handle_api(const http::Request& request, socket_handle client,
       return;
     }
     economy.loss_weights = context.decision_loss.weights;
+
+    // Comparison-only requests have no session side effects and can run in
+    // parallel. Stateful evaluations are ordered per session so an earlier
+    // request cannot overwrite a later request merely because it finished last.
+    std::unique_lock<std::mutex> operation_lock;
+    if (!comparison_only)
+      operation_lock = std::unique_lock<std::mutex>(session->operation_mutex);
+
     auto result = context.engine.evaluate(economy);
     if (comparison_only) {
       respond(client, 200, "application/json",
