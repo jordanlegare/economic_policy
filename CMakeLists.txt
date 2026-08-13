@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Threads REQUIRED)
 
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -35,7 +36,7 @@ cad_enable_warnings(policy_engine)
 add_executable(cad-policy-studio
   src/main.cpp
   src/server.cpp)
-target_link_libraries(cad-policy-studio PRIVATE policy_engine)
+target_link_libraries(cad-policy-studio PRIVATE policy_engine Threads::Threads)
 cad_enable_warnings(cad-policy-studio)
 
 if(WIN32)
@@ -97,8 +98,6 @@ if(WIN32)
   if(MINGW)
     target_link_options(cad-policy-studio PRIVATE -static -static-libgcc -static-libstdc++)
   endif()
-else()
-  target_link_libraries(cad-policy-studio PRIVATE pthread)
 endif()
 
 enable_testing()
@@ -113,7 +112,7 @@ endfunction()
 
 function(cad_add_test target source test_name)
   add_executable(${target} ${source})
-  target_link_libraries(${target} PRIVATE policy_engine)
+  target_link_libraries(${target} PRIVATE policy_engine Threads::Threads)
   cad_enable_warnings(${target})
   cad_keep_test_assertions(${target})
   add_test(NAME ${test_name} COMMAND ${target})
