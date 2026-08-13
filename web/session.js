@@ -77,9 +77,12 @@
     } catch (_) {}
   }
 
+  let evaluateCaptureLocked = false;
   function captureEvaluateRequest(url, init) {
     if (url.pathname !== '/api/evaluate' || String(init.method || 'GET').toUpperCase() !== 'POST') return;
-    if (typeof init.body !== 'string') return;
+    if (typeof init.body !== 'string' || evaluateCaptureLocked) return;
+    evaluateCaptureLocked = true;
+    queueMicrotask(() => { evaluateCaptureLocked = false; });
     try {
       writeLastRunSettings(JSON.parse(init.body));
     } catch (_) {}
