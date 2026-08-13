@@ -25,6 +25,9 @@ struct TariffIncidence {
   double buyer_pass_through = 0.0;
   double importer_absorption = 0.0;
   double exporter_absorption = 0.0;
+  // Fractional bilateral quantity loss implied by the same directional
+  // constant-elasticity response used by macro trade and tariff ledgers.
+  double quantity_loss = 0.0;
 };
 
 // Production-network transmission parameters are explicit inputs so they can
