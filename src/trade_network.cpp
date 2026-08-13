@@ -82,6 +82,7 @@ TariffIncidence incidence(double headline, double coverage,
   out.buyer_pass_through = buyer;
   out.exporter_absorption = absorbed * exporter_share;
   out.importer_absorption = absorbed - out.exporter_absorption;
+  out.quantity_loss = 1.0 - quantity_ratio(elasticity, rate / 100.0);
   return out;
 }
 
@@ -201,10 +202,8 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
   out.canada_tariff = incidence(input.canada_headline_tariff, canada_coverage,
       input.negotiated_relief, canada_pass, canada_elasticity);
 
-  out.canada_quantity_loss = 1.0 - quantity_ratio(
-      us_elasticity, out.us_tariff.applied_tariff / 100.0);
-  out.us_quantity_loss = 1.0 - quantity_ratio(
-      canada_elasticity, out.canada_tariff.applied_tariff / 100.0);
+  out.canada_quantity_loss = out.us_tariff.quantity_loss;
+  out.us_quantity_loss = out.canada_tariff.quantity_loss;
   out.canada_direct_trade_drag = -100.0 * out.canada_quantity_loss
       * src.trade * (.72 - .28 * diversification);
   out.us_direct_trade_drag = -100.0 * out.us_quantity_loss * src.import * .46;
