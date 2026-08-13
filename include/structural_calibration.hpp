@@ -24,6 +24,10 @@ inline std::vector<std::string> required_structural_parameter_names() {
     "phillips_curve_slope", "fx_pass_through", "import_price_pass_through",
     "oil_inflation_sensitivity", "canada_trade_drag_scale",
     "us_retaliation_drag_scale", "tariff_revenue_elasticity_scale",
+    "network_supplier_demand_transmission", "network_input_cost_incidence",
+    "network_downstream_cost_transmission", "network_price_cost_pass_through",
+    "network_output_cost_base", "network_output_cost_cyclical",
+    "network_jobs_output_base", "network_jobs_output_exposure",
     "output_shock_sd", "inflation_shock_sd", "output_inflation_shock_correlation",
     "growth_shock_sd", "us_growth_shock_sd", "export_shock_sd", "us_export_shock_sd",
     "shock_tail_threshold", "shock_tail_scale", "stress_regime_shock_scale"
@@ -43,7 +47,11 @@ inline std::vector<std::string> structural_multiplier_parameter_names() {
     "productive_supply_multiplier", "global_growth_sensitivity",
     "phillips_curve_slope", "fx_pass_through", "import_price_pass_through",
     "oil_inflation_sensitivity", "canada_trade_drag_scale",
-    "us_retaliation_drag_scale", "tariff_revenue_elasticity_scale"
+    "us_retaliation_drag_scale", "tariff_revenue_elasticity_scale",
+    "network_supplier_demand_transmission", "network_input_cost_incidence",
+    "network_downstream_cost_transmission", "network_price_cost_pass_through",
+    "network_output_cost_base", "network_output_cost_cyclical",
+    "network_jobs_output_base", "network_jobs_output_exposure"
   };
 }
 
@@ -74,6 +82,36 @@ inline bool structural_parameter_entry_valid(
   return true;
 }
 
+inline bool structural_correlation_entry_valid(
+    const StructuralParameterCorrelation& correlation,
+    const StructuralParameterRegistry& registry) {
+  if (correlation.left.empty() || correlation.right.empty()
+      || correlation.left == correlation.right || correlation.kind.empty()
+      || correlation.source_id.empty() || correlation.vintage.empty()
+      || !std::isfinite(correlation.correlation)
+      || correlation.correlation < -1.0 || correlation.correlation > 1.0)
+    return false;
+  const auto* left = registry.find(correlation.left);
+  const auto* right = registry.find(correlation.right);
+  if (!left || !right || !left->sampled || !right->sampled) return false;
+  if (left->distribution == "fixed" || left->distribution == "derived"
+      || right->distribution == "fixed" || right->distribution == "derived")
+    return false;
+  return structural_parameter_entry_valid(*left)
+      && structural_parameter_entry_valid(*right);
+}
+
+inline bool structural_correlation_registry_valid(
+    const StructuralParameterRegistry& registry) {
+  std::set<std::pair<std::string, std::string>> seen;
+  for (const auto& correlation : registry.correlations) {
+    if (!structural_correlation_entry_valid(correlation, registry)) return false;
+    auto key = std::minmax(correlation.left, correlation.right);
+    if (!seen.emplace(key.first, key.second).second) return false;
+  }
+  return true;
+}
+
 inline bool structural_parameter_registry_complete(
     const StructuralParameterRegistry& registry) {
   if (!registry.loaded || registry.registry_id.empty() || registry.as_of.empty()) return false;
@@ -86,7 +124,7 @@ inline bool structural_parameter_registry_complete(
     const auto* entry = registry.find(name);
     if (!entry || !structural_parameter_entry_valid(*entry)) return false;
   }
-  return true;
+  return structural_correlation_registry_valid(registry);
 }
 
 inline int invalid_structural_parameter_count(
@@ -97,6 +135,13 @@ inline int invalid_structural_parameter_count(
     if (!structural_parameter_entry_valid(entry) || !seen.insert(entry.name).second)
       ++invalid;
   }
+  std::set<std::pair<std::string, std::string>> correlations;
+  for (const auto& correlation : registry.correlations) {
+    auto key = std::minmax(correlation.left, correlation.right);
+    if (!structural_correlation_entry_valid(correlation, registry)
+        || !correlations.emplace(key.first, key.second).second)
+      ++invalid;
+  }
   return invalid;
 }
 
@@ -105,6 +150,11 @@ inline int sampled_structural_parameter_count(
   int count = 0;
   for (const auto& entry : registry.entries) if (entry.sampled) ++count;
   return count;
+}
+
+inline int structural_correlation_pair_count(
+    const StructuralParameterRegistry& registry) {
+  return static_cast<int>(registry.correlations.size());
 }
 
 inline bool direct_empirical_structural_kind(const std::string& kind) {
@@ -209,6 +259,16 @@ inline StructuralParameterRegistry load_structural_parameter_registry(
       p.sampled = calibration_detail::yes(f[11]);
       p.notes = f[12];
       registry.entries.push_back(std::move(p));
+    } else if (f[0] == "CORR" && f.size() >= 8) {
+      StructuralParameterCorrelation c;
+      c.left = f[1];
+      c.right = f[2];
+      c.correlation = calibration_detail::number(f[3]);
+      c.kind = f[4];
+      c.source_id = f[5];
+      c.vintage = f[6];
+      c.notes = f[7];
+      registry.correlations.push_back(std::move(c));
     }
   }
   return registry;
@@ -239,6 +299,14 @@ inline StructuralParameters apply_structural_parameter_registry(
   value("canada_trade_drag_scale", p.canada_trade_drag_scale);
   value("us_retaliation_drag_scale", p.us_retaliation_drag_scale);
   value("tariff_revenue_elasticity_scale", p.tariff_revenue_elasticity_scale);
+  value("network_supplier_demand_transmission", p.network_supplier_demand_transmission);
+  value("network_input_cost_incidence", p.network_input_cost_incidence);
+  value("network_downstream_cost_transmission", p.network_downstream_cost_transmission);
+  value("network_price_cost_pass_through", p.network_price_cost_pass_through);
+  value("network_output_cost_base", p.network_output_cost_base);
+  value("network_output_cost_cyclical", p.network_output_cost_cyclical);
+  value("network_jobs_output_base", p.network_jobs_output_base);
+  value("network_jobs_output_exposure", p.network_jobs_output_exposure);
   value("output_shock_sd", p.output_shock_sd);
   value("inflation_shock_sd", p.inflation_shock_sd);
   value("output_inflation_shock_correlation", p.output_inflation_shock_correlation);
@@ -270,7 +338,13 @@ inline std::string structural_parameter_registry_to_json(
       << ",\"invalidParameterCount\":" << invalid_structural_parameter_count(registry)
       << ",\"sampledParameterCount\":"
       << sampled_structural_parameter_count(registry)
-      << ",\"calibrationCompleteness\":{\"parameterCount\":" << completeness.parameter_count
+      << ",\"correlationPairCount\":" << structural_correlation_pair_count(registry)
+      << ",\"correlationRegistryValid\":"
+      << (structural_correlation_registry_valid(registry) ? "true" : "false")
+      << ",\"dependenceMode\":\""
+      << (registry.correlations.empty() ? "independent-with-derived-constraints"
+                                       : "declared-pairwise-gaussian-copula")
+      << "\",\"calibrationCompleteness\":{\"parameterCount\":" << completeness.parameter_count
       << ",\"calibrationTargetCount\":" << completeness.calibration_target_count
       << ",\"directEmpiricalCount\":" << completeness.direct_empirical_count
       << ",\"provisionalCount\":" << completeness.provisional_count
@@ -300,6 +374,19 @@ inline std::string structural_parameter_registry_to_json(
         << ",\"sampled\":" << (p.sampled ? "true" : "false")
         << ",\"valid\":" << (structural_parameter_entry_valid(p) ? "true" : "false")
         << ",\"notes\":\"" << calibration_detail::esc(p.notes) << "\"}";
+  }
+  out << "],\"correlations\":[";
+  for (std::size_t i = 0; i < registry.correlations.size(); ++i) {
+    if (i) out << ',';
+    const auto& c = registry.correlations[i];
+    out << "{\"left\":\"" << calibration_detail::esc(c.left)
+        << "\",\"right\":\"" << calibration_detail::esc(c.right)
+        << "\",\"correlation\":" << c.correlation
+        << ",\"kind\":\"" << calibration_detail::esc(c.kind)
+        << "\",\"sourceId\":\"" << calibration_detail::esc(c.source_id)
+        << "\",\"vintage\":\"" << calibration_detail::esc(c.vintage)
+        << "\",\"valid\":" << (structural_correlation_entry_valid(c, registry) ? "true" : "false")
+        << ",\"notes\":\"" << calibration_detail::esc(c.notes) << "\"}";
   }
   out << "]}";
   return out.str();

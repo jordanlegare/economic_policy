@@ -60,6 +60,7 @@ TradeNetworkInput make_trade_network_input(const Economy& e, const Scenario& pol
   input.diversification = clamp(policy.diversification + e.trade_diversification, 0.0, .75);
   input.trade_elasticity = e.trade_elasticity;
   input.price_pass_through = e.tariff_price_pass_through;
+  input.tuning = e.trade_network_tuning;
   input.us_coverage = e.us_sector_coverage;
   input.canada_coverage = e.canada_sector_coverage;
   input.us_trade_elasticity = e.us_sector_trade_elasticity;
@@ -77,13 +78,14 @@ SectorImpact direct_sector_impact(const Economy& e, const Scenario& policy,
   const double deescalation = clamp(policy.negotiated_relief / 100.0, 0.0, 1.0);
   const double diversification = clamp(policy.diversification + e.trade_diversification, 0.0, 0.75);
   const double uc = clamp(us_coverage / 100.0, 0.0, 1.0);
-  const double us_tariff = us_incidence.applied_tariff / 100.0;
-  const double ca_tariff = canada_incidence.applied_tariff / 100.0;
+  const double canada_quantity_loss = clamp(us_incidence.quantity_loss, 0.0, 1.0);
+  const double us_quantity_loss = clamp(canada_incidence.quantity_loss, 0.0, 1.0);
   const double supply = policy.productive_share * policy.fiscal_impulse * (.16 + .12 * p.cyclical);
-  const double ca_shock = us_tariff * p.trade * (.72 - .28 * diversification)
+  const double ca_shock = canada_quantity_loss * p.trade * (.72 - .28 * diversification)
       + e.border_friction / 100.0 * p.trade * .18;
-  const double us_shock = ca_tariff * p.import * .46 + us_tariff * p.import * .12;
-  const double us_protection = us_tariff * p.trade * .24 * (1.0 - .5 * uc);
+  const double us_shock = us_quantity_loss * p.import * .46
+      + canada_quantity_loss * p.import * .12;
+  const double us_protection = canada_quantity_loss * p.trade * .24 * (1.0 - .5 * uc);
 
   SectorImpact impact;
   impact.code = p.code;
@@ -94,7 +96,7 @@ SectorImpact direct_sector_impact(const Economy& e, const Scenario& policy,
   impact.canada_jobs = impact.canada_output * (.30 + .42 * p.jobs);
   impact.us_jobs = impact.us_output * (.28 + .38 * p.jobs);
   impact.canada_prices = canada_incidence.buyer_pass_through * p.import
-      + us_incidence.applied_tariff * p.import * .05 - 100.0 * supply * .10;
+      + us_incidence.buyer_pass_through * p.import * .05 - 100.0 * supply * .10;
   impact.us_prices = us_incidence.buyer_pass_through * p.import
       + canada_incidence.buyer_pass_through * p.import * .10;
   impact.us_applied_tariff = us_incidence.applied_tariff;
@@ -154,8 +156,8 @@ SectorUtility sector_utility(const Economy& e, const Scenario& policy, std::size
 
   const auto& source_profile = sector_profiles[sector];
   const double cc = clamp(canada_coverage / 100.0, 0.0, 1.0);
-  const double ca_tariff = network.canada_tariff.applied_tariff / 100.0;
-  const double leverage = 100.0 * ca_tariff * source_profile.trade * .16 * (1.0 - .65 * cc);
+  const double leverage = 100.0 * network.canada_tariff.quantity_loss
+      * source_profile.trade * .16 * (1.0 - .65 * cc);
   out.canada += source_profile.trade * leverage;
   return out;
 }
@@ -694,6 +696,14 @@ Result PolicyEngine::evaluate(const Economy& economy) const {
 Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options) const {
   Economy e = economy;
   e.exhaustive_policy_search = options.exhaustive_policy_search;
+  e.trade_network_tuning.supplier_demand_transmission = parameters_.network_supplier_demand_transmission;
+  e.trade_network_tuning.input_cost_incidence = parameters_.network_input_cost_incidence;
+  e.trade_network_tuning.downstream_cost_transmission = parameters_.network_downstream_cost_transmission;
+  e.trade_network_tuning.price_cost_pass_through = parameters_.network_price_cost_pass_through;
+  e.trade_network_tuning.output_cost_base = parameters_.network_output_cost_base;
+  e.trade_network_tuning.output_cost_cyclical = parameters_.network_output_cost_cyclical;
+  e.trade_network_tuning.jobs_output_base = parameters_.network_jobs_output_base;
+  e.trade_network_tuning.jobs_output_exposure = parameters_.network_jobs_output_exposure;
   Result r;
   if (e.core_inflation > 3.2) r.regime = "Inflation pressure";
   else if (e.credit_spread > 2.25) r.regime = "Financial stress";
@@ -950,7 +960,7 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
         << " frontier schedules per strategy, then rechecks each selected strategy with "
         << kVerificationDraws << " common-random-number draws. ";
   }
-  recommendation << "The macro trade block and tariff ledger now share one sector-weighted bilateral trade state. Sector-specific elasticities feed a bounded constant-elasticity quantity response, so large tariff stress cases remain positive without an arbitrary trade floor; the same quantities drive macro trade drag, export outcomes, tariff receipts and the reported bilateral balance. Sector welfare also includes production-network supplier-demand and input-cost propagation through country-specific 20-sector objects. Canadian and U.S. export channels remain independent, and bilateral trade balance remains report-only rather than a welfare objective.";
+  recommendation << "The macro trade block, tariff ledger, direct sector welfare and production-network first-round shocks now consume the same sector-weighted constant-elasticity bilateral quantity response. Large tariff stress cases therefore remain positive without an arbitrary trade floor or a parallel linear sector equation. Production-network supplier-demand, input-cost, price, output and jobs propagation uses explicit structural-registry coefficients rather than hidden constants. Canadian and U.S. export channels remain independent, and bilateral trade balance remains report-only rather than a welfare objective.";
   r.recommendation.explanation = recommendation.str();
 
   for (auto& scenario : r.scenarios)

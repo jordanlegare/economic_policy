@@ -1,7 +1,8 @@
-# V2 structural parameter provenance and uncertainty envelope.
+# V3 structural parameter provenance and uncertainty envelope.
 # PARAM,name,baseline,unit,kind,source_id,vintage,lower_bound,upper_bound,distribution,relative_sigma,sampled,notes
-META,registry_id,v2-structural-quarterly-2026-08-12
-META,as_of,2026-08-12
+# CORR,left,right,correlation,kind,source_id,vintage,notes
+META,registry_id,v3-structural-network-2026-08-13
+META,as_of,2026-08-13
 PARAM,neutral_rate,2.75,percent,official_assessment,boc_neutral_rate_2026,2026-05,2.25,3.25,normal,0.08,true,"Direct Bank of Canada 2026 nominal-neutral-rate assessment. Baseline is the published range midpoint; bounds are the published assessment range, not a statistical confidence interval."
 PARAM,inflation_target,2.0,percent,mandate,bank_of_canada_target,2026-08-11,2.0,2.0,fixed,0,false,"Policy mandate; never sampled as a structural uncertainty parameter."
 PARAM,rate_inflation_response,0.75,coefficient,assumed,internal_model_design_v2,2026-08-11,0.50,1.50,normal,0.15,true,"Reaction-function inflation response; bounded sensitivity range."
@@ -21,9 +22,17 @@ PARAM,oil_inflation_sensitivity,0.018,coefficient,assumed,internal_model_design_
 PARAM,canada_trade_drag_scale,1.0,multiplier,assumed,internal_model_design_v2,2026-08-11,0.60,1.40,normal,0.15,true,"Scale on tariff/export drag in Canada."
 PARAM,us_retaliation_drag_scale,1.0,multiplier,assumed,internal_model_design_v2,2026-08-11,0.60,1.40,normal,0.15,true,"Scale on Canadian-retaliation drag in the U.S. channel."
 PARAM,tariff_revenue_elasticity_scale,1.0,multiplier,assumed,internal_model_design_v2,2026-08-11,0.80,1.20,normal,0.08,true,"Sensitivity of tariff-ledger trade response relative to the macro trade elasticity."
+PARAM,network_supplier_demand_transmission,0.30,coefficient,assumed,internal_model_design_v3,2026-08-13,0.15,0.45,normal,0.15,true,"Damping factor for each upstream supplier-demand propagation round. Explicit model-risk parameter; not an empirical Leontief multiplier."
+PARAM,network_input_cost_incidence,0.85,coefficient,assumed,internal_model_design_v3,2026-08-13,0.60,1.00,normal,0.10,true,"Share of source-sector tariff buyer incidence entering the production input-cost propagation frontier. Sensitivity assumption."
+PARAM,network_downstream_cost_transmission,0.85,coefficient,assumed,internal_model_design_v3,2026-08-13,0.60,0.95,normal,0.10,true,"Damping factor for each downstream input-cost propagation round. Sensitivity assumption."
+PARAM,network_price_cost_pass_through,0.70,coefficient,assumed,internal_model_design_v3,2026-08-13,0.45,0.95,normal,0.12,true,"Mapping from propagated marginal input-cost pressure to sector price pressure. Sensitivity assumption."
+PARAM,network_output_cost_base,0.12,coefficient,assumed,internal_model_design_v3,2026-08-13,0.06,0.24,lognormal,0.20,true,"Base output response to propagated input-cost pressure. Sensitivity assumption."
+PARAM,network_output_cost_cyclical,0.18,coefficient,assumed,internal_model_design_v3,2026-08-13,0.08,0.32,lognormal,0.20,true,"Cyclical-sector increment to the output response from propagated input-cost pressure. Sensitivity assumption."
+PARAM,network_jobs_output_base,0.20,coefficient,assumed,internal_model_design_v3,2026-08-13,0.10,0.35,normal,0.15,true,"Base jobs response per unit of network output response. Sensitivity assumption."
+PARAM,network_jobs_output_exposure,0.35,coefficient,assumed,internal_model_design_v3,2026-08-13,0.20,0.55,normal,0.15,true,"Sector jobs-exposure increment to the jobs response per unit of network output response. Sensitivity assumption."
 PARAM,output_shock_sd,0.16,percentage_points,calibrated,internal_model_design_v2,2026-08-11,0.08,0.32,lognormal,0.15,true,"Quarterly output-gap innovation scale; provisional until historical residual calibration."
 PARAM,inflation_shock_sd,0.11,percentage_points,calibrated,internal_model_design_v2,2026-08-11,0.055,0.22,lognormal,0.15,true,"Quarterly inflation innovation scale; provisional until historical residual calibration."
-PARAM,output_inflation_shock_correlation,-0.006249264169,correlation,calibrated,boc_sep_quarterly_residual_covariance,2001Q1-2019Q4,-0.006249264169,-0.006249264169,fixed,0,false,"Contemporaneous correlation of the frozen 75-quarter production-form output-gap and inflation residuals. Used as a dependence-shape anchor only: the underlying shock variances remain provisional, so this is not claimed as an identified structural shock covariance matrix."
+PARAM,output_inflation_shock_correlation,-0.006249264169,correlation,calibrated,boc_sep_quarterly_residual_covariance,2001Q1-2019Q4,-0.006249264169,-0.006249264169,fixed,0,false,"Contemporaneous correlation of the frozen 75-quarter production-form output-gap and inflation residuals. Used in the macro innovation process only; it is not reused as uncertainty correlation between estimated shock scales."
 PARAM,growth_shock_sd,0.25,percentage_points,calibrated,internal_model_design_v2,2026-08-11,0.125,0.50,lognormal,0.15,true,"Canadian growth innovation scale; provisional."
 PARAM,us_growth_shock_sd,0.18,percentage_points,calibrated,internal_model_design_v2,2026-08-11,0.09,0.36,lognormal,0.15,true,"U.S. growth innovation scale; provisional."
 PARAM,export_shock_sd,0.35,percentage_points,calibrated,internal_model_design_v2,2026-08-11,0.175,0.70,lognormal,0.15,true,"Canadian export innovation scale; provisional."
@@ -31,3 +40,5 @@ PARAM,us_export_shock_sd,0.30,percentage_points,calibrated,internal_model_design
 PARAM,shock_tail_threshold,2.0,standard_deviations,assumed,internal_model_design_v2,2026-08-12,1.50,2.75,normal,0.10,true,"Absolute standardized-innovation threshold above which the model applies the explicit heavy-tail scale. Sensitivity assumption, not an estimated tail quantile."
 PARAM,shock_tail_scale,1.75,multiplier,assumed,internal_model_design_v2,2026-08-12,1.25,2.50,lognormal,0.15,true,"Multiplier applied to innovations beyond the tail threshold. Explicit model-risk sensitivity parameter, not an empirical tail estimate."
 PARAM,stress_regime_shock_scale,1.35,multiplier,assumed,internal_model_design_v2,2026-08-12,1.00,2.00,lognormal,0.15,true,"Innovation multiplier when the submitted state is in financial/recession/trade stress. Explicit sensitivity envelope rather than an estimated regime-switching process."
+CORR,network_input_cost_incidence,network_downstream_cost_transmission,0.50,assumed,internal_model_design_v3,2026-08-13,"Moderate positive structural-uncertainty dependence between input-cost incidence and downstream transmission. Model-risk sensitivity assumption, not an empirical covariance estimate."
+CORR,network_output_cost_base,network_output_cost_cyclical,0.50,assumed,internal_model_design_v3,2026-08-13,"Moderate positive structural-uncertainty dependence between the base and cyclical output-cost mappings. Model-risk sensitivity assumption, not an empirical covariance estimate."

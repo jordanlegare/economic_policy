@@ -3,6 +3,39 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
+#include <vector>
+
+namespace {
+
+double correlation(const std::vector<double>& a, const std::vector<double>& b) {
+  assert(a.size() == b.size() && !a.empty());
+  double ma = 0.0, mb = 0.0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    ma += a[i];
+    mb += b[i];
+  }
+  ma /= static_cast<double>(a.size());
+  mb /= static_cast<double>(b.size());
+  double cov = 0.0, va = 0.0, vb = 0.0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    const double da = a[i] - ma;
+    const double db = b[i] - mb;
+    cov += da * db;
+    va += da * da;
+    vb += db * db;
+  }
+  return cov / std::sqrt(va * vb);
+}
+
+cad::StructuralParameterProvenance parameter(
+    std::string name, double baseline, double lo, double hi,
+    double sigma = 0.10) {
+  return {std::move(name), baseline, "coefficient", "assumed", "test", "2026-08-13",
+      lo, hi, "normal", sigma, true, "test structural parameter"};
+}
+
+}  // namespace
 
 int main() {
   cad::StructuralParameters baseline;
@@ -46,15 +79,15 @@ int main() {
   cad::StructuralParameterRegistry registry;
   registry.loaded = true;
   registry.registry_id = "test-bounds";
-  registry.as_of = "2026-08-11";
+  registry.as_of = "2026-08-13";
   registry.entries.push_back({
-      "neutral_rate", 2.5, "percent", "assumed", "test", "2026-08-11",
+      "neutral_rate", 2.5, "percent", "assumed", "test", "2026-08-13",
       2.49, 2.51, "normal", 2.0, true, "deliberately tight bound"});
   registry.entries.push_back({
-      "inflation_persistence", .68, "coefficient", "assumed", "test", "2026-08-11",
+      "inflation_persistence", .68, "coefficient", "assumed", "test", "2026-08-13",
       .60, .70, "normal", .5, true, "bounded persistence"});
   registry.entries.push_back({
-      "inflation_expectations_weight", .32, "coefficient", "derived", "test", "2026-08-11",
+      "inflation_expectations_weight", .32, "coefficient", "derived", "test", "2026-08-13",
       .30, .40, "derived", 0.0, false, "preserve anchor"});
   baseline.uncertainty_registry = registry;
 
@@ -65,6 +98,61 @@ int main() {
     assert(p.inflation_expectations_weight >= .30 && p.inflation_expectations_weight <= .40);
     assert(std::abs(p.inflation_persistence + p.inflation_expectations_weight - 1.0) < 1e-12);
   }
+
+  // Declared dependence is executable rather than documentation-only. With
+  // wide non-binding bounds the observed parameter correlation should converge
+  // close to the declared Gaussian-copula correlation.
+  cad::StructuralParameterRegistry joint;
+  joint.loaded = true;
+  joint.registry_id = "joint-test";
+  joint.as_of = "2026-08-13";
+  joint.entries.push_back(parameter(
+      "network_input_cost_incidence", .80, .20, 1.40, .08));
+  joint.entries.push_back(parameter(
+      "network_downstream_cost_transmission", .70, .20, 1.20, .08));
+  joint.correlations.push_back({
+      "network_input_cost_incidence", "network_downstream_cost_transmission",
+      .70, "assumed", "test", "2026-08-13", "test pair"});
+  assert(cad::structural_sampling_correlation_matrix_valid(joint));
+  assert(cad::structural_sampling_dependence_mode(joint)
+      == "declared-gaussian-copula-with-derived-constraints");
+  baseline.uncertainty_registry = joint;
+  const auto correlated = cad::draw_structural_parameters(baseline, 4000, 8080);
+  std::vector<double> incidence;
+  std::vector<double> transmission;
+  incidence.reserve(correlated.size());
+  transmission.reserve(correlated.size());
+  for (const auto& p : correlated) {
+    incidence.push_back(p.network_input_cost_incidence);
+    transmission.push_back(p.network_downstream_cost_transmission);
+  }
+  const double observed = correlation(incidence, transmission);
+  assert(observed > .62 && observed < .77);
+
+  // A pairwise-valid set can still be globally impossible. The sampler must
+  // reject a non-positive-semidefinite correlation matrix rather than silently
+  // falling back to independent draws.
+  cad::StructuralParameterRegistry invalid;
+  invalid.loaded = true;
+  invalid.registry_id = "invalid-joint";
+  invalid.as_of = "2026-08-13";
+  invalid.entries.push_back(parameter("network_supplier_demand_transmission", .30, .05, .80));
+  invalid.entries.push_back(parameter("network_input_cost_incidence", .80, .20, 1.40));
+  invalid.entries.push_back(parameter("network_downstream_cost_transmission", .70, .20, 1.20));
+  invalid.correlations.push_back({"network_supplier_demand_transmission",
+      "network_input_cost_incidence", .90, "assumed", "test", "2026-08-13", ""});
+  invalid.correlations.push_back({"network_supplier_demand_transmission",
+      "network_downstream_cost_transmission", .90, "assumed", "test", "2026-08-13", ""});
+  invalid.correlations.push_back({"network_input_cost_incidence",
+      "network_downstream_cost_transmission", -.90, "assumed", "test", "2026-08-13", ""});
+  assert(!cad::structural_sampling_correlation_matrix_valid(invalid));
+  bool threw = false;
+  try {
+    (void)cad::draw_structural_parameters(baseline, invalid, 2, 9);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  assert(threw);
 
   assert(cad::classify_robustness(.85) == "robust");
   assert(cad::classify_robustness(.65) == "moderately-robust");

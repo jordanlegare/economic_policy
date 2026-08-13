@@ -139,15 +139,22 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
       ? parameters_.uncertainty_registry.registry_id : "none";
   summary.sampled_parameter_count = sampled_structural_parameter_count(
       parameters_.uncertainty_registry);
+  summary.correlation_pair_count = static_cast<int>(
+      parameters_.uncertainty_registry.correlations.size());
+  summary.correlation_matrix_valid = structural_sampling_correlation_matrix_valid(
+      parameters_.uncertainty_registry);
+  summary.structural_sampling_dependence = structural_sampling_dependence_mode(
+      parameters_.uncertainty_registry);
   summary.parameter_bounds_active = summary.parameter_draws > 0
       && parameters_.uncertainty_registry.loaded
       && summary.sampled_parameter_count > 0;
   summary.parameter_provenance_complete = structural_parameter_registry_complete(
-      parameters_.uncertainty_registry);
+      parameters_.uncertainty_registry) && summary.correlation_matrix_valid;
   summary.methodology =
       "outer-structural-ensemble/production-policy-engine-rerun/"
       "full-policy-control-search/production-sector-pareto-search/"
-      "production-trade-network/common-random-numbers";
+      "production-trade-network/declared-structural-dependence/"
+      "common-random-numbers";
   summary.structural_parameters_active = summary.parameter_draws > 0;
   summary.common_random_numbers = summary.parameter_draws > 0;
   summary.sector_packages_reoptimized = summary.parameter_draws > 0;
@@ -243,9 +250,11 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
   const auto interval = wilson_interval(summary.recommendation_wins,
       static_cast<int>(ensemble.size()));
   std::ostringstream note;
-  note << " V2 full decision robustness delegates every structural calibration to the "
+  note << " V3 full decision robustness delegates every structural calibration to the "
        << "production PolicyEngine, so the empirical trade network, tariff incidence, macro "
        << "simulation, policy search and sector Pareto search cannot drift into a parallel model. "
+       << "Structural uncertainty uses " << summary.structural_sampling_dependence << " with "
+       << summary.correlation_pair_count << " declared correlation pair(s). "
        << summary.recommendation_wins << "/" << summary.parameter_draws
        << " structural calibrations retain the reference control decision ("
        << std::fixed << std::setprecision(1)
@@ -294,6 +303,10 @@ std::string robustness_to_json(const Result& result) {
     << "\",\"parameterRegistryId\":\"" << json_escape(r.parameter_registry_id)
     << "\",\"methodology\":\"" << json_escape(r.methodology)
     << "\",\"sampledParameterCount\":" << r.sampled_parameter_count
+    << ",\"structuralSamplingDependence\":\""
+    << json_escape(r.structural_sampling_dependence)
+    << "\",\"correlationPairCount\":" << r.correlation_pair_count
+    << ",\"correlationMatrixValid\":" << (r.correlation_matrix_valid ? "true" : "false")
     << ",\"structuralParametersActive\":"
     << (r.structural_parameters_active ? "true" : "false")
     << ",\"commonRandomNumbers\":" << (r.common_random_numbers ? "true" : "false")

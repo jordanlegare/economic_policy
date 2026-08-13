@@ -82,6 +82,7 @@ TariffIncidence incidence(double headline, double coverage,
   out.buyer_pass_through = buyer;
   out.exporter_absorption = absorbed * exporter_share;
   out.importer_absorption = absorbed - out.exporter_absorption;
+  out.quantity_loss = 1.0 - quantity_ratio(elasticity, rate / 100.0);
   return out;
 }
 
@@ -93,10 +94,11 @@ double maximum_row_share(const TradeInputOutputMatrix& matrix) {
 }
 
 std::array<double, kTradeSectorCount> propagate_supplier_demand(
-    const TradeInputOutputMatrix& matrix, std::size_t source, double direct_shock) {
-  constexpr double transmission = 0.30;
+    const TradeInputOutputMatrix& matrix, std::size_t source, double direct_shock,
+    double transmission) {
   constexpr int max_rounds = 48;
   constexpr double tolerance = 1e-10;
+  transmission = clamp(transmission, 0.0, 0.95);
   std::array<double, kTradeSectorCount> total{};
   std::array<double, kTradeSectorCount> frontier{};
   frontier[source] = direct_shock;
@@ -122,11 +124,12 @@ std::array<double, kTradeSectorCount> propagate_supplier_demand(
 }
 
 std::array<double, kTradeSectorCount> propagate_input_cost(
-    const TradeInputOutputMatrix& matrix, std::size_t source, double source_cost) {
-  constexpr double input_incidence = 0.85;
-  constexpr double downstream_transmission = 0.85;
+    const TradeInputOutputMatrix& matrix, std::size_t source, double source_cost,
+    double input_incidence, double downstream_transmission) {
   constexpr int max_rounds = 48;
   constexpr double tolerance = 1e-10;
+  input_incidence = clamp(input_incidence, 0.0, 1.0);
+  downstream_transmission = clamp(downstream_transmission, 0.0, 0.95);
   std::array<double, kTradeSectorCount> total{};
   std::array<double, kTradeSectorCount> frontier{};
   frontier[source] = source_cost * input_incidence;
@@ -199,35 +202,48 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
   out.canada_tariff = incidence(input.canada_headline_tariff, canada_coverage,
       input.negotiated_relief, canada_pass, canada_elasticity);
 
-  const double canada_quantity_loss = 1.0 - quantity_ratio(
-      us_elasticity, out.us_tariff.applied_tariff / 100.0);
-  const double us_quantity_loss = 1.0 - quantity_ratio(
-      canada_elasticity, out.canada_tariff.applied_tariff / 100.0);
-  const double canada_direct_drag = -100.0 * canada_quantity_loss
+  out.canada_quantity_loss = out.us_tariff.quantity_loss;
+  out.us_quantity_loss = out.canada_tariff.quantity_loss;
+  out.canada_direct_trade_drag = -100.0 * out.canada_quantity_loss
       * src.trade * (.72 - .28 * diversification);
-  const double us_direct_drag = -100.0 * us_quantity_loss * src.import * .46;
+  out.us_direct_trade_drag = -100.0 * out.us_quantity_loss * src.import * .46;
 
   const auto canada_supplier = propagate_supplier_demand(
-      kCanadaMatrix, source, canada_direct_drag);
+      kCanadaMatrix, source, out.canada_direct_trade_drag,
+      input.tuning.supplier_demand_transmission);
   const auto us_supplier = propagate_supplier_demand(
-      kUsMatrix, source, us_direct_drag);
+      kUsMatrix, source, out.us_direct_trade_drag,
+      input.tuning.supplier_demand_transmission);
   const auto us_costs = propagate_input_cost(
-      kUsMatrix, source, out.us_tariff.buyer_pass_through);
+      kUsMatrix, source, out.us_tariff.buyer_pass_through,
+      input.tuning.input_cost_incidence,
+      input.tuning.downstream_cost_transmission);
   const auto canada_costs = propagate_input_cost(
-      kCanadaMatrix, source, out.canada_tariff.buyer_pass_through);
+      kCanadaMatrix, source, out.canada_tariff.buyer_pass_through,
+      input.tuning.input_cost_incidence,
+      input.tuning.downstream_cost_transmission);
 
+  const double price_pass = clamp(input.tuning.price_cost_pass_through, 0.0, 1.5);
+  const double output_base = clamp(input.tuning.output_cost_base, 0.0, 1.0);
+  const double output_cyclical = clamp(input.tuning.output_cost_cyclical, 0.0, 1.0);
+  const double jobs_base = clamp(input.tuning.jobs_output_base, 0.0, 1.0);
+  const double jobs_exposure = clamp(input.tuning.jobs_output_exposure, 0.0, 1.5);
   for (std::size_t sector = 0; sector < kTradeSectorCount; ++sector) {
     const auto& dst = kProfiles[sector];
     out.canada_output[sector] += canada_supplier[sector];
     out.us_output[sector] += us_supplier[sector];
     out.us_upstream_cost[sector] += us_costs[sector];
     out.canada_upstream_cost[sector] += canada_costs[sector];
-    out.us_prices[sector] += .70 * us_costs[sector];
-    out.canada_prices[sector] += .70 * canada_costs[sector];
-    out.us_output[sector] -= us_costs[sector] * (.12 + .18 * dst.cyclical);
-    out.canada_output[sector] -= canada_costs[sector] * (.12 + .18 * dst.cyclical);
-    out.canada_jobs[sector] = out.canada_output[sector] * (.20 + .35 * dst.jobs);
-    out.us_jobs[sector] = out.us_output[sector] * (.20 + .35 * dst.jobs);
+    out.us_prices[sector] += price_pass * us_costs[sector];
+    out.canada_prices[sector] += price_pass * canada_costs[sector];
+    out.us_output[sector] -= us_costs[sector]
+        * (output_base + output_cyclical * dst.cyclical);
+    out.canada_output[sector] -= canada_costs[sector]
+        * (output_base + output_cyclical * dst.cyclical);
+    out.canada_jobs[sector] = out.canada_output[sector]
+        * (jobs_base + jobs_exposure * dst.jobs);
+    out.us_jobs[sector] = out.us_output[sector]
+        * (jobs_base + jobs_exposure * dst.jobs);
   }
   return out;
 }
@@ -237,8 +253,13 @@ TradeNetworkResult evaluate_trade_network(const TradeNetworkInput& input) {
   for (std::size_t source = 0; source < kTradeSectorCount; ++source) {
     const auto contribution = evaluate_trade_source(
         input, source, input.us_coverage[source], input.canada_coverage[source]);
-    result.sectors[source].us_tariff = contribution.us_tariff;
-    result.sectors[source].canada_tariff = contribution.canada_tariff;
+    auto& source_result = result.sectors[source];
+    source_result.us_tariff = contribution.us_tariff;
+    source_result.canada_tariff = contribution.canada_tariff;
+    source_result.canada_quantity_loss = contribution.canada_quantity_loss;
+    source_result.us_quantity_loss = contribution.us_quantity_loss;
+    source_result.canada_direct_trade_drag = contribution.canada_direct_trade_drag;
+    source_result.us_direct_trade_drag = contribution.us_direct_trade_drag;
     for (std::size_t sector = 0; sector < kTradeSectorCount; ++sector) {
       auto& dst = result.sectors[sector];
       dst.canada_indirect_output += contribution.canada_output[sector];
@@ -281,9 +302,9 @@ double maximum_us_trade_input_share() {
 
 std::string trade_network_methodology() {
 #if CAD_HAS_CERTIFIED_BEA_US_IO
-  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network uses the separately generated and certified BEA Input-Output domestic direct-requirements artifact. Tariff quantity responses are bounded constant-elasticity responses. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations rather than a one-hop matrix multiplication. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network uses the separately generated and certified BEA Input-Output domestic direct-requirements artifact. Tariff quantity responses are bounded constant-elasticity responses shared with direct sector impacts. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations whose transmission coefficients are explicit structural-registry inputs rather than hidden constants. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
 #else
-  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. Pending a current-vintage certified BEA artifact, the U.S. network uses a distinct provisional U.S.-specific structural proxy from EPA USEEIO v2.5 model USEEIOv2.5-catbird-22. The selected A_d matrix contains domestic direct requirements, and EPA documents that the detailed v2.5 model uses underlying U.S. input-output data for 2017. Four accounting/adjustment commodities are excluded, leaving 398 of 402 commodities mapped into the simulator's 20 sectors using commodity-output weights. A generated BEA header activates only with a separately committed certification marker, preventing an unreviewed local artifact from silently changing production. This proxy must not be described as current-vintage empirical U.S. IO calibration. Tariff quantity responses are bounded constant-elasticity responses. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations rather than a one-hop matrix multiplication. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. Pending a current-vintage certified BEA artifact, the U.S. network uses a distinct provisional U.S.-specific structural proxy from EPA USEEIO v2.5 model USEEIOv2.5-catbird-22. The selected A_d matrix contains domestic direct requirements, and EPA documents that the detailed v2.5 model uses underlying U.S. input-output data for 2017. Four accounting/adjustment commodities are excluded, leaving 398 of 402 commodities mapped into the simulator's 20 sectors using commodity-output weights. A generated BEA header activates only with a separately committed certification marker, preventing an unreviewed local artifact from silently changing production. This proxy must not be described as current-vintage empirical U.S. IO calibration. Tariff quantity responses are bounded constant-elasticity responses shared with direct sector impacts. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations whose transmission coefficients are explicit structural-registry inputs rather than hidden constants. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
 #endif
 }
 
