@@ -28,7 +28,13 @@ cmake --build build --parallel
 ./build/cad-policy-studio 8080
 ```
 
-Open <http://localhost:8080>. The standalone server serves the dashboard and its JSON APIs without a runtime web framework.
+Open <http://localhost:8080>. The standalone server serves the dashboard and its JSON APIs without a runtime web framework. The default listener is loopback-only and uses a bounded worker pool, so expensive model calls from separate browser sessions can execute concurrently instead of serializing the entire server.
+
+Each browser tab creates a separate `X-CAD-Session-Id`; latest evaluation state, delegation controls and diplomat-room state are isolated by that identifier. Stateful evaluations within one session are serialized while separate sessions remain concurrent.
+
+Network binding is explicitly fail-closed. `--bind-all` refuses to start without an access token of at least 16 characters supplied through `CAD_POLICY_STUDIO_TOKEN` or `--auth-token`; network-bound `/api/*` calls then require `Authorization: Bearer <token>`. Prefer the environment-variable form on shared systems, and use TLS termination/tunnelling if traffic leaves a trusted encrypted boundary.
+
+See [`docs/SERVER_OPERATIONS.md`](docs/SERVER_OPERATIONS.md) for worker, session, HTTP, authentication and live-cache contracts.
 
 ## Test
 
@@ -36,7 +42,7 @@ Open <http://localhost:8080>. The standalone server serves the dashboard and its
 ctest --test-dir build --output-on-failure
 ```
 
-The repository also carries JavaScript, Python, calibration-integrity, sanitizer and Windows standalone checks in CI.
+The repository also carries JavaScript, Python, calibration-integrity, sanitizer and Windows standalone checks in CI. Operational tests launch the real server and verify session isolation, strict HTTP handling, authenticated network binding and non-blocking baseline responses.
 
 ## Model architecture
 
@@ -51,6 +57,7 @@ The repository also carries JavaScript, Python, calibration-integrity, sanitizer
 - **Whole-economy sector view:** 20 sectors expose output, jobs, prices, applied tariffs, buyer pass-through, exporter/importer absorption and propagated input-cost pressure.
 - **Risk layer:** stochastic recession, inflation-tail, debt and stress-regime diagnostics are reported separately from empirical-confidence claims.
 - **Decision layer:** Bank of Canada, Canadian fiscal/household and U.S. loss components are combined through disclosed weights, bilateral feasibility checks, fairness protection and tail-risk penalties.
+- **Operational layer:** strict bounded HTTP parsing, per-session mutable state, bounded worker concurrency, authenticated network binding and cached external-market observations are kept outside the model equations.
 
 Legacy request-state members that do not yet have production equations remain internal compatibility placeholders and are not exposed as live policy controls.
 
@@ -95,7 +102,9 @@ See [`docs/US_IO_NETWORK.md`](docs/US_IO_NETWORK.md).
 
 ## Current-state baseline
 
-`GET /api/baseline` can refresh the supported live-capable Bank of Canada market observations and reports field-level provenance. A partially refreshed baseline is explicitly labelled `live-partial`; the rest of the macro state remains calibrated/default input unless an authoritative ingestion path supplies it.
+`GET /api/baseline` returns from an in-memory cache and therefore does not wait on Bank of Canada network requests. A background worker refreshes the supported live-capable policy-rate, USD/CAD and WTI observations concurrently at a finite interval. The cache is immediately initialized with the calibrated baseline, so startup remains usable even when live fetches are slow or unavailable.
+
+A partially refreshed baseline is explicitly labelled `live-partial`; the rest of the macro state remains calibrated/default input unless an authoritative ingestion path supplies it. The response also identifies whether a refresh is in progress.
 
 The visible 50% startup trade shock is applied only to the first scenario evaluation. The underlying calibration endpoint remains the date-gated economic/legal snapshot and is restored immediately afterward.
 
@@ -107,12 +116,16 @@ V2 keeps structural uncertainty, historical diagnostics and normative preference
 - `GET /api/v2/backtests` — no-look-ahead macro-policy historical diagnostics.
 - `GET /api/v2/evidence-status` — compact runtime/evidence readiness, including state-measurement, decision-loss and country-I/O status.
 - `GET /api/v2/state-measurements` — the production state-measurement contract.
-- `POST /api/v2/robustness` — full nested structural-decision robustness; `parameterDraws` is clamped to 1–24 and every draw reruns the production `PolicyEngine`.
+- `POST /api/v2/robustness` — interactive full nested structural-decision robustness; `parameterDraws` must be 1–24 (default 6), and every draw reruns the production `PolicyEngine`.
+- `POST /api/v2/robustness-batch` — explicit research batch mode; `parameterDraws` must be 25–128 (default 48), with the same full production re-optimization per draw.
 - `POST /api/v2/welfare` — delegation-preference and internal-component sensitivity with the production optimizer rerun for every profile.
+- `GET /api/health` — compact operational state for worker/session/cache/auth diagnostics.
 
-The interactive structural screen uses 6 draws for responsiveness; the repository reference experiment supports 24.
+Structural robustness reports Wilson 95% intervals and Monte Carlo standard error for recommendation-retention rates, plus a flag indicating whether the discrete robustness classification is stable at 95% relative to its declared thresholds. These intervals measure **simulation sampling precision**, not economic parameter uncertainty or empirical identification.
 
-See [`docs/MODEL_ROBUSTNESS_V2.md`](docs/MODEL_ROBUSTNESS_V2.md), [`docs/HISTORICAL_BACKTESTING.md`](docs/HISTORICAL_BACKTESTING.md), and [`docs/WELFARE_SENSITIVITY.md`](docs/WELFARE_SENSITIVITY.md).
+The interactive structural screen uses 6 draws for responsiveness; larger research runs should use the batch endpoint rather than silently raising the interactive cap.
+
+See [`docs/MODEL_ROBUSTNESS_V2.md`](docs/MODEL_ROBUSTNESS_V2.md), [`docs/HISTORICAL_BACKTESTING.md`](docs/HISTORICAL_BACKTESTING.md), [`docs/WELFARE_SENSITIVITY.md`](docs/WELFARE_SENSITIVITY.md), and [`docs/SERVER_OPERATIONS.md`](docs/SERVER_OPERATIONS.md).
 
 ## Repository governance
 
