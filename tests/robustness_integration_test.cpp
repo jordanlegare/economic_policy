@@ -19,7 +19,7 @@ int main() {
   assert(skipped.recommendation.robustness.policy_control_candidates_per_draw == 0);
 
   // With zero structural uncertainty, the full V2 decision search must recover
-  // both the production 288-control winner and the production nested sector
+  // both the production control winner and the production nested sector
   // solution. This guards against drift in either optimization layer.
   cad::StructuralParameters exact_parameters;
   exact_parameters.uncertainty_scale = 0.0;
@@ -36,8 +36,9 @@ int main() {
   assert(exact_summary.common_random_numbers);
   assert(exact_summary.sector_packages_reoptimized);
   assert(exact_summary.policy_controls_reoptimized);
-  assert(exact_summary.policy_control_candidates_per_draw == 288);
-  assert(exact_summary.policy_control_candidates_examined == 288u);
+  assert(exact_summary.policy_control_candidates_per_draw == ordinary.candidates_examined);
+  assert(exact_summary.policy_control_candidates_examined
+      == static_cast<std::uint64_t>(ordinary.candidates_examined));
   assert(exact_summary.policy_control_changes == 0u);
   assert(std::abs(exact_summary.reference_policy_control_retention_rate - 1.0) < 1e-15);
   assert(exact_summary.sector_frontiers_built
@@ -47,9 +48,9 @@ int main() {
   assert(exact_summary.nested_sector_finalists_resimulated > 0);
   assert(exact_summary.sector_package_changes == 0);
   assert(std::abs(exact_summary.reference_package_retention_rate - 1.0) < 1e-15);
-  assert(exact_summary.methodology.find("full-288-policy-control-search")
+  assert(exact_summary.methodology.find("full-policy-control-search")
       != std::string::npos);
-  assert(exact.recommendation.explanation.find("V2 full decision robustness")
+  assert(exact.recommendation.explanation.find("Wilson 95% interval")
       != std::string::npos);
 
   // Structural parameters must move the full decision experiment, not just the
@@ -64,10 +65,11 @@ int main() {
   assert(std::abs(shifted.recommendation.robustness.score_mean
       - exact_summary.score_mean) > 1e-6);
   assert(shifted.recommendation.robustness.policy_controls_reoptimized);
-  assert(shifted.recommendation.robustness.policy_control_candidates_examined == 288u);
+  assert(shifted.recommendation.robustness.policy_control_candidates_examined
+      == static_cast<std::uint64_t>(ordinary.candidates_examined));
 
   // The complete two-level decision experiment remains deterministic for a
-  // fixed engine seed: structural draws, 288-control search, sector choices,
+  // fixed engine seed: structural draws, policy search, sector choices,
   // verification paths and audit counts all repeat exactly.
   const auto robust_a = engine.evaluate_robust(economy, 1);
   const auto robust_b = engine.evaluate_robust(economy, 1);
@@ -82,7 +84,8 @@ int main() {
   assert(a.classification != "not-evaluated");
   assert(a.sector_packages_reoptimized);
   assert(a.policy_controls_reoptimized);
-  assert(a.policy_control_candidates_examined == 288u);
+  assert(a.policy_control_candidates_examined
+      == static_cast<std::uint64_t>(ordinary.candidates_examined));
   assert(a.nested_sector_optimizations == ordinary.scenarios.size());
   assert(a.recommendation_wins == b.recommendation_wins);
   assert(a.strategy_family_wins == b.strategy_family_wins);
@@ -110,9 +113,15 @@ int main() {
   assert(robustness_json.find("\"policyControlCandidatesPerDraw\":288") != std::string::npos);
   assert(robustness_json.find("\"policyControlCandidatesExamined\":288") != std::string::npos);
   assert(robustness_json.find("\"strategyFamilyWinRate\":") != std::string::npos);
-  assert(robustness_json.find("\"referencePolicyControlRetentionRate\":") != std::string::npos);
+  assert(robustness_json.find("\"recommendationWinRateCi95\":[") != std::string::npos);
+  assert(robustness_json.find("\"strategyFamilyWinRateCi95\":[") != std::string::npos);
+  assert(robustness_json.find("\"recommendationWinRateMonteCarloSe\":") != std::string::npos);
+  assert(robustness_json.find("\"classificationStableAt95Pct\":") != std::string::npos);
+  assert(robustness_json.find("\"monteCarloIntervalMethod\":\"wilson-score-95\"") != std::string::npos);
+  assert(robustness_json.find("\"batchMode\":false") != std::string::npos);
+  assert(robustness_json.find("\"referencePolicyControlRetentionRateCi95\":[") != std::string::npos);
+  assert(robustness_json.find("\"referencePackageRetentionRateCi95\":[") != std::string::npos);
   assert(robustness_json.find("\"nestedSectorOptimizations\":") != std::string::npos);
-  assert(robustness_json.find("\"referencePackageRetentionRate\":") != std::string::npos);
   assert(robustness_json.find("\"calibrationId\":\"baseline-v1\"") != std::string::npos);
 
   std::cout << "V2 full decision robustness integration tests passed\n";

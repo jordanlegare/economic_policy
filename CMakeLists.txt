@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Threads REQUIRED)
 
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -32,8 +33,10 @@ add_library(policy_engine
 target_include_directories(policy_engine PUBLIC include)
 cad_enable_warnings(policy_engine)
 
-add_executable(cad-policy-studio src/main.cpp)
-target_link_libraries(cad-policy-studio PRIVATE policy_engine)
+add_executable(cad-policy-studio
+  src/main.cpp
+  src/server.cpp)
+target_link_libraries(cad-policy-studio PRIVATE policy_engine Threads::Threads)
 cad_enable_warnings(cad-policy-studio)
 
 if(WIN32)
@@ -42,6 +45,7 @@ if(WIN32)
     web/app.css
     web/app.js
     web/evaluation-controller.js
+    web/session.js
     web/trade-incidence.js
     web/diplomat.css
     web/diplomat.js
@@ -94,8 +98,6 @@ if(WIN32)
   if(MINGW)
     target_link_options(cad-policy-studio PRIVATE -static -static-libgcc -static-libstdc++)
   endif()
-else()
-  target_link_libraries(cad-policy-studio PRIVATE pthread)
 endif()
 
 enable_testing()
@@ -110,7 +112,7 @@ endfunction()
 
 function(cad_add_test target source test_name)
   add_executable(${target} ${source})
-  target_link_libraries(${target} PRIVATE policy_engine)
+  target_link_libraries(${target} PRIVATE policy_engine Threads::Threads)
   cad_enable_warnings(${target})
   cad_keep_test_assertions(${target})
   add_test(NAME ${test_name} COMMAND ${target})
@@ -130,6 +132,9 @@ cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.
 cad_add_test(trade_network_tests tests/trade_network_test.cpp trade_network)
 cad_add_test(bilateral_trade_tests tests/bilateral_trade_test.cpp bilateral_trade_state)
 cad_add_test(request_json_tests tests/request_json_test.cpp request_json_contract)
+cad_add_test(http_request_tests tests/http_request_test.cpp http_request_contract)
+cad_add_test(server_session_tests tests/server_session_test.cpp server_session_contract)
+cad_add_test(thread_pool_tests tests/thread_pool_test.cpp thread_pool_concurrency)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
 set_tests_properties(trade_episode_validation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(final_realism_tests tests/final_realism_test.cpp final_realism)

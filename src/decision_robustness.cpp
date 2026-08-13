@@ -9,6 +9,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cad {
@@ -89,6 +90,32 @@ std::string json_escape(const std::string& value) {
   return out;
 }
 
+std::pair<double, double> wilson_interval(int successes, int trials) {
+  if (trials <= 0) return {0.0, 1.0};
+  constexpr double z = 1.959963984540054;
+  const double n = static_cast<double>(trials);
+  const double p = std::clamp(static_cast<double>(successes) / n, 0.0, 1.0);
+  const double z2 = z * z;
+  const double denominator = 1.0 + z2 / n;
+  const double center = (p + z2 / (2.0 * n)) / denominator;
+  const double half = z * std::sqrt((p * (1.0 - p) + z2 / (4.0 * n)) / n)
+      / denominator;
+  return {std::max(0.0, center - half), std::min(1.0, center + half)};
+}
+
+bool classification_stable(const std::pair<double, double>& interval) {
+  for (double threshold : {0.40, 0.60, 0.80}) {
+    if (interval.first < threshold && interval.second >= threshold) return false;
+  }
+  return true;
+}
+
+double binomial_standard_error(double rate, int trials) {
+  if (trials <= 0) return 0.0;
+  return std::sqrt(std::max(0.0, rate * (1.0 - rate))
+      / static_cast<double>(trials));
+}
+
 }  // namespace
 
 Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws) const {
@@ -119,13 +146,13 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
       parameters_.uncertainty_registry);
   summary.methodology =
       "outer-structural-ensemble/production-policy-engine-rerun/"
-      "full-288-policy-control-search/production-sector-pareto-search/"
+      "full-policy-control-search/production-sector-pareto-search/"
       "production-trade-network/common-random-numbers";
   summary.structural_parameters_active = summary.parameter_draws > 0;
   summary.common_random_numbers = summary.parameter_draws > 0;
   summary.sector_packages_reoptimized = summary.parameter_draws > 0;
   summary.policy_controls_reoptimized = summary.parameter_draws > 0;
-  summary.policy_control_candidates_per_draw = 288;
+  summary.policy_control_candidates_per_draw = std::max(0, baseline.candidates_examined);
 
   if (summary.parameter_draws == 0 || baseline.scenarios.empty()) {
     summary.classification = "not-evaluated";
@@ -153,12 +180,6 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
   int reference_controls_retained = 0;
 
   for (const auto& parameters : ensemble) {
-    // This is the critical parity boundary. The inner evaluation inherits the
-    // same search mode as the submitted economy. In ordinary V2 use that means
-    // the 288 generated controls are searched first and the selected generated
-    // policy plus expert strategies receive the production sector optimizer.
-    // If exhaustive startup mode is explicitly requested, the exact exhaustive
-    // production search is rerun as well rather than approximated here.
     PolicyEngine draw_engine(seed_, parameters, parameters_.uncertainty_registry);
     Result draw = draw_engine.evaluate(economy, options);
     const Scenario* draw_selected = selected_scenario(draw);
@@ -176,9 +197,6 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
     const int optimized = sector_optimized_scenario_count(draw);
     summary.sector_frontiers_built += optimized;
     summary.nested_sector_optimizations += static_cast<std::uint64_t>(optimized);
-    // Production currently exposes detailed frontier counts for the selected
-    // recommendation. These counters therefore accumulate the exact exposed
-    // production counts rather than fabricating totals for hidden strategies.
     summary.nested_sector_candidates_examined += static_cast<std::uint64_t>(
         std::max(0, draw.recommendation.sector_candidates_examined));
     summary.nested_sector_finalists_resimulated += static_cast<std::uint64_t>(
@@ -222,15 +240,18 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
   }
   summary.classification = classify_robustness(summary.recommendation_win_rate);
 
+  const auto interval = wilson_interval(summary.recommendation_wins,
+      static_cast<int>(ensemble.size()));
   std::ostringstream note;
-  note << " V2 full decision robustness now delegates every structural calibration to the "
+  note << " V2 full decision robustness delegates every structural calibration to the "
        << "production PolicyEngine, so the empirical trade network, tariff incidence, macro "
        << "simulation, policy search and sector Pareto search cannot drift into a parallel model. "
        << summary.recommendation_wins << "/" << summary.parameter_draws
        << " structural calibrations retain the reference control decision ("
        << std::fixed << std::setprecision(1)
        << 100.0 * summary.recommendation_win_rate << "%, " << summary.classification
-       << "). The broader strategy family wins in "
+       << "; Wilson 95% interval " << 100.0 * interval.first << "–"
+       << 100.0 * interval.second << "%). The broader strategy family wins in "
        << 100.0 * summary.strategy_family_win_rate
        << "% of calibrations; the reference generated control package is retained in "
        << 100.0 * summary.reference_policy_control_retention_rate << "%.";
@@ -240,18 +261,35 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
 
 std::string robustness_to_json(const Result& result) {
   const auto& r = result.recommendation.robustness;
+  const auto recommendation_ci = wilson_interval(r.recommendation_wins, r.parameter_draws);
+  const auto family_ci = wilson_interval(r.strategy_family_wins, r.parameter_draws);
+  const int control_successes = static_cast<int>(std::llround(
+      r.reference_policy_control_retention_rate * std::max(0, r.parameter_draws)));
+  const int package_successes = static_cast<int>(std::llround(
+      r.reference_package_retention_rate * std::max(0, r.parameter_draws)));
+  const auto control_ci = wilson_interval(control_successes, r.parameter_draws);
+  const auto package_ci = wilson_interval(package_successes, r.parameter_draws);
+  const bool stable = r.parameter_draws > 0 && classification_stable(recommendation_ci);
+
   std::ostringstream o;
   o << std::fixed << std::setprecision(6)
     << "{\"parameterDraws\":" << r.parameter_draws
+    << ",\"batchMode\":" << (r.parameter_draws > 24 ? "true" : "false")
     << ",\"recommendationWins\":" << r.recommendation_wins
     << ",\"recommendationWinRate\":" << r.recommendation_win_rate
+    << ",\"recommendationWinRateCi95\":[" << recommendation_ci.first << ',' << recommendation_ci.second << ']'
+    << ",\"recommendationWinRateMonteCarloSe\":"
+    << binomial_standard_error(r.recommendation_win_rate, r.parameter_draws)
     << ",\"strategyFamilyWins\":" << r.strategy_family_wins
     << ",\"strategyFamilyWinRate\":" << r.strategy_family_win_rate
+    << ",\"strategyFamilyWinRateCi95\":[" << family_ci.first << ',' << family_ci.second << ']'
     << ",\"scoreMean\":" << r.score_mean
     << ",\"scoreP10\":" << r.score_p10
     << ",\"scoreP90\":" << r.score_p90
     << ",\"classification\":\"" << json_escape(r.classification)
-    << "\",\"calibrationId\":\"" << json_escape(r.calibration_id)
+    << "\",\"classificationStableAt95Pct\":" << (stable ? "true" : "false")
+    << ",\"monteCarloIntervalMethod\":\"wilson-score-95\""
+    << ",\"calibrationId\":\"" << json_escape(r.calibration_id)
     << "\",\"calibrationVintage\":\"" << json_escape(r.calibration_vintage)
     << "\",\"parameterRegistryId\":\"" << json_escape(r.parameter_registry_id)
     << "\",\"methodology\":\"" << json_escape(r.methodology)
@@ -271,13 +309,17 @@ std::string robustness_to_json(const Result& result) {
     << ",\"policyControlChanges\":" << r.policy_control_changes
     << ",\"referencePolicyControlRetentionRate\":"
     << r.reference_policy_control_retention_rate
+    << ",\"referencePolicyControlRetentionRateCi95\":["
+    << control_ci.first << ',' << control_ci.second << ']'
     << ",\"sectorFrontiersBuilt\":" << r.sector_frontiers_built
     << ",\"nestedSectorOptimizations\":" << r.nested_sector_optimizations
     << ",\"nestedSectorCandidatesExamined\":" << r.nested_sector_candidates_examined
     << ",\"nestedSectorFinalistsResimulated\":" << r.nested_sector_finalists_resimulated
     << ",\"sectorPackageChanges\":" << r.sector_package_changes
     << ",\"referencePackageRetentionRate\":"
-    << r.reference_package_retention_rate << "}";
+    << r.reference_package_retention_rate
+    << ",\"referencePackageRetentionRateCi95\":["
+    << package_ci.first << ',' << package_ci.second << "]}";
   return o.str();
 }
 
