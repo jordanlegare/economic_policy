@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
@@ -28,7 +29,17 @@ class ThreadPool {
             job = std::move(jobs_.front());
             jobs_.pop();
           }
-          job();
+
+          active_jobs_.fetch_add(1, std::memory_order_relaxed);
+          try {
+            job();
+          } catch (...) {
+            // A request/model exception is an individual job failure, not a
+            // process-fatal condition. The request boundary may log/report the
+            // error separately; the worker must remain available for later work.
+            failed_jobs_.fetch_add(1, std::memory_order_relaxed);
+          }
+          active_jobs_.fetch_sub(1, std::memory_order_relaxed);
         }
       });
     }
@@ -63,12 +74,22 @@ class ThreadPool {
     return jobs_.size();
   }
 
+  std::size_t active() const {
+    return active_jobs_.load(std::memory_order_relaxed);
+  }
+
+  std::size_t failed() const {
+    return failed_jobs_.load(std::memory_order_relaxed);
+  }
+
  private:
   std::size_t max_queue_ = 64;
   mutable std::mutex mutex_;
   std::condition_variable ready_;
   std::queue<std::function<void()>> jobs_;
   std::vector<std::thread> workers_;
+  std::atomic<std::size_t> active_jobs_{0};
+  std::atomic<std::size_t> failed_jobs_{0};
   bool stopping_ = false;
 };
 
