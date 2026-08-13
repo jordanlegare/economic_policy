@@ -82,6 +82,10 @@ std::vector<WelfarePreferenceProfile> make_welfare_preference_grid(const Economy
 WelfareSensitivitySummary evaluate_welfare_sensitivity(
     const PolicyEngine& engine, const Economy& economy,
     const std::vector<WelfarePreferenceProfile>& profiles = {});
+WelfareSensitivitySummary evaluate_welfare_sensitivity(
+    const PolicyEngine& engine, const Economy& economy,
+    const std::vector<WelfarePreferenceProfile>& profiles,
+    EvaluationOptions options);
 std::string welfare_sensitivity_to_json(const WelfareSensitivitySummary& summary);
 
 }  // namespace cad

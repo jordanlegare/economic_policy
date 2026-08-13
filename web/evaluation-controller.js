@@ -13,7 +13,6 @@
   let comparisonTimer = null;
   let comparisonTask = Promise.resolve();
   let initialCalibrationApplied = false;
-  let sectorPolicyCache = {result:null, scenarioId:'', terms:null};
 
   const comparisonDelayMs = Number(window.__EVALUATION_COMPARISON_DELAY_MS ?? 900);
 
@@ -28,49 +27,6 @@
 
   const clampValue = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
   const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-
-  const sectorProfiles = [
-    {trade:.82, import:.42, jobs:.72, cyclical:.65},
-    {trade:.88, import:.18, jobs:.32, cyclical:.75},
-    {trade:.16, import:.10, jobs:.25, cyclical:.25},
-    {trade:.18, import:.28, jobs:.82, cyclical:.88},
-    {trade:.94, import:.76, jobs:.68, cyclical:.92},
-    {trade:.68, import:.58, jobs:.64, cyclical:.74},
-    {trade:.30, import:.72, jobs:.88, cyclical:.62},
-    {trade:.72, import:.48, jobs:.70, cyclical:.86},
-    {trade:.34, import:.30, jobs:.48, cyclical:.44},
-    {trade:.22, import:.20, jobs:.34, cyclical:.55},
-    {trade:.10, import:.12, jobs:.30, cyclical:.78},
-    {trade:.38, import:.26, jobs:.58, cyclical:.48},
-    {trade:.20, import:.18, jobs:.24, cyclical:.40},
-    {trade:.28, import:.24, jobs:.86, cyclical:.72},
-    {trade:.08, import:.10, jobs:.82, cyclical:.18},
-    {trade:.06, import:.14, jobs:.94, cyclical:.16},
-    {trade:.14, import:.16, jobs:.88, cyclical:.68},
-    {trade:.18, import:.52, jobs:.96, cyclical:.82},
-    {trade:.16, import:.30, jobs:.90, cyclical:.58},
-    {trade:.04, import:.08, jobs:.62, cyclical:.12}
-  ];
-
-  // Mirrors the policy-engine strategy terms. Keeping the deterministic sector
-  // response equation in the browser means the delegation table can explore a
-  // continuous slider position immediately, while the server remains the source
-  // of truth for the expensive stochastic search and verified recommendation.
-  const fixedStrategyTerms = {
-    statusquo:    {fiscal:0,    productive:.50, deescalation:0,    targetedRelief:0,   diversification:0},
-    retaliate:    {fiscal:.35,  productive:.25, deescalation:0,    targetedRelief:.25, diversification:0},
-    relief:       {fiscal:.30,  productive:.65, deescalation:0,    targetedRelief:.35, diversification:.15},
-    compact:      {fiscal:.25,  productive:.90, deescalation:.85,  targetedRelief:.10, diversification:.20},
-    diversify:    {fiscal:.35,  productive:.90, deescalation:0,    targetedRelief:.10, diversification:.45},
-    guardrail:    {fiscal:-.10, productive:.75, deescalation:.20,  targetedRelief:0,   diversification:.10},
-    supply:       {fiscal:.40,  productive:.95, deescalation:.35,  targetedRelief:.20, diversification:.25},
-    stabilizer:   {fiscal:.22,  productive:.35, deescalation:0,    targetedRelief:.30, diversification:.08},
-    eastwest:     {fiscal:.48,  productive:.96, deescalation:0,    targetedRelief:.08, diversification:.60},
-    productivity: {fiscal:.32,  productive:1.0, deescalation:.10,  targetedRelief:.05, diversification:.30},
-    defence:      {fiscal:-.22, productive:.70, deescalation:0,    targetedRelief:0,   diversification:.12},
-    sectoral:     {fiscal:.28,  productive:.62, deescalation:.05,  targetedRelief:.48, diversification:.22},
-    balance:      {fiscal:.45,  productive:.95, deescalation:.70,  targetedRelief:.08, diversification:.55}
-  };
 
   function displayedCoverage() {
     return copyCoverage(positions);
@@ -118,212 +74,28 @@
       && rec.canadaSectorCoverage.length === positions.canada.length;
   }
 
-  function economyContext() {
-    const nodeNumber = (selector, fallback) => {
-      const node = typeof $ === 'function' ? $(selector) : null;
-      return finite(node?.value, fallback);
-    };
-    return {
-      usTariff: finite(typeof tariff !== 'undefined' ? tariff?.value : undefined,
-        finite(settings?.usTariff, 50)),
-      retaliatoryTariff: nodeNumber('#retaliatoryTariff', finite(settings?.retaliatoryTariff, 5)),
-      riskAversion: nodeNumber('#riskAversion', finite(settings?.riskAversion, 50)),
-      cooperationCeiling: nodeNumber('#cooperationCeiling', finite(settings?.cooperationCeiling, 50)),
-      inflation: finite(settings?.inflation, 2.4),
-      usInflation: finite(settings?.usInflation, 2.7),
-      unemployment: finite(settings?.unemployment, 6.4),
-      usGrowth: finite(settings?.usGrowth, 2.0),
-      borderFriction: finite(settings?.borderFriction, 2.0),
-      tradeDiversification: finite(settings?.diversification, 0)
-    };
-  }
-
-  function coverageLevels(current, cooperationCeiling, negotiatedRelief) {
-    const start = clampValue(finite(current, 100), 0, 100);
-    const cap = clampValue(finite(cooperationCeiling, 0) / 100, 0, 1);
-    const rateRelief = clampValue(finite(negotiatedRelief, 0) / 100, 0, cap);
-    const minimumCoverageRatio = (1 - rateRelief) > 1e-12
-      ? clampValue((1 - cap) / (1 - rateRelief), 0, 1)
-      : 1;
-    const maxCoverageRelief = 1 - minimumCoverageRatio;
-    const levels = [0, .25, .50, .75, 1]
-      .map(fraction => start * (1 - maxCoverageRelief * fraction))
-      .sort((a, b) => a - b);
-    return levels.filter((value, index) => index === 0 || Math.abs(value - levels[index - 1]) >= 1e-9);
-  }
-
-  function sectorUtility(context, terms, sector, usCoverage, canadaCoverage) {
-    const profile = sectorProfiles[sector];
-    if (!profile || !terms) return null;
-    const deescalation = clampValue(finite(terms.negotiatedRelief, 0) / 100, 0, 1);
-    const diversification = clampValue(finite(terms.diversification, 0)
-      + finite(context.tradeDiversification, 0), 0, .75);
-    const uc = clampValue(finite(usCoverage, 0) / 100, 0, 1);
-    const cc = clampValue(finite(canadaCoverage, 0) / 100, 0, 1);
-    const usTariff = finite(context.usTariff, 0) * (1 - deescalation) / 100 * uc;
-    const caTariff = finite(context.retaliatoryTariff, 0) * (1 - deescalation) / 100 * cc;
-    const supply = finite(terms.productive, 0) * finite(terms.fiscal, 0)
-      * (.16 + .12 * profile.cyclical);
-    const caShock = usTariff * profile.trade * (.72 - .28 * diversification)
-      + finite(context.borderFriction, 0) / 100 * profile.trade * .18;
-    const usShock = caTariff * profile.import * .46 + usTariff * profile.import * .12;
-    const usProtection = usTariff * profile.trade * .24 * (1 - .5 * uc);
-
-    const canadaOutput = 100 * (-caShock + supply
-      + finite(terms.targetedRelief, 0) * .10 * profile.jobs);
-    const usOutput = 100 * (-usShock + usProtection + deescalation * .012 * profile.trade);
-    const canadaJobs = canadaOutput * (.30 + .42 * profile.jobs);
-    const usJobs = usOutput * (.28 + .38 * profile.jobs);
-    const canadaPrices = 100 * (caTariff * profile.import * .30
-      + usTariff * profile.import * .05 - supply * .10);
-    const usPrices = 100 * (usTariff * profile.import * .24 + caTariff * profile.import * .10);
-
-    const priceWeight = .65 + .70 * clampValue(finite(context.riskAversion, 50) / 100, 0, 1)
-      + .18 * Math.max(0, (finite(context.inflation, 0) + finite(context.usInflation, 0)) / 2 - 2);
-    const caJobsWeight = .45 + .08 * Math.max(0, finite(context.unemployment, 5) - 5);
-    const usJobsWeight = .45 + .08 * Math.max(0, 4.5 - finite(context.usGrowth, 2));
-    const leverage = 100 * caTariff * profile.trade * .16 * (1 - .65 * cc);
-
-    const canadaRaw = profile.trade * (canadaOutput + caJobsWeight * canadaJobs
-      - priceWeight * canadaPrices + leverage);
-    const usRaw = profile.import * (usOutput + usJobsWeight * usJobs - priceWeight * usPrices);
-    return {
-      canada: {raw:canadaRaw, output:canadaOutput, jobs:canadaJobs, prices:canadaPrices},
-      us: {raw:usRaw, output:usOutput, jobs:usJobs, prices:usPrices}
-    };
-  }
-
-  function finalizeFixedTerms(base, context) {
-    if (!base) return null;
-    const cap = clampValue(finite(context.cooperationCeiling, 0) / 100, 0, 1);
-    const deescalation = Math.min(finite(base.deescalation, 0), cap);
-    return {
-      fiscal: finite(base.fiscal, 0),
-      productive: finite(base.productive, 0),
-      negotiatedRelief: 100 * deescalation,
-      targetedRelief: finite(base.targetedRelief, 0),
-      diversification: finite(base.diversification, 0)
-    };
-  }
-
-  function customCandidateTerms(scenario, context) {
-    const cap = clampValue(finite(context.cooperationCeiling, 0) / 100, 0, 1);
-    const fiscal = finite(scenario?.fiscal, 0);
-    const candidates = [];
-    for (const productive of [.35, .65, .90]) {
-      for (const cooperation of [0, .33, .67, 1]) {
-        const deescalation = cooperation * cap;
-        for (const diversificationBoost of [0, .15]) {
-          candidates.push({
-            fiscal,
-            productive,
-            negotiatedRelief: 100 * deescalation,
-            targetedRelief: clampValue(.42 * (1 - productive) + .08 * (1 - deescalation), 0, .45),
-            diversification: clampValue(.08 + .48 * productive * (1 - deescalation)
-              + diversificationBoost, 0, .70)
-          });
-        }
-      }
-    }
-    return candidates;
-  }
-
-  function inferCustomTerms(scenario, context) {
-    const candidates = customCandidateTerms(scenario, context);
-    const observed = scenario?.sectors || [];
-    const rec = result?.recommendation || {};
-    const usCoverage = scenario?.appliedUsSectorCoverage || rec.usSectorCoverage || positions.us;
-    const canadaCoverage = scenario?.appliedCanadaSectorCoverage || rec.canadaSectorCoverage || positions.canada;
-    let best = null;
-    let bestError = Infinity;
-
-    for (const terms of candidates) {
-      let error = 0;
-      let comparisons = 0;
-      for (let i = 0; i < Math.min(sectorProfiles.length, observed.length); ++i) {
-        const actual = observed[i];
-        if (!actual?.canada || !actual?.us) continue;
-        const predicted = sectorUtility(context, terms, i, usCoverage[i], canadaCoverage[i]);
-        for (const side of ['canada', 'us']) {
-          for (const field of ['output', 'jobs', 'prices']) {
-            const target = Number(actual?.[side]?.[field]);
-            if (!Number.isFinite(target)) continue;
-            const delta = predicted[side][field] - target;
-            error += delta * delta;
-            ++comparisons;
-          }
-        }
-      }
-      if (comparisons && error < bestError) {
-        bestError = error;
-        best = terms;
-      }
-    }
-
-    if (best) return best;
-    return candidates.find(terms => Math.abs(terms.productive - .65) < 1e-9
-      && Math.abs(terms.negotiatedRelief - 67 * clampValue(context.cooperationCeiling / 100, 0, 1)) < 1)
-      || candidates[0] || null;
-  }
-
-  function policyTermsForScenario(scenario, context = economyContext()) {
-    if (!scenario) return null;
-    const generated = scenario.id === 'custom' || String(scenario.id || '').startsWith('custom-');
-    if (!generated) return finalizeFixedTerms(fixedStrategyTerms[scenario.id], context);
-    if (sectorPolicyCache.result === result && sectorPolicyCache.scenarioId === scenario.id
-        && sectorPolicyCache.terms) return sectorPolicyCache.terms;
-    const terms = inferCustomTerms(scenario, context);
-    sectorPolicyCache = {result, scenarioId:scenario.id, terms};
-    return terms;
-  }
-
-  function normalizedScore(value, lo, hi) {
-    if (!(hi - lo > 1e-9)) return 0;
-    return clampValue(100 * (value - lo) / (hi - lo), 0, 100);
-  }
-
   function sectorMetrics(sector, usCoverage, canadaCoverage) {
     const rec = result?.recommendation;
     const scenario = result?.scenarios?.find(item => item.id === rec?.strategyId)
       || result?.scenarios?.[0];
-    if (!rec || !scenario || !sectorProfiles[sector]) return null;
-
-    const context = economyContext();
-    const terms = policyTermsForScenario(scenario, context);
-    if (!terms) return null;
-    const anchor = negotiationAnchor || displayedCoverage();
-    const usLevels = coverageLevels(anchor.us[sector], context.cooperationCeiling, terms.negotiatedRelief);
-    const canadaLevels = coverageLevels(anchor.canada[sector], context.cooperationCeiling, terms.negotiatedRelief);
-    let canadaMin = Infinity, canadaMax = -Infinity, usMin = Infinity, usMax = -Infinity;
-    for (const uc of usLevels) for (const cc of canadaLevels) {
-      const point = sectorUtility(context, terms, sector, uc, cc);
-      canadaMin = Math.min(canadaMin, point.canada.raw);
-      canadaMax = Math.max(canadaMax, point.canada.raw);
-      usMin = Math.min(usMin, point.us.raw);
-      usMax = Math.max(usMax, point.us.raw);
-    }
-
-    const live = sectorUtility(context, terms, sector, usCoverage, canadaCoverage);
+    const row = scenario?.sectors?.[sector];
+    if (!rec || !scenario || !row) return null;
     const recommendedCoverage = {
       us: finite(rec.usSectorCoverage?.[sector], usCoverage),
       canada: finite(rec.canadaSectorCoverage?.[sector], canadaCoverage)
     };
-    const within = (value, levels) => value + 1e-9 >= Math.min(...levels)
-      && value - 1e-9 <= Math.max(...levels);
+    const atVerifiedCoverage = Math.abs(finite(usCoverage) - recommendedCoverage.us) < .01
+      && Math.abs(finite(canadaCoverage) - recommendedCoverage.canada) < .01;
     return {
       strategyId: scenario.id,
-      canada: {...live.canada, score:normalizedScore(live.canada.raw, canadaMin, canadaMax)},
-      us: {...live.us, score:normalizedScore(live.us.raw, usMin, usMax)},
+      canada: {...row.canada, score:finite(rec.canadaSectorValue?.[sector], 0)},
+      us: {...row.us, score:finite(rec.usSectorOutput?.[sector], 0)},
       recommendedCoverage,
-      verified: recommendationIsVerified(rec)
-        && Math.abs(finite(usCoverage) - recommendedCoverage.us) < .01
-        && Math.abs(finite(canadaCoverage) - recommendedCoverage.canada) < .01,
-      insideSearchEnvelope: within(finite(usCoverage), usLevels)
-        && within(finite(canadaCoverage), canadaLevels),
-      searchEnvelope: {
-        us:[Math.min(...usLevels), Math.max(...usLevels)],
-        canada:[Math.min(...canadaLevels), Math.max(...canadaLevels)]
-      }
+      verified: recommendationIsVerified(rec) && atVerifiedCoverage,
+      pending: !atVerifiedCoverage,
+      serverAuthoritative: true,
+      insideSearchEnvelope: atVerifiedCoverage,
+      searchEnvelope: null
     };
   }
 
@@ -388,12 +160,12 @@
     if (!response.ok) throw new Error(`Baseline recovery failed with HTTP ${response.status}`);
     const baseline = await response.json();
     settings = baseline.settings || {};
-    const live = (baseline.provenance?.observedLive || []).some(item => item.live);
+    const live = Number(baseline.provenance?.liveFieldCount || 0);
     const status = $('#dataStatus');
     const sync = $('#sync');
     const asOf = $('#asOf');
-    if (status) status.textContent = live ? 'Live official feeds' : 'Documented calibrated baseline';
-    if (sync) sync.textContent = live ? 'Official feeds synchronized' : 'Calibration snapshot active';
+    if (status) status.textContent = live ? `Partial live official feeds · ${live}/3 market fields` : 'Documented calibrated/default baseline';
+    if (sync) sync.textContent = live ? 'Partial official-feed refresh' : 'Calibration snapshot active';
     if (asOf && baseline.asOf) asOf.textContent = 'As of ' + new Date(baseline.asOf).toLocaleString();
   }
 
@@ -599,7 +371,6 @@
       // If a request fails, retrying the same UI edit still promotes the visible
       // package to the intended new anchor.
       lastEvaluatedControls = controlSnapshot();
-      sectorPolicyCache = {result:null, scenarioId:'', terms:null};
       const key = comparisonKey(preferences);
       noTariff = comparisonCache && comparisonCacheKey === key
         ? comparisonCache
@@ -637,12 +408,7 @@
   const runButton = $('#run');
   if (runButton) runButton.onclick = () => evaluate();
 
-  window.SectorResponseModel = {
-    coverageLevels,
-    sectorUtility,
-    policyTermsForScenario,
-    sectorMetrics
-  };
+  window.SectorResponseModel = {sectorMetrics};
 
   window.EvaluationController = {
     invalidateComparison() {

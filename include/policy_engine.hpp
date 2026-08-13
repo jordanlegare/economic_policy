@@ -123,6 +123,7 @@ struct Economy {
   double exports_to_us_share = 75.0, imports_from_us_share = 49.0;
   double exports_gdp = 25.0, import_content_consumption = 22.0;
   double trade_elasticity = 0.65, border_friction = 2.0;
+  double tariff_price_pass_through = 0.24;
   double canada_exports_to_us_cad = 596.9, canada_imports_from_us_cad = 373.7;
   double tariff_relief = 0.0, trade_diversification = 0.0;
   double canada_priority = 50.0, us_priority = 50.0;
@@ -173,7 +174,8 @@ struct Scenario {
   std::string id, name, description;
   double first_move_bp = 0.0, fiscal_impulse = 0.0, productive_share = 0.5;
   double negotiated_relief = 0.0, targeted_relief = 0.0, diversification = 0.0;
-  double score = 0.0, boc_score = 0.0, federal_score = 0.0, us_score = 0.0;
+  double score = 0.0, boc_score = 0.0, federal_score = 0.0;
+  double canada_score = 0.0, us_score = 0.0;
   // Average directional effective-tariff/coverage deviation from the submitted
   // UI posture, expressed on a 0-100 headline-equivalent distance scale.
   double trade_posture_distance = 0.0;
@@ -280,6 +282,14 @@ struct Result {
   std::vector<Scenario> scenarios;
 };
 
+struct EvaluationOptions {
+  bool exhaustive_policy_search = false;
+};
+
+inline EvaluationOptions production_evaluation_options() {
+  return EvaluationOptions{true};
+}
+
 class PolicyEngine {
  public:
   explicit PolicyEngine(std::uint64_t seed = 20260810,
@@ -290,10 +300,13 @@ class PolicyEngine {
       parameters_.uncertainty_registry = std::move(parameter_registry);
   }
   Result evaluate(const Economy& economy) const;
+  Result evaluate(const Economy& economy, EvaluationOptions options) const;
   // Full V2 decision robustness samples structural calibrations, re-runs the
   // complete generated policy-control search, then re-optimizes the 20-sector
   // negotiation package before stochastic verification inside every draw.
   Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
+  Result evaluate_robust(const Economy& economy, int parameter_draws,
+                         EvaluationOptions options) const;
   const StructuralParameters& parameters() const { return parameters_; }
   const StructuralParameterRegistry& parameter_registry() const {
     return parameters_.uncertainty_registry;

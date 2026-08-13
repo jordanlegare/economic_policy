@@ -17,6 +17,14 @@ struct ModelEvidenceStatus {
   int historical_fixture_count = 0;
   int valid_historical_fixture_count = 0;
   bool historical_aggregate_permitted = false;
+  bool state_measurement_contract_complete = false;
+  int ready_state_measurement_count = 0;
+  bool decision_loss_weights_complete = false;
+  int decision_loss_weight_count = 0;
+  bool observed_calibration_certified = false;
+  double observed_calibration_completeness = 0.0;
+  bool canada_io_empirical = false;
+  bool us_io_empirical = false;
 };
 
 inline std::vector<BacktestResult> run_historical_evidence(

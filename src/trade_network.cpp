@@ -114,9 +114,9 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
 
   const auto& src = kProfiles[source];
   const double us_elasticity = sector_parameter(
-      input.us_trade_elasticity[source], input.trade_elasticity, .10, 5.0);
+      input.us_trade_elasticity[source], input.trade_elasticity, .10, 20.0);
   const double canada_elasticity = sector_parameter(
-      input.canada_trade_elasticity[source], input.trade_elasticity, .10, 5.0);
+      input.canada_trade_elasticity[source], input.trade_elasticity, .10, 20.0);
   const double us_pass = sector_parameter(
       input.us_price_pass_through[source], input.price_pass_through, 0.0, 1.0);
   const double canada_pass = sector_parameter(

@@ -92,12 +92,18 @@ std::string json_escape(const std::string& value) {
 }  // namespace
 
 Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws) const {
+  return evaluate_robust(economy, parameter_draws,
+      EvaluationOptions{economy.exhaustive_policy_search});
+}
+
+Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws,
+                                     EvaluationOptions options) const {
   // Deliberately obtain the reference recommendation from the same production
   // evaluator used by /api/evaluate. Structural robustness must never maintain
   // a second copy of the macro, tariff-incidence, input-output, sector-search or
   // welfare equations: every structural draw below constructs a PolicyEngine
   // with the drawn parameters and calls evaluate() again.
-  Result baseline = evaluate(economy);
+  Result baseline = evaluate(economy, options);
   auto& summary = baseline.recommendation.robustness;
   summary.parameter_draws = std::max(0, parameter_draws);
   summary.calibration_id = parameters_.calibration_id;
@@ -154,7 +160,7 @@ Result PolicyEngine::evaluate_robust(const Economy& economy, int parameter_draws
     // If exhaustive startup mode is explicitly requested, the exact exhaustive
     // production search is rerun as well rather than approximated here.
     PolicyEngine draw_engine(seed_, parameters, parameters_.uncertainty_registry);
-    Result draw = draw_engine.evaluate(economy);
+    Result draw = draw_engine.evaluate(economy, options);
     const Scenario* draw_selected = selected_scenario(draw);
     const Scenario* draw_generated = best_generated(draw);
     if (!draw_selected || !draw_generated) continue;

@@ -24,7 +24,6 @@ constexpr int kVerificationDraws = 2800;
 constexpr double kSectorGridStep = 25.0;
 constexpr std::size_t kSectorStagedFinalists = 8;
 constexpr std::size_t kSectorExhaustiveVerificationCap = 128;
-constexpr double kTariffPricePassThroughAnchor = 0.24;
 
 const auto& sector_profiles = trade_sector_profiles();
 
@@ -62,7 +61,7 @@ TradeNetworkInput make_trade_network_input(const Economy& e, const Scenario& pol
   input.negotiated_relief = policy.negotiated_relief;
   input.diversification = clamp(policy.diversification + e.trade_diversification, 0.0, .75);
   input.trade_elasticity = e.trade_elasticity;
-  input.price_pass_through = kTariffPricePassThroughAnchor;
+  input.price_pass_through = e.tariff_price_pass_through;
   input.us_coverage = e.us_sector_coverage;
   input.canada_coverage = e.canada_sector_coverage;
   input.us_trade_elasticity = e.us_sector_trade_elasticity;
@@ -592,6 +591,8 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
       + w.federal_housing * sq(s.housing_gap);
   s.boc_score = 100.0 / (1.0 + mandate_loss);
   s.federal_score = 100.0 / (1.0 + federal_loss);
+  s.canada_score = std::sqrt(std::max(.01, s.boc_score)
+      * std::max(.01, s.federal_score));
 
   const double us_inflation_pressure = std::max(
       0.0, e.us_inflation - 2.0 + e.us_tariff_canada * us_barrier_coverage * .025
@@ -603,7 +604,7 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
           * (1.0 - deescalation_path.back()));
   s.us_score = 100.0 / (1.0 + us_loss);
 
-  const double canada = std::sqrt(std::max(.01, s.boc_score) * std::max(.01, s.federal_score));
+  const double canada = s.canada_score;
   const double floor = std::min(canada, s.us_score);
   const double ca_weight = clamp(e.canada_priority, 1.0, 100.0);
   const double us_weight = clamp(e.us_priority, 1.0, 100.0);
@@ -624,7 +625,7 @@ double deal_score(const Scenario& s, const Economy& e, bool enforce_growth = tru
   if (enforce_growth && s.bilateral_growth_floor + 1e-9 < e.minimum_bilateral_growth)
     return -1e100;
 
-  const double canada = std::sqrt(std::max(.01, s.boc_score) * std::max(.01, s.federal_score));
+  const double canada = s.canada_score;
   const double ca_weight = clamp(e.canada_priority, 1.0, 100.0);
   const double us_weight = clamp(e.us_priority, 1.0, 100.0);
   const double total = ca_weight + us_weight;
@@ -735,7 +736,13 @@ void array_json(std::ostringstream& out, const std::array<double,N>& values) {
 
 }  // namespace
 
-Result PolicyEngine::evaluate(const Economy& e) const {
+Result PolicyEngine::evaluate(const Economy& economy) const {
+  return evaluate(economy, EvaluationOptions{economy.exhaustive_policy_search});
+}
+
+Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options) const {
+  Economy e = economy;
+  e.exhaustive_policy_search = options.exhaustive_policy_search;
   Result r;
   if (e.core_inflation > 3.2) r.regime = "Inflation pressure";
   else if (e.credit_spread > 2.25) r.regime = "Financial stress";
@@ -852,8 +859,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
         "The submitted tariff, sector-coverage, monetary and fiscal posture with no negotiated policy change.",
         0.0, 0.0, 0.5, 0.0, 0.0, 0.0, seed_, kVerificationDraws);
     starting_baseline.sector_verified = true;
-    baseline_canada = std::sqrt(std::max(.01, starting_baseline.boc_score)
-        * std::max(.01, starting_baseline.federal_score));
+    baseline_canada = starting_baseline.canada_score;
     baseline_us = starting_baseline.us_score;
     r.recommendation.baseline_canada_score = baseline_canada;
     r.recommendation.baseline_us_score = baseline_us;
@@ -890,8 +896,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
       const bool growth_ok = verified.bilateral_growth_floor + 1e-9 >= e.minimum_bilateral_growth;
       bool national_win_win = true;
       if (e.exhaustive_policy_search) {
-        const double canada_score = std::sqrt(std::max(.01, verified.boc_score)
-            * std::max(.01, verified.federal_score));
+        const double canada_score = verified.canada_score;
         national_win_win = canada_score + 1e-9 >= baseline_canada
             && verified.us_score + 1e-9 >= baseline_us;
       }
@@ -961,8 +966,7 @@ Result PolicyEngine::evaluate(const Economy& e) const {
   r.recommendation.strategy_id = best.id;
   r.recommendation.us_sector_coverage = best.applied_us_sector_coverage;
   r.recommendation.canada_sector_coverage = best.applied_canada_sector_coverage;
-  r.recommendation.verified_canada_score =
-      std::sqrt(std::max(.01, best.boc_score) * std::max(.01, best.federal_score));
+  r.recommendation.verified_canada_score = best.canada_score;
   r.recommendation.verified_us_score = best.us_score;
   r.recommendation.verified_min_sector_metric = min_sector_metric(best);
   r.recommendation.growth_constraint_met =
@@ -1027,7 +1031,8 @@ std::string to_json(const Result& r) {
   o << "{\"regime\":\"" << esc(r.regime)
     << "\",\"signal\":\"" << esc(r.signal)
     << "\",\"rationale\":\"" << esc(r.rationale)
-    << "\",\"confidence\":" << r.data_confidence
+    << "\",\"stateConsistency\":" << r.data_confidence
+    << ",\"confidence\":" << r.data_confidence
     << ",\"neutralRate\":" << r.neutral_rate
     << ",\"policyGap\":" << r.policy_gap
     << ",\"candidatesExamined\":" << r.candidates_examined
@@ -1080,6 +1085,7 @@ std::string to_json(const Result& r) {
       << ",\"score\":" << s.score
       << ",\"bocScore\":" << s.boc_score
       << ",\"federalScore\":" << s.federal_score
+      << ",\"canadaScore\":" << s.canada_score
       << ",\"usScore\":" << s.us_score
       << ",\"inflation\":" << s.inflation
       << ",\"growth\":" << s.growth

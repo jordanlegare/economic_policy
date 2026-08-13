@@ -13,7 +13,19 @@ std::string model_evidence_status_to_json(const ModelEvidenceStatus& s) {
       << ",\"historicalFixtureCount\":" << s.historical_fixture_count
       << ",\"validHistoricalFixtureCount\":" << s.valid_historical_fixture_count
       << ",\"historicalAggregatePermitted\":"
-      << (s.historical_aggregate_permitted ? "true" : "false") << "}";
+      << (s.historical_aggregate_permitted ? "true" : "false")
+      << ",\"stateMeasurementContractComplete\":"
+      << (s.state_measurement_contract_complete ? "true" : "false")
+      << ",\"readyStateMeasurementCount\":" << s.ready_state_measurement_count
+      << ",\"decisionLossWeightsComplete\":"
+      << (s.decision_loss_weights_complete ? "true" : "false")
+      << ",\"decisionLossWeightCount\":" << s.decision_loss_weight_count
+      << ",\"observedCalibrationCertified\":"
+      << (s.observed_calibration_certified ? "true" : "false")
+      << ",\"observedCalibrationCompleteness\":"
+      << s.observed_calibration_completeness
+      << ",\"canadaIoEmpirical\":" << (s.canada_io_empirical ? "true" : "false")
+      << ",\"usIoEmpirical\":" << (s.us_io_empirical ? "true" : "false") << "}";
   return out.str();
 }
 

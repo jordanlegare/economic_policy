@@ -14,7 +14,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const n = value => Number(value || 0);
   const f = (value, digits=1) => n(value).toFixed(digits);
-  const canadaScore = scenario => (n(scenario.bocScore) + n(scenario.federalScore)) / 2;
+  const canadaScore = scenario => n(scenario.canadaScore);
 
   function checks(scenario) {
     const detail = [
