@@ -16,14 +16,44 @@ The committed artifacts are:
 - `include/generated/trade_io_us_proxy.hpp`
 - `data/calibration/useeio_us_proxy_provenance.json`
 
-The provenance file records the source workbook SHA-256, model, basis year, exclusions, mapping counts, aggregation method, and replacement boundary.
+The provenance file records the source workbook SHA-256, model, basis year, exclusions, mapping counts, aggregation method, and replacement boundary. The active EPA source is also registered in `data/calibration/source_registry.csv` as `epa_useeio_us_proxy`.
 
 ## BEA replacement boundary
 
 `tools/build_bea_io_matrix.py` remains the final U.S. calibration path. The EPA proxy remains active unless both `include/generated/trade_io_us_bea.hpp` and a separately reviewed `include/generated/trade_io_us_bea_certified.hpp` marker are present. A generated but unreviewed BEA header alone cannot silently change production.
 
-The certification marker should only be committed with a reviewed BEA artifact whose source vintage, table selection, mapping, provenance, diagnostics, and trade-network tests have been checked.
+Certification is content-bound rather than presence-only. A BEA refresh generates four related artifacts:
+
+- `data/calibration/bea_us_io_matrix.csv`
+- `include/generated/trade_io_us_bea.hpp`
+- `include/generated/trade_io_us_bea_contract.hpp`
+- `data/calibration/bea_us_io_provenance.json`
+
+The generated contract records the exact BEA header SHA-256 and a deterministic artifact fingerprint. The generated BEA header records the selected year, domestic-direct-requirements table ID, Use table ID, and CSV SHA-256. Its compile-time assertions require a certification marker to match all of those values plus the exact generated-header SHA-256 and artifact fingerprint.
+
+`tools/verify_bea_io_certification.py` independently recomputes the committed CSV/header hashes and fingerprint offline. It succeeds in proxy mode when no BEA artifact is committed, accepts a complete but uncertified BEA artifact without activating it, and fails on partial artifacts, hash drift, table/vintage drift, or a mismatched certification marker.
+
+The certification marker must be written only after independent review. Its contract is:
+
+```cpp
+#pragma once
+
+#include <string_view>
+
+namespace cad::generated {
+inline constexpr int kCertifiedBeaUsIoYear = /* reviewed year */;
+inline constexpr std::string_view kCertifiedBeaUsIoDirectRequirementsTableId = "/* reviewed table ID */";
+inline constexpr std::string_view kCertifiedBeaUsIoUseTableId = "/* reviewed table ID */";
+inline constexpr std::string_view kCertifiedBeaUsIoCsvSha256 = "/* reviewed CSV SHA-256 */";
+inline constexpr std::string_view kCertifiedBeaUsIoHeaderSha256 = "/* reviewed generated-header SHA-256 */";
+inline constexpr std::string_view kCertifiedBeaUsIoArtifactFingerprint = "/* reviewed fingerprint */";
+}  // namespace cad::generated
+```
+
+The exact values are emitted in `bea_us_io_provenance.json` under `certification_contract`. Copying those values is not itself certification: the reviewer must first verify source vintage, table selection, mapping, row diagnostics, generated files, and trade-network tests.
 
 ## Reproduction
 
-Run the builder against the official `USEEIOv2.5-catbird-22.xlsx` workbook. Add `--verify` to compare the regenerated CSV, C++ header, and provenance against the committed frozen artifacts. Ordinary CI does not fetch the external workbook; it verifies the builder contract and frozen-artifact invariants offline.
+Run the USEEIO builder against the official `USEEIOv2.5-catbird-22.xlsx` workbook. Add `--verify` to compare the regenerated CSV, C++ header, and provenance against the committed frozen artifacts. Ordinary CI does not fetch the external workbook; it verifies the builder contract and frozen-artifact invariants offline.
+
+For a BEA refresh, run `tools/build_bea_io_matrix.py` with `BEA_API_KEY`, review the generated matrix/provenance/contract, then run `python3 tools/verify_bea_io_certification.py`. Do not commit `trade_io_us_bea_certified.hpp` until the exact contract has been independently reviewed.
