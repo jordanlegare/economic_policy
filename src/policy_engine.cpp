@@ -36,20 +36,12 @@ struct SectorUtility {
 
 std::vector<double> coverage_levels(double current, double cooperation_ceiling,
                                     double negotiated_relief) {
-  const double start = clamp(current, 0.0, 100.0);
-  const double cap = clamp(cooperation_ceiling / 100.0, 0.0, 1.0);
-  const double rate_relief = clamp(negotiated_relief / 100.0, 0.0, cap);
-  const double minimum_coverage_ratio = (1.0 - rate_relief) > 1e-12
-      ? clamp((1.0 - cap) / (1.0 - rate_relief), 0.0, 1.0)
-      : 1.0;
-  const double max_coverage_relief = 1.0 - minimum_coverage_ratio;
-  std::vector<double> levels;
-  for (double fraction : {0.0, .25, .50, .75, 1.0})
-    levels.push_back(start * (1.0 - max_coverage_relief * fraction));
-  std::sort(levels.begin(), levels.end());
-  levels.erase(std::unique(levels.begin(), levels.end(),
-      [](double a, double b) { return std::abs(a - b) < 1e-9; }), levels.end());
-  return levels;
+  (void)cooperation_ceiling;
+  (void)negotiated_relief;
+  // Delegation sector coverage is an authoritative scenario input. The policy
+  // engine may evaluate policy and bargaining packages around that scenario,
+  // but it must never generate a substitute coverage level for either party.
+  return {clamp(current, 0.0, 100.0)};
 }
 
 TradeNetworkInput make_trade_network_input(const Economy& e, const Scenario& policy) {

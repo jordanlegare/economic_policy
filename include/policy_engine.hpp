@@ -162,8 +162,6 @@ struct Economy {
   // controls from the certified baseline. Low-level and robustness tests can
   // keep the staged mode when they are not claiming startup global optimality.
   bool exhaustive_policy_search = false;
-  // When true, submitted delegation settings are hard scenario constraints.
-  bool lock_delegation_settings = false;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
 
   // Production-compatible directional sector evidence can be supplied here.

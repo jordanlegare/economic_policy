@@ -95,9 +95,28 @@
   const dashboardRun = document.querySelector('#run');
   if (typeof schedule !== 'function' || !partyView || !dashboardRun) return;
 
+  // Optimizer recommendations are advisory. Automatic publication must never
+  // rewrite the scenario the delegations actually submitted. Explicit Apply is
+  // still a user action and therefore retains the existing behavior.
+  const baseApplyRecommendation = typeof applyRecommendation === 'function'
+    ? applyRecommendation : null;
+  if (baseApplyRecommendation) {
+    applyRecommendation = function delegationLockedRecommendation(run = true, ...args) {
+      if (run) return baseApplyRecommendation(run, ...args);
+      return false;
+    };
+  }
+
   let staged = false;
   let partyRun = null;
   let partyRunStatus = null;
+
+  function lockedStatus() {
+    const autoStatus = document.querySelector('.auto span');
+    if (autoStatus) {
+      autoStatus.textContent = 'Scenario locked · optimizer recommendations are display-only. Delegation tariff, allocation, risk, cooperation, and sector settings remain exactly as submitted.';
+    }
+  }
 
   function setStaged(value) {
     staged = value;
@@ -111,7 +130,7 @@
     if (autoStatus) {
       autoStatus.textContent = staged
         ? 'Inputs staged. No global search is running. Click Run again now (or Run new run in a delegation tab) to evaluate the values exactly as set.'
-        : 'Optimizer runs only on an explicit Run again now / Run new run action. Slider edits remain as set until that run starts.';
+        : 'Scenario locked. The optimizer can rank policy and Pareto packages, but it cannot recalculate or replace delegation settings.';
     }
   }
 
@@ -130,16 +149,16 @@
   function updateCopy() {
     const linked = document.querySelector('.preferences .linked-note');
     if (linked) {
-      linked.textContent = 'Linked: moving either party automatically assigns the remainder to the other. Slider changes are staged only; they do not launch the optimizer until Run again now is clicked.';
+      linked.textContent = 'Linked: moving either party automatically assigns the remainder to the other. Your submitted delegation values are hard scenario inputs; the optimizer cannot substitute different settings.';
     }
     const notes = [...partyView.querySelectorAll('.linked-note')];
-    const liveNote = notes.find(node => /Live model:|Staged search:/i.test(node.textContent || ''));
+    const liveNote = notes.find(node => /Live model:|Staged search:|Scenario locked:/i.test(node.textContent || ''));
     if (liveNote) {
-      liveNote.innerHTML = '<b>Staged search:</b> tariff, allocation, and sector slider changes are saved as set but never launch a policy search. Click <b>Run new run</b> to execute the same optimizer as Dashboard <b>Run again now</b>.';
+      liveNote.innerHTML = '<b>Scenario locked:</b> tariff, allocation, risk, cooperation, and sector values are evaluated exactly as submitted. The optimizer may rank policy/Pareto packages, but it cannot rewrite delegation inputs. Click <b>Run new run</b> to execute.';
     }
     const boardCopy = partyView.querySelector('.sector-board-head p');
     if (boardCopy) {
-      boardCopy.textContent = 'Adjust sector tariffs freely. Values remain as set while you work; the expensive bilateral search starts only when Run new run is clicked.';
+      boardCopy.textContent = 'Adjust sector tariffs freely. Those exact 20-sector coverage values are fixed scenario inputs during the run; the optimizer cannot substitute another sector schedule.';
     }
   }
 
@@ -185,6 +204,8 @@
     if (event.target?.closest?.('#run')) setStaged(false);
   }, true);
 
+  window.addEventListener?.('economic-policy:verified-win-win-applied', lockedStatus);
+
   if (typeof MutationObserver === 'function') {
     new MutationObserver(syncRunButton).observe(dashboardRun, {
       attributes:true,
@@ -203,4 +224,50 @@
   };
   window.EvaluationRunController = controller;
   window.DelegationRunController = controller;
+})();
+
+// The bargaining layer retains a diagnostic fallback when no candidate clears
+// both reservation values. Do not present that fallback as a Pareto solution.
+(() => {
+  'use strict';
+
+  function renderNoParetoSolution() {
+    let model;
+    try { model = result?.negotiation; } catch (_) { return; }
+    if (!model || Number(model.individuallyRationalCount || 0) > 0) return;
+    const root = document.querySelector('#computationalNegotiation');
+    if (!root) return;
+
+    const setText = (selector, text) => {
+      const node = document.querySelector(selector);
+      if (node) node.textContent = text;
+    };
+    const setHtml = (selector, html) => {
+      const node = document.querySelector(selector);
+      if (node) node.innerHTML = html;
+    };
+
+    setText('#negotiationPrimaryLabel', 'Scenario result');
+    setText('#negotiationPackageName', 'No feasible Pareto package found');
+    setHtml('#negotiationPackageMetrics', '<p><b>No solution was found within the Pareto Packages searched window.</b> Your delegation settings remain exactly as submitted; the program did not replace them with a different sector schedule.</p>');
+    setHtml('#negotiationStability', `<b>No agreement cleared both reservation values.</b><span>${model.frontierComplete === false ? 'The search window was capped; this does not prove no solution exists outside the searched window.' : 'The declared bargaining window was completed with no feasible package.'}</span>`);
+    document.querySelector('#negotiationStability')?.classList.add('warning');
+    setHtml('#negotiationIssues', '<p>No feasible linked-concession package to display.</p>');
+    setHtml('#tradeChannels', '<div><span>Delegation scenario</span><b>UNCHANGED</b><small>Trade settings remain exactly as submitted.</small></div>');
+    setHtml('#negotiationTrust', '<b>NO FEASIBLE PARETO PACKAGE IN SEARCHED WINDOW</b> · delegation inputs remained fixed throughout the run.');
+    setText('#paretoCount', '0 ε-frontier packages · no feasible solution in searched window');
+    setHtml('#paretoPackages', '<div class="negotiation-method"><b>No solution found.</b> Adjust the delegation scenario only if you choose to; the program will not do it automatically.</div>');
+  }
+
+  function bind() {
+    const cards = document.querySelector('#cards');
+    if (cards && typeof MutationObserver === 'function') {
+      new MutationObserver(() => setTimeout(renderNoParetoSolution, 0))
+        .observe(cards, {childList:true});
+    }
+    setTimeout(renderNoParetoSolution, 0);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
 })();
