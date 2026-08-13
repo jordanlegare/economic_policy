@@ -23,15 +23,31 @@
     return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  function storageGet(storage, key) {
+    try { return storage?.getItem?.(key) || ''; } catch (_) { return ''; }
+  }
+
+  function storageSet(storage, key, value) {
+    try { storage?.setItem?.(key, value); return true; } catch (_) { return false; }
+  }
+
+  function storageRemove(storage, key) {
+    try { storage?.removeItem?.(key); } catch (_) {}
+  }
+
   function clampNumber(value, minimum, maximum) {
     const number = Number(value);
     if (!Number.isFinite(number)) return null;
     return Math.max(minimum, Math.min(maximum, number));
   }
 
-  function sanitizeRunSettings(payload) {
+  function sanitizeRunSettings(payload, preserveSavedAt = false) {
     if (!payload || typeof payload !== 'object') return null;
-    const settings = {version: 1, savedAt: new Date().toISOString()};
+    const savedAt = preserveSavedAt && typeof payload.savedAt === 'string'
+      && !Number.isNaN(Date.parse(payload.savedAt))
+      ? payload.savedAt
+      : new Date().toISOString();
+    const settings = {version: 1, savedAt};
     let populated = false;
 
     Object.entries(scalarRunFields).forEach(([field, bounds]) => {
@@ -46,7 +62,9 @@
       const storedCoverage = payload[`${party}SectorCoverage`];
       const coverage = [];
       for (let i = 0; i < 20; i++) {
-        const rawValue = Array.isArray(storedCoverage) ? storedCoverage[i] : payload[`${party}Sector${i}`];
+        const rawValue = Array.isArray(storedCoverage)
+          ? storedCoverage[i]
+          : payload[`${party}Sector${i}`];
         const value = clampNumber(rawValue, 0, 100);
         if (value === null) return;
         coverage.push(value);
@@ -62,8 +80,10 @@
 
   function readLastRunSettings() {
     try {
-      const parsed = JSON.parse(localStorage.getItem(lastRunKey) || 'null');
-      return parsed && parsed.version === 1 ? sanitizeRunSettings(parsed) : null;
+      const parsed = JSON.parse(storageGet(globalThis.localStorage, lastRunKey) || 'null');
+      return parsed && parsed.version === 1
+        ? sanitizeRunSettings(parsed, true)
+        : null;
     } catch (_) {
       return null;
     }
@@ -71,20 +91,21 @@
 
   function writeLastRunSettings(payload) {
     const settings = sanitizeRunSettings(payload);
-    if (!settings) return;
-    try {
-      localStorage.setItem(lastRunKey, JSON.stringify(settings));
-    } catch (_) {}
+    if (!settings) return false;
+    return storageSet(globalThis.localStorage, lastRunKey, JSON.stringify(settings));
   }
 
-  let evaluateCaptureLocked = false;
   function captureEvaluateRequest(url, init) {
-    if (url.pathname !== '/api/evaluate' || String(init.method || 'GET').toUpperCase() !== 'POST') return;
-    if (typeof init.body !== 'string' || evaluateCaptureLocked) return;
-    evaluateCaptureLocked = true;
-    queueMicrotask(() => { evaluateCaptureLocked = false; });
+    if (url.pathname !== '/api/evaluate'
+        || String(init.method || 'GET').toUpperCase() !== 'POST'
+        || typeof init.body !== 'string') return;
     try {
-      writeLastRunSettings(JSON.parse(init.body));
+      const payload = JSON.parse(init.body);
+      // Comparators, diagnostics and robustness probes are derived work, not an
+      // operator run. Only the primary stateful evaluation becomes the restart
+      // checkpoint, regardless of when secondary requests are scheduled.
+      if (payload?.comparisonOnly === true) return;
+      writeLastRunSettings(payload);
     } catch (_) {}
   }
 
@@ -130,13 +151,15 @@
       canadaPriorityValue.textContent = `${saved.canadaPriority}%`;
     }
     const usPriorityValue = globalThis.document.getElementById('usPriorityValue');
-    if (usPriorityValue && saved.usPriority !== undefined) usPriorityValue.textContent = `${saved.usPriority}%`;
+    if (usPriorityValue && saved.usPriority !== undefined)
+      usPriorityValue.textContent = `${saved.usPriority}%`;
     const priorityTotal = globalThis.document.getElementById('priorityTotal');
     if (priorityTotal && saved.canadaPriority !== undefined && saved.usPriority !== undefined) {
       priorityTotal.textContent = `${saved.canadaPriority + saved.usPriority}%`;
     }
     const riskValue = globalThis.document.getElementById('riskAversionValue');
-    if (riskValue && saved.riskAversion !== undefined) riskValue.textContent = String(saved.riskAversion);
+    if (riskValue && saved.riskAversion !== undefined)
+      riskValue.textContent = String(saved.riskAversion);
     const cooperationValue = globalThis.document.getElementById('cooperationCeilingValue');
     if (cooperationValue && saved.cooperationCeiling !== undefined) {
       cooperationValue.textContent = `${saved.cooperationCeiling}%`;
@@ -151,7 +174,8 @@
     if (typeof syncPartyView === 'function') syncPartyView();
     if (typeof refreshPartySectorMetrics === 'function') refreshPartySectorMetrics();
     const partyView = globalThis.document.getElementById('partyView');
-    if (partyView && !partyView.hidden && typeof renderPartySectors === 'function') renderPartySectors();
+    if (partyView && !partyView.hidden && typeof renderPartySectors === 'function')
+      renderPartySectors();
     return true;
   }
 
@@ -175,20 +199,23 @@
     globalThis.evaluate = wrappedEvaluate;
   }
 
-  let sessionId = sessionStorage.getItem(sessionKey);
-  if (!sessionId) {
-    sessionId = randomId();
-    sessionStorage.setItem(sessionKey, sessionId);
-  }
+  // Session identity is not secret and should survive a browser restart so the
+  // server-side room/event history can be reopened. Keep the bearer token in
+  // sessionStorage; only the non-sensitive session id is durable.
+  let sessionId = storageGet(globalThis.localStorage, sessionKey)
+    || storageGet(globalThis.sessionStorage, sessionKey);
+  if (!sessionId) sessionId = randomId();
+  storageSet(globalThis.localStorage, sessionKey, sessionId);
+  storageSet(globalThis.sessionStorage, sessionKey, sessionId);
 
   function accessToken() {
     if (!globalThis.CAD_API_AUTH_REQUIRED) return '';
-    let token = sessionStorage.getItem(tokenKey) || '';
+    let token = storageGet(globalThis.sessionStorage, tokenKey);
     if (!token) {
       token = globalThis.prompt(
         'This server is listening beyond localhost. Enter its Canada Policy Studio access token.'
       ) || '';
-      if (token) sessionStorage.setItem(tokenKey, token);
+      if (token) storageSet(globalThis.sessionStorage, tokenKey, token);
     }
     return token;
   }
@@ -219,12 +246,13 @@
 
   globalThis.CAD_SESSION_ID = sessionId;
   globalThis.CADSetApiToken = token => {
-    if (token) sessionStorage.setItem(tokenKey, String(token));
-    else sessionStorage.removeItem(tokenKey);
+    if (token) storageSet(globalThis.sessionStorage, tokenKey, String(token));
+    else storageRemove(globalThis.sessionStorage, tokenKey);
   };
   globalThis.CADLastRunSettings = {
     key: lastRunKey,
     read: readLastRunSettings,
+    write: writeLastRunSettings,
     restore: restoreLastRunSettings
   };
 })();
