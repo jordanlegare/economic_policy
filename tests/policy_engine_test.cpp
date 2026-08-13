@@ -67,9 +67,14 @@ int main() {
   }
 
   // No scenario may manufacture bilateral flows to hit an accounting target.
+  // Diversification may report separately identified Canadian export
+  // redirection, but it is never added to the Canada-U.S. bilateral ledger.
   const auto& balance = find(baseline, "balance");
   assert(std::abs(balance.us_export_expansion_usd) < 1e-12);
-  assert(std::abs(balance.canada_export_redirection_cad) < 1e-12);
+  assert(std::isfinite(balance.canada_export_redirection_cad));
+  assert(balance.canada_export_redirection_cad >= 0.0);
+  assert(std::abs(balance.us_trade_balance_usd
+      + balance.canada_trade_balance_cad / defaults.usdcad) < 1e-9);
 
   // U.S. welfare must be independent of Canada's export-dollar accounting
   // baseline. Changing only that bookkeeping input changes the reported trade
