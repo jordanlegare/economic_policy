@@ -15,7 +15,7 @@
     section.id = 'robustRoom';
     section.className = 'robust-room';
     section.innerHTML = `
-      <div class="robust-head"><div><div class="eyebrow">Uncertainty & diplomat room</div><h2>What survives uncertainty, and what should the delegation do next?</h2><p>Second-stage parameter Monte Carlo, downside risk, minimax regret and a persistent round-by-round negotiation ledger.</p></div><div id="robustBadge" class="robust-badge">AWAITING EVALUATION</div></div>
+      <div class="robust-head"><div><div class="eyebrow">Uncertainty & diplomat room</div><h2>What survives uncertainty, and what should the delegation do next?</h2><p>Bargaining-parameter Monte Carlo, downside risk, minimax regret and a persistent round-by-round negotiation ledger. Full structural reruns are reported separately by Model Evidence V2.</p></div><div id="robustBadge" class="robust-badge">AWAITING EVALUATION</div></div>
       <div id="robustSummary" class="robust-summary"></div>
       <div id="robustParameters" class="parameter-chips"></div>
       <div class="robust-table-wrap"><table class="robust-table"><thead><tr><th>Package</th><th>Both clear BATNAs</th><th>Canada CVaR10</th><th>U.S. CVaR10</th><th>Canada 95% interval</th><th>U.S. 95% interval</th><th>Max regret</th><th>Wins draws</th></tr></thead><tbody id="robustRows"></tbody></table></div>
@@ -86,12 +86,12 @@
     if (typeof result === 'undefined' || !result?.robustness) return;
     const r=result.robustness, recommended=r.packages?.find(p=>p.packageId===r.recommendedPackageId);
     const badge=document.querySelector('#robustBadge');
-    badge.textContent=r.empiricallyCalibrated?'ROBUST + EMPIRICAL':'ROBUST · MODEL RISK';
+    badge.textContent=r.empiricallyCalibrated?'BARGAINING MC · EMPIRICAL INPUTS':'BARGAINING MC · MODEL RISK';
     document.querySelector('#robustSummary').innerHTML=recommended ? `
-      <div><span>Robust package</span><b>${esc(recommended.packageId)}</b><small>${esc(recommended.strategyId)}</small></div>
+      <div><span>Bargaining-MC package</span><b>${esc(recommended.packageId)}</b><small>${esc(recommended.strategyId)}</small></div>
       <div><span>Both clear reservation</span><b>${pct(recommended.jointClearProbability)}</b><small>required ${pct(r.requiredJointClearProbability)}</small></div>
       <div><span>Worst-country CVaR10</span><b>${fmt(Math.min(recommended.canadaCvar10Surplus,recommended.usCvar10Surplus))}</b><small>average surplus in worst 10% tail</small></div>
-      <div><span>Maximum regret</span><b>${fmt(recommended.maxRegret)}</b><small>${r.secondStageMonteCarloDraws} common-random draws</small></div>` : '<div><span>No robust package available</span></div>';
+      <div><span>Structural rerun</span><b>SEPARATE CHECK</b><small>use Model Evidence V2 · /api/v2/robustness</small></div>` : '<div><span>No bargaining-MC package available</span></div>';
     document.querySelector('#robustParameters').innerHTML=(r.parameterDistributions||[]).map(d=>`<div class="parameter-chip"><b>${esc(d.name)}</b> μ ${fmt(d.mean,3)} · σ ${fmt(d.standardDeviation,3)}<small>${esc(d.evidenceClass)} · ${esc(d.source)}</small></div>`).join('');
     document.querySelector('#robustRows').innerHTML=(r.packages||[]).map(p=>`<tr class="${p.packageId===r.recommendedPackageId?'recommended':''}"><td>${esc(p.packageId)}${p.packageId===r.recommendedPackageId?' ★':''}</td><td>${pct(p.jointClearProbability)}</td><td>${fmt(p.canadaCvar10Surplus)}</td><td>${fmt(p.usCvar10Surplus)}</td><td>${fmt(p.canadaCi95?.[0])}…${fmt(p.canadaCi95?.[1])}</td><td>${fmt(p.usCi95?.[0])}…${fmt(p.usCi95?.[1])}</td><td>${fmt(p.maxRegret)}</td><td>${pct(p.rankWinProbability)}</td></tr>`).join('');
     const select=document.querySelector('#roomPackageSelect');
