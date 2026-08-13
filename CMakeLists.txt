@@ -127,6 +127,8 @@ cad_add_test(negotiation_room_tests tests/negotiation_room_test.cpp negotiation_
 set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
 cad_add_test(trade_network_tests tests/trade_network_test.cpp trade_network)
+cad_add_test(bilateral_trade_tests tests/bilateral_trade_test.cpp bilateral_trade_state)
+cad_add_test(request_json_tests tests/request_json_test.cpp request_json_contract)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
 set_tests_properties(trade_episode_validation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(final_realism_tests tests/final_realism_test.cpp final_realism)
