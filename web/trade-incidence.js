@@ -85,3 +85,119 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
 })();
+
+// Delegation trade-table edits are staged. Their values remain live in the
+// negotiation state, but the expensive policy search runs only on an explicit run.
+(() => {
+  'use strict';
+
+  const baseSchedule = typeof schedule === 'function' ? schedule : null;
+  const partyView = document.querySelector('#partyView');
+  const dashboardRun = document.querySelector('#run');
+  if (!baseSchedule || !partyView || !dashboardRun) return;
+
+  let staged = false;
+  let delegationEventDepth = 0;
+  let partyRun = null;
+  let partyRunStatus = null;
+
+  function isDelegationMutation(event) {
+    const target = event?.target;
+    if (!target?.closest?.('#partyView')) return false;
+    if (event.type === 'change')
+      return target.matches?.('input[type="range"]') === true;
+    if (event.type === 'click')
+      return !!target.closest?.('#resetSectors');
+    return false;
+  }
+
+  function setStaged(value) {
+    staged = value;
+    if (partyRun) partyRun.dataset.staged = staged ? 'true' : 'false';
+    if (partyRunStatus) {
+      partyRunStatus.textContent = staged
+        ? 'Positions saved · optimizer not run yet'
+        : 'Uses Dashboard optimizer · Run again now';
+    }
+  }
+
+  function markDelegationEvent(event) {
+    if (!isDelegationMutation(event)) return;
+    delegationEventDepth++;
+    Promise.resolve().then(() => {
+      delegationEventDepth = Math.max(0, delegationEventDepth - 1);
+    });
+  }
+
+  schedule = function stagedDelegationSchedule(...args) {
+    if (delegationEventDepth > 0) {
+      setStaged(true);
+      return;
+    }
+    return baseSchedule(...args);
+  };
+
+  function syncRunButton() {
+    if (!partyRun) return;
+    partyRun.disabled = !!dashboardRun.disabled;
+    partyRun.setAttribute('aria-busy', dashboardRun.disabled ? 'true' : 'false');
+  }
+
+  function updateDelegationCopy() {
+    const notes = [...partyView.querySelectorAll('.linked-note')];
+    const liveNote = notes.find(node => /Live model:/i.test(node.textContent || ''));
+    if (liveNote) {
+      liveNote.innerHTML = '<b>Staged search:</b> tariff, allocation, and sector slider changes are saved as set but do not launch a policy search. Click <b>Run new run</b> to execute the same optimizer as Dashboard <b>Run again now</b>.';
+    }
+    const boardCopy = partyView.querySelector('.sector-board-head p');
+    if (boardCopy) {
+      boardCopy.textContent = 'Adjust sector tariffs freely. Values remain as set while you work; the expensive bilateral search starts only when Run new run is clicked.';
+    }
+  }
+
+  function injectRunControl() {
+    if (document.querySelector('#partyRun')) {
+      partyRun = document.querySelector('#partyRun');
+      partyRunStatus = document.querySelector('#partyRunStatus');
+      syncRunButton();
+      return;
+    }
+
+    const summary = partyView.querySelector('.party-summary');
+    if (!summary) return;
+    const style = document.createElement('style');
+    style.textContent = '.party-run-control{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);display:grid;gap:7px}.party-run-control button{width:100%;padding:11px 12px;border:1px solid var(--ink);background:var(--ink);color:#fff;font-weight:700;cursor:pointer}.party-run-control button[data-staged="true"]{box-shadow:inset 0 0 0 2px #fff}.party-run-control button:disabled{opacity:.55;cursor:wait}.party-run-control small{font-size:9px;line-height:1.4;color:#6b7671}';
+    document.head.appendChild(style);
+
+    const control = document.createElement('div');
+    control.className = 'party-run-control';
+    control.innerHTML = '<button id="partyRun" type="button">Run new run →</button><small id="partyRunStatus">Uses Dashboard optimizer · Run again now</small>';
+    summary.appendChild(control);
+    partyRun = control.querySelector('#partyRun');
+    partyRunStatus = control.querySelector('#partyRunStatus');
+    partyRun.addEventListener('click', () => dashboardRun.click());
+    syncRunButton();
+  }
+
+  document.addEventListener('change', markDelegationEvent, true);
+  document.addEventListener('click', markDelegationEvent, true);
+  document.addEventListener('click', event => {
+    if (event.target?.closest?.('#run')) setStaged(false);
+  }, true);
+
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(syncRunButton).observe(dashboardRun, {
+      attributes:true,
+      attributeFilter:['disabled']
+    });
+  }
+
+  injectRunControl();
+  updateDelegationCopy();
+  setStaged(false);
+
+  window.DelegationRunController = {
+    state: () => ({staged}),
+    run: () => dashboardRun.click()
+  };
+})();
