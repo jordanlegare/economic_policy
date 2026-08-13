@@ -2,6 +2,7 @@
 
 #include "negotiation_support.hpp"
 #include "robust_recommendation.hpp"
+#include "room_action.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -76,52 +77,6 @@ namespace room_detail {
 
 inline std::string esc(const std::string& value) {
   return negotiation_detail::escape_json(value);
-}
-
-inline std::string json_string(const std::string& body, const std::string& key,
-                               const std::string& fallback = "") {
-  auto pos = body.find("\"" + key + "\"");
-  if (pos == std::string::npos) return fallback;
-  pos = body.find(':', pos);
-  if (pos == std::string::npos) return fallback;
-  pos = body.find('"', pos + 1);
-  if (pos == std::string::npos) return fallback;
-  std::string out;
-  bool escaped = false;
-  for (++pos; pos < body.size(); ++pos) {
-    const char c = body[pos];
-    if (escaped) {
-      if (c == 'n') out.push_back('\n');
-      else if (c == 'r') out.push_back('\r');
-      else if (c == 't') out.push_back('\t');
-      else out.push_back(c);
-      escaped = false;
-    } else if (c == '\\') escaped = true;
-    else if (c == '"') break;
-    else out.push_back(c);
-  }
-  return out;
-}
-
-inline double json_number(const std::string& body, const std::string& key, double fallback) {
-  auto pos = body.find("\"" + key + "\"");
-  if (pos == std::string::npos) return fallback;
-  pos = body.find(':', pos);
-  if (pos == std::string::npos) return fallback;
-  pos = body.find_first_of("-0123456789.", pos + 1);
-  if (pos == std::string::npos) return fallback;
-  try { return std::stod(body.substr(pos)); } catch (...) { return fallback; }
-}
-
-inline bool json_bool(const std::string& body, const std::string& key, bool fallback) {
-  auto pos = body.find("\"" + key + "\"");
-  if (pos == std::string::npos) return fallback;
-  pos = body.find(':', pos);
-  if (pos == std::string::npos) return fallback;
-  const auto value = body.substr(pos + 1, 8);
-  if (value.find("true") != std::string::npos) return true;
-  if (value.find("false") != std::string::npos) return false;
-  return fallback;
 }
 
 inline const NegotiationPackage* find_package(const NegotiationAnalysis* analysis,
@@ -210,66 +165,60 @@ class NegotiationRoom {
   bool apply_event(const std::string& body, const NegotiationAnalysis* negotiation = nullptr,
                    const RobustRecommendationAnalysis* robustness = nullptr,
                    bool persist = true) {
-    const auto action = room_detail::json_string(body, "action");
-    if (action.empty()) return false;
+    const auto event = room_action::parse(body);
+    if (!event.valid) return false;
+    const auto& action = event.action;
 
     if (action == "set-round") {
-      round_ = std::max(1, static_cast<int>(room_detail::json_number(body, "round", round_)));
-      phase_ = room_detail::json_string(body, "phase", phase_);
+      if (event.round) round_ = *event.round;
+      if (event.phase) phase_ = *event.phase;
     } else if (action == "set-mandate" || action == "red-line") {
-      const auto issue = room_detail::json_string(body, "issueId");
-      if (issue.empty()) return false;
-      auto& rule = mandate_[issue];
-      rule.issue_id = issue;
-      rule.max_canada_move = std::max(0.0, std::min(100.0,
-          room_detail::json_number(body, "maxCanadaMove", rule.max_canada_move)));
-      rule.min_us_move = std::max(0.0, std::min(100.0,
-          room_detail::json_number(body, "minUsMove", rule.min_us_move)));
-      rule.authority = room_detail::json_string(body, "authority", rule.authority);
-      rule.hard_red_line = action == "red-line" || room_detail::json_bool(body, "hardRedLine", rule.hard_red_line);
-      rule.note = room_detail::json_string(body, "note", rule.note);
+      auto& rule = mandate_[*event.issue_id];
+      rule.issue_id = *event.issue_id;
+      if (event.max_canada_move) rule.max_canada_move = *event.max_canada_move;
+      if (event.min_us_move) rule.min_us_move = *event.min_us_move;
+      if (event.authority) rule.authority = *event.authority;
+      if (action == "red-line") rule.hard_red_line = true;
+      else if (event.hard_red_line) rule.hard_red_line = *event.hard_red_line;
+      if (event.note) rule.note = *event.note;
     } else if (action == "offer") {
       OfferRecord offer;
       offer.revision = revision_ + 1;
       offer.round = round_;
-      offer.side = room_detail::json_string(body, "side", "canada");
-      offer.package_id = room_detail::json_string(body, "packageId");
-      offer.note = room_detail::json_string(body, "note");
-      if (offer.package_id.empty()) return false;
+      offer.side = event.side.value_or("canada");
+      offer.package_id = *event.package_id;
+      offer.note = event.note.value_or("");
       if (negotiation && !room_detail::find_package(negotiation, offer.package_id)) return false;
       offers_.push_back(std::move(offer));
     } else if (action == "concession") {
       ConcessionRecord concession;
       concession.revision = revision_ + 1;
       concession.round = round_;
-      concession.side = room_detail::json_string(body, "side", "canada");
-      concession.issue_id = room_detail::json_string(body, "issueId");
-      concession.magnitude = std::max(0.0, room_detail::json_number(body, "magnitude", 0.0));
-      concession.estimated_own_cost = std::max(0.0, room_detail::json_number(body, "estimatedOwnCost", 0.0));
-      concession.estimated_counterpart_value = std::max(0.0, room_detail::json_number(body, "estimatedCounterpartValue", 0.0));
-      concession.reciprocal = room_detail::json_bool(body, "reciprocal", false);
-      concession.conditional = room_detail::json_bool(body, "conditional", true);
-      concession.note = room_detail::json_string(body, "note");
-      if (concession.issue_id.empty()) return false;
+      concession.side = event.side.value_or("canada");
+      concession.issue_id = *event.issue_id;
+      concession.magnitude = event.magnitude.value_or(0.0);
+      concession.estimated_own_cost = event.estimated_own_cost.value_or(0.0);
+      concession.estimated_counterpart_value = event.estimated_counterpart_value.value_or(0.0);
+      concession.reciprocal = event.reciprocal.value_or(false);
+      concession.conditional = event.conditional.value_or(true);
+      concession.note = event.note.value_or("");
       concessions_.push_back(std::move(concession));
     } else if (action == "playbook") {
       PlaybookRecord playbook;
       playbook.revision = revision_ + 1;
-      playbook.issue_id = room_detail::json_string(body, "issueId");
-      playbook.trigger = room_detail::json_string(body, "trigger");
-      playbook.response = room_detail::json_string(body, "response");
-      playbook.authority = room_detail::json_string(body, "authority", "delegation_discretion");
-      if (playbook.issue_id.empty() || playbook.trigger.empty() || playbook.response.empty()) return false;
+      playbook.issue_id = *event.issue_id;
+      playbook.trigger = *event.trigger;
+      playbook.response = *event.response;
+      playbook.authority = event.authority.value_or("delegation_discretion");
       playbooks_.push_back(std::move(playbook));
     } else if (action == "debrief") {
       DebriefRecord debrief;
       debrief.revision = revision_ + 1;
       debrief.round = round_;
-      debrief.summary = room_detail::json_string(body, "summary");
-      debrief.counterpart_signals = room_detail::json_string(body, "counterpartSignals");
-      debrief.unresolved = room_detail::json_string(body, "unresolved");
-      debrief.next_actions = room_detail::json_string(body, "nextActions");
-      if (debrief.summary.empty()) return false;
+      debrief.summary = *event.summary;
+      debrief.counterpart_signals = event.counterpart_signals.value_or("");
+      debrief.unresolved = event.unresolved.value_or("");
+      debrief.next_actions = event.next_actions.value_or("");
       debriefs_.push_back(std::move(debrief));
     } else {
       return false;
@@ -277,7 +226,7 @@ class NegotiationRoom {
 
     ++revision_;
     trim_history();
-    if (persist) append_event(body);
+    if (persist) append_event(room_action::to_json(event));
     (void)robustness;
     return true;
   }
@@ -334,7 +283,7 @@ class NegotiationRoom {
     out << "{\"sessionId\":\"local-room-1\",\"revision\":" << revision_
         << ",\"round\":" << round_ << ",\"phase\":\"" << esc(phase_)
         << "\",\"persistence\":{\"mode\":\"local-append-only-event-log\",\"path\":\""
-        << esc(event_log_path_) << "\",\"secureForProtectedInformation\":false},\"mandate\":[";
+        << esc(event_log_path_) << "\",\"eventSchemaVersion\":1,\"secureForProtectedInformation\":false},\"mandate\":[";
     std::size_t index = 0;
     for (const auto& item : mandate_) {
       if (index++) out << ',';
