@@ -135,6 +135,7 @@ cad_add_test(bilateral_trade_tests tests/bilateral_trade_test.cpp bilateral_trad
 cad_add_test(request_json_tests tests/request_json_test.cpp request_json_contract)
 cad_add_test(http_request_tests tests/http_request_test.cpp http_request_contract)
 cad_add_test(server_session_tests tests/server_session_test.cpp server_session_contract)
+cad_add_test(thread_pool_tests tests/thread_pool_test.cpp thread_pool_concurrency)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
 set_tests_properties(trade_episode_validation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(final_realism_tests tests/final_realism_test.cpp final_realism)
