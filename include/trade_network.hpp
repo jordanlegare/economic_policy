@@ -27,6 +27,20 @@ struct TariffIncidence {
   double exporter_absorption = 0.0;
 };
 
+// Production-network transmission parameters are explicit inputs so they can
+// be provenance-labelled, bounded and sampled by the structural registry.
+// Defaults reproduce the pre-registry V2 behavior exactly.
+struct TradeNetworkTuning {
+  double supplier_demand_transmission = 0.30;
+  double input_cost_incidence = 0.85;
+  double downstream_cost_transmission = 0.85;
+  double price_cost_pass_through = 0.70;
+  double output_cost_base = 0.12;
+  double output_cost_cyclical = 0.18;
+  double jobs_output_base = 0.20;
+  double jobs_output_exposure = 0.35;
+};
+
 struct TradeNetworkInput {
   double us_headline_tariff = 0.0;
   double canada_headline_tariff = 0.0;
@@ -34,6 +48,7 @@ struct TradeNetworkInput {
   double diversification = 0.0;
   double trade_elasticity = 0.65;
   double price_pass_through = 0.24;
+  TradeNetworkTuning tuning{};
   std::array<double, kTradeSectorCount> us_coverage{};
   std::array<double, kTradeSectorCount> canada_coverage{};
 
@@ -52,6 +67,13 @@ struct TradeNetworkInput {
 struct TradeSourceContribution {
   TariffIncidence us_tariff;
   TariffIncidence canada_tariff;
+  // Bounded constant-elasticity bilateral quantity responses for this source.
+  // These are the single source of truth for both direct sector effects and
+  // the first-round shock injected into the production network.
+  double canada_quantity_loss = 0.0;
+  double us_quantity_loss = 0.0;
+  double canada_direct_trade_drag = 0.0;
+  double us_direct_trade_drag = 0.0;
   std::array<double, kTradeSectorCount> canada_output{};
   std::array<double, kTradeSectorCount> canada_jobs{};
   std::array<double, kTradeSectorCount> canada_prices{};
@@ -65,6 +87,10 @@ struct TradeSourceContribution {
 struct TradeNetworkSector {
   TariffIncidence us_tariff;
   TariffIncidence canada_tariff;
+  double canada_quantity_loss = 0.0;
+  double us_quantity_loss = 0.0;
+  double canada_direct_trade_drag = 0.0;
+  double us_direct_trade_drag = 0.0;
   double canada_indirect_output = 0.0;
   double canada_indirect_jobs = 0.0;
   double canada_indirect_prices = 0.0;
