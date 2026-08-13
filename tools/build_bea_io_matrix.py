@@ -20,6 +20,9 @@ Method
    where J is a model downstream sector, I is a model upstream sector, X_j is
    BEA gross output and a_ij is a domestic direct requirement.
 5. Freeze the exact matrix to CSV and a generated C++ header with provenance.
+6. Generate a separate contract header binding the exact CSV/header hashes,
+   source year and selected BEA table IDs. A manually reviewed certification
+   marker must match that contract before the runtime can activate BEA.
 
 BEA publishes the InputOutput API but requires an API key. Do not substitute a
 scraped HTML table or an unrelated historical matrix when the API is unavailable.
@@ -271,24 +274,80 @@ def render_csv(matrix: list[list[float]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_header(matrix: list[list[float]], year: int) -> str:
+def render_header(
+    matrix: list[list[float]],
+    year: int,
+    direct_table_id: str,
+    use_table_id: str,
+    csv_sha256: str,
+) -> str:
     rows = []
     for row in matrix:
         rows.append("    {{" + ", ".join(f"{value:.12f}" for value in row) + "}}")
     return (
         "#pragma once\n\n"
-        "#include \"trade_network.hpp\"\n\n"
+        "#include \"trade_network.hpp\"\n"
+        "#include \"generated/trade_io_us_bea_contract.hpp\"\n\n"
+        "#include <string_view>\n\n"
+        "#if __has_include(\"generated/trade_io_us_bea_certified.hpp\")\n"
+        "#include \"generated/trade_io_us_bea_certified.hpp\"\n"
+        "#define CAD_BEA_US_IO_CERTIFICATION_MARKER_PRESENT 1\n"
+        "#else\n"
+        "#define CAD_BEA_US_IO_CERTIFICATION_MARKER_PRESENT 0\n"
+        "#endif\n\n"
         "namespace cad::generated {\n\n"
         f"// Generated from U.S. BEA InputOutput domestic direct requirements, {year}.\n"
         "// Orientation: [downstream][upstream]. Do not edit by hand.\n"
+        f"inline constexpr int kBeaUsIoYear = {year};\n"
+        f"inline constexpr std::string_view kBeaUsIoDirectRequirementsTableId = \"{direct_table_id}\";\n"
+        f"inline constexpr std::string_view kBeaUsIoUseTableId = \"{use_table_id}\";\n"
+        f"inline constexpr std::string_view kBeaUsIoCsvSha256 = \"{csv_sha256}\";\n\n"
         "inline constexpr TradeInputOutputMatrix kBeaUsIoMatrix{{\n"
         + ",\n".join(rows)
-        + "\n}};\n\n}  // namespace cad::generated\n"
+        + "\n}};\n\n"
+        "#if CAD_BEA_US_IO_CERTIFICATION_MARKER_PRESENT\n"
+        "static_assert(kBeaUsIoYear == kCertifiedBeaUsIoYear, \"Certified BEA year mismatch\");\n"
+        "static_assert(kBeaUsIoDirectRequirementsTableId == kCertifiedBeaUsIoDirectRequirementsTableId, \"Certified BEA direct-requirements table mismatch\");\n"
+        "static_assert(kBeaUsIoUseTableId == kCertifiedBeaUsIoUseTableId, \"Certified BEA Use table mismatch\");\n"
+        "static_assert(kBeaUsIoCsvSha256 == kCertifiedBeaUsIoCsvSha256, \"Certified BEA CSV SHA-256 mismatch\");\n"
+        "static_assert(kBeaUsIoHeaderSha256 == kCertifiedBeaUsIoHeaderSha256, \"Certified BEA header SHA-256 mismatch\");\n"
+        "static_assert(kBeaUsIoArtifactFingerprint == kCertifiedBeaUsIoArtifactFingerprint, \"Certified BEA artifact fingerprint mismatch\");\n"
+        "#endif\n\n"
+        "}  // namespace cad::generated\n"
+    )
+
+
+def render_contract_header(header_sha256: str, artifact_fingerprint: str) -> str:
+    return (
+        "#pragma once\n\n"
+        "#include <string_view>\n\n"
+        "namespace cad::generated {\n\n"
+        "// Generated with trade_io_us_bea.hpp. Do not edit by hand.\n"
+        f"inline constexpr std::string_view kBeaUsIoHeaderSha256 = \"{header_sha256}\";\n"
+        f"inline constexpr std::string_view kBeaUsIoArtifactFingerprint = \"{artifact_fingerprint}\";\n\n"
+        "}  // namespace cad::generated\n"
     )
 
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def bea_artifact_fingerprint(
+    year: int,
+    direct_table_id: str,
+    use_table_id: str,
+    csv_sha256: str,
+    header_sha256: str,
+) -> str:
+    payload = {
+        "csv_sha256": csv_sha256,
+        "direct_requirements_table_id": str(direct_table_id),
+        "header_sha256": header_sha256,
+        "use_table_id": str(use_table_id),
+        "year": int(year),
+    }
+    return sha256_text(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
 def write_or_verify(path: Path, content: str, verify: bool) -> None:
@@ -306,6 +365,7 @@ def main() -> int:
     parser.add_argument("--api-key", default=None, help="BEA API key; prefer BEA_API_KEY env")
     parser.add_argument("--csv", default="data/calibration/bea_us_io_matrix.csv")
     parser.add_argument("--header", default="include/generated/trade_io_us_bea.hpp")
+    parser.add_argument("--contract-header", default="include/generated/trade_io_us_bea_contract.hpp")
     parser.add_argument("--provenance", default="data/calibration/bea_us_io_provenance.json")
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
@@ -324,7 +384,25 @@ def main() -> int:
     matrix = aggregate_matrix(direct_rows, output)
 
     csv_text = render_csv(matrix)
-    header_text = render_header(matrix, args.year)
+    csv_sha256 = sha256_text(csv_text)
+    header_text = render_header(
+        matrix,
+        args.year,
+        direct_table.key,
+        use_table.key,
+        csv_sha256,
+    )
+    header_sha256 = sha256_text(header_text)
+    artifact_fingerprint = bea_artifact_fingerprint(
+        args.year,
+        direct_table.key,
+        use_table.key,
+        csv_sha256,
+        header_sha256,
+    )
+    contract_text = render_contract_header(header_sha256, artifact_fingerprint)
+    contract_sha256 = sha256_text(contract_text)
+
     provenance = {
         "agency": "U.S. Bureau of Economic Analysis",
         "dataset": "InputOutput",
@@ -336,15 +414,26 @@ def main() -> int:
         "model_sector_count": len(MODEL_CODES),
         "method": "output-weighted aggregation of BEA domestic direct requirements to 20 model sectors",
         "orientation": "downstream_by_upstream",
-        "csv_sha256": sha256_text(csv_text),
-        "header_sha256": sha256_text(header_text),
+        "csv_sha256": csv_sha256,
+        "header_sha256": header_sha256,
+        "contract_header_sha256": contract_sha256,
+        "artifact_fingerprint": artifact_fingerprint,
+        "certification_contract": {
+            "year": args.year,
+            "direct_requirements_table_id": direct_table.key,
+            "use_table_id": use_table.key,
+            "csv_sha256": csv_sha256,
+            "header_sha256": header_sha256,
+            "artifact_fingerprint": artifact_fingerprint,
+        },
         "api": API_URL,
-        "note": "API key is never written to provenance. Review mapping and row sums before promoting the U.S. matrix to empirical production use.",
+        "note": "API key is never written to provenance. Review mapping, row sums, source vintage, selected table IDs and exact artifact hashes before manually committing trade_io_us_bea_certified.hpp.",
     }
     provenance_text = json.dumps(provenance, indent=2, sort_keys=True) + "\n"
 
     write_or_verify(Path(args.csv), csv_text, args.verify)
     write_or_verify(Path(args.header), header_text, args.verify)
+    write_or_verify(Path(args.contract_header), contract_text, args.verify)
     write_or_verify(Path(args.provenance), provenance_text, args.verify)
     print(json.dumps(provenance, indent=2, sort_keys=True))
     return 0

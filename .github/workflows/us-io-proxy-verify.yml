@@ -3,33 +3,20 @@ name: U.S. IO proxy verify
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/trade_network.cpp'
-      - 'include/generated/trade_io_us_proxy.hpp'
-      - 'data/calibration/useeio_us_proxy_matrix.csv'
-      - 'data/calibration/useeio_us_proxy_provenance.json'
-      - 'tools/build_useeio_us_proxy.py'
-      - 'tests/useeio_us_proxy_builder_test.py'
-      - '.github/workflows/us-io-proxy-verify.yml'
   pull_request:
-    paths:
-      - 'src/trade_network.cpp'
-      - 'include/generated/trade_io_us_proxy.hpp'
-      - 'data/calibration/useeio_us_proxy_matrix.csv'
-      - 'data/calibration/useeio_us_proxy_provenance.json'
-      - 'tools/build_useeio_us_proxy.py'
-      - 'tests/useeio_us_proxy_builder_test.py'
-      - '.github/workflows/us-io-proxy-verify.yml'
 
 jobs:
   verify:
+    name: U.S. IO integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check builder syntax and aggregation contract
+      - name: Check builders and certification contract
         run: |
-          python3 -m py_compile tools/build_useeio_us_proxy.py
+          python3 -m py_compile tools/build_useeio_us_proxy.py tools/build_bea_io_matrix.py tools/verify_bea_io_certification.py
           python3 tests/useeio_us_proxy_builder_test.py
+          python3 tests/bea_io_certification_test.py
+          python3 tools/verify_bea_io_certification.py
       - name: Check frozen proxy artifact and provenance
         run: |
           python3 - <<'PY'
@@ -41,6 +28,8 @@ jobs:
           provenance_path = Path('data/calibration/useeio_us_proxy_provenance.json')
           header_path = Path('include/generated/trade_io_us_proxy.hpp')
           source_path = Path('src/trade_network.cpp')
+          registry_path = Path('data/calibration/source_registry.csv')
+          builder_path = Path('tools/build_bea_io_matrix.py')
 
           with matrix_path.open(newline='', encoding='utf-8') as stream:
               rows = list(csv.DictReader(stream))
@@ -89,4 +78,13 @@ jobs:
           assert 'generated::kBeaUsIoMatrix' in source
           assert 'trade_io_us_bea_certified.hpp' in source
           assert 'kUsProxyMatrix = generated::kStatCanIo2024Matrix' not in source
+
+          registry = registry_path.read_text(encoding='utf-8')
+          assert 'epa_useeio_us_proxy' in registry
+          assert 'USEEIOv2.5-catbird-22' in registry
+
+          builder = builder_path.read_text(encoding='utf-8')
+          assert 'trade_io_us_bea_contract.hpp' in builder
+          assert 'kCertifiedBeaUsIoHeaderSha256' in builder
+          assert 'kCertifiedBeaUsIoArtifactFingerprint' in builder
           PY
