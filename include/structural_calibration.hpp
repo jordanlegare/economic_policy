@@ -4,8 +4,10 @@
 #include "policy_engine.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -45,16 +47,57 @@ inline std::vector<std::string> structural_multiplier_parameter_names() {
   };
 }
 
+inline bool supported_structural_distribution(const std::string& distribution) {
+  return distribution == "fixed" || distribution == "derived"
+      || distribution == "normal" || distribution == "lognormal";
+}
+
+inline bool structural_parameter_entry_valid(
+    const StructuralParameterProvenance& entry) {
+  if (entry.name.empty() || entry.source_id.empty() || entry.vintage.empty()
+      || entry.kind.empty() || !supported_structural_distribution(entry.distribution))
+    return false;
+  if (!std::isfinite(entry.baseline) || !std::isfinite(entry.lower_bound)
+      || !std::isfinite(entry.upper_bound) || !std::isfinite(entry.relative_sigma))
+    return false;
+  if (entry.upper_bound < entry.lower_bound
+      || entry.baseline < entry.lower_bound - 1e-12
+      || entry.baseline > entry.upper_bound + 1e-12
+      || entry.relative_sigma < 0.0)
+    return false;
+  if ((entry.distribution == "fixed" || entry.distribution == "derived")
+      && entry.relative_sigma > 1e-12)
+    return false;
+  if (!entry.sampled && entry.distribution != "fixed"
+      && entry.distribution != "derived" && entry.relative_sigma > 1e-12)
+    return false;
+  return true;
+}
+
 inline bool structural_parameter_registry_complete(
     const StructuralParameterRegistry& registry) {
-  if (!registry.loaded) return false;
+  if (!registry.loaded || registry.registry_id.empty() || registry.as_of.empty()) return false;
+  std::set<std::string> seen;
+  for (const auto& entry : registry.entries) {
+    if (!structural_parameter_entry_valid(entry)) return false;
+    if (!seen.insert(entry.name).second) return false;
+  }
   for (const auto& name : required_structural_parameter_names()) {
     const auto* entry = registry.find(name);
-    if (!entry || entry->source_id.empty() || entry->vintage.empty()
-        || entry->kind.empty() || entry->distribution.empty()
-        || entry->upper_bound < entry->lower_bound) return false;
+    if (!entry || !structural_parameter_entry_valid(*entry)) return false;
   }
   return true;
+}
+
+inline int invalid_structural_parameter_count(
+    const StructuralParameterRegistry& registry) {
+  int invalid = 0;
+  std::set<std::string> seen;
+  for (const auto& entry : registry.entries) {
+    if (!structural_parameter_entry_valid(entry) || !seen.insert(entry.name).second)
+      ++invalid;
+  }
+  return invalid;
 }
 
 inline int sampled_structural_parameter_count(
@@ -106,9 +149,6 @@ inline StructuralCalibrationCompleteness audit_structural_calibration_completene
   for (const auto& name : required) {
     const auto* entry = registry.find(name);
     if (!entry) continue;
-    // Mandates are policy-framework constants and derived parameters are
-    // algebraic constraints. Neither should inflate or depress the empirical
-    // calibration denominator.
     if (entry->kind == "mandate" || entry->kind == "derived") continue;
     ++out.calibration_target_count;
     const bool direct = direct_empirical_structural_kind(entry->kind);
@@ -178,7 +218,7 @@ inline StructuralParameters apply_structural_parameter_registry(
     StructuralParameters p, const StructuralParameterRegistry& registry) {
   auto value = [&](const char* name, double& field) {
     const auto* entry = registry.find(name);
-    if (entry) field = entry->baseline;
+    if (entry && structural_parameter_entry_valid(*entry)) field = entry->baseline;
   };
   value("neutral_rate", p.neutral_rate);
   value("inflation_target", p.inflation_target);
@@ -227,6 +267,7 @@ inline std::string structural_parameter_registry_to_json(
       << "\",\"loaded\":" << (registry.loaded ? "true" : "false")
       << ",\"complete\":"
       << (structural_parameter_registry_complete(registry) ? "true" : "false")
+      << ",\"invalidParameterCount\":" << invalid_structural_parameter_count(registry)
       << ",\"sampledParameterCount\":"
       << sampled_structural_parameter_count(registry)
       << ",\"calibrationCompleteness\":{\"parameterCount\":" << completeness.parameter_count
@@ -257,6 +298,7 @@ inline std::string structural_parameter_registry_to_json(
         << ",\"distribution\":\"" << calibration_detail::esc(p.distribution)
         << "\",\"relativeSigma\":" << p.relative_sigma
         << ",\"sampled\":" << (p.sampled ? "true" : "false")
+        << ",\"valid\":" << (structural_parameter_entry_valid(p) ? "true" : "false")
         << ",\"notes\":\"" << calibration_detail::esc(p.notes) << "\"}";
   }
   out << "]}";
