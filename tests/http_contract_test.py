@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import time
@@ -105,6 +106,23 @@ def main() -> int:
         health = json.loads(expect_status("GET", "/api/health", None, 200))
         assert health["workers"] == 2
         assert health["authRequired"] is False
+
+        # Occupy one real worker with an intentionally incomplete HTTP header.
+        # A second request must still be serviced promptly by the other worker;
+        # the old single-threaded accept/handle loop could not satisfy this.
+        blocker = socket.create_connection((HOST, PORT), timeout=2)
+        try:
+            blocker.sendall(b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n")
+            time.sleep(0.05)
+            started = time.monotonic()
+            concurrent_health = json.loads(
+                expect_status("GET", "/api/health", None, 200, timeout=2)
+            )
+            elapsed = time.monotonic() - started
+            assert concurrent_health["workers"] == 2
+            assert elapsed < 1.5, f"second client serialized behind blocked worker for {elapsed:.2f}s"
+        finally:
+            blocker.close()
 
         # The first baseline request must return the calibrated cache immediately;
         # it may not wait on three external curl calls.
