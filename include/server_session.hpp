@@ -54,6 +54,12 @@ struct SessionState {
   }
 
   std::string id;
+  // Stateful evaluations are serialized per session so two overlapping browser
+  // requests cannot publish results in completion order rather than request
+  // order. Other sessions use distinct operation mutexes and remain concurrent.
+  mutable std::mutex operation_mutex;
+  // Short critical sections protect published state and negotiation/room
+  // mutations. Expensive model computation does not hold this mutex.
   mutable std::mutex mutex;
   NegotiationState negotiation;
   NegotiationRoom room;
