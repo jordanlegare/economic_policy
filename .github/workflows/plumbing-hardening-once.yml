@@ -18,6 +18,7 @@ jobs:
       - name: Prepare and apply transformer
         run: |
           sed -i "s/']}/]}/g; s/'],/],/g" tools/plumbing_hardening_once.py
+          sed -i 's/^          : cad::apply_calibration(parse(body), engine.snapshot());$/            : cad::apply_calibration(parse(body), engine.snapshot());/' src/main.cpp
           python3 -m py_compile tools/plumbing_hardening_once.py
           python3 tools/plumbing_hardening_once.py
       - name: Browser syntax and controller contract
