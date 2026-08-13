@@ -125,8 +125,16 @@ std::vector<WelfarePreferenceProfile> make_welfare_preference_grid(const Economy
 WelfareSensitivitySummary evaluate_welfare_sensitivity(
     const PolicyEngine& engine, const Economy& economy,
     const std::vector<WelfarePreferenceProfile>& profiles) {
+  return evaluate_welfare_sensitivity(engine, economy, profiles,
+      EvaluationOptions{economy.exhaustive_policy_search});
+}
+
+WelfareSensitivitySummary evaluate_welfare_sensitivity(
+    const PolicyEngine& engine, const Economy& economy,
+    const std::vector<WelfarePreferenceProfile>& profiles,
+    EvaluationOptions options) {
   WelfareSensitivitySummary out;
-  const Result reference_result = engine.evaluate(economy);
+  const Result reference_result = engine.evaluate(economy, options);
   const Scenario* reference = selected_scenario(reference_result);
   if (!reference) return out;
   out.reference_strategy = reference_result.recommendation.strategy_id;
@@ -145,7 +153,7 @@ WelfareSensitivitySummary evaluate_welfare_sensitivity(
     candidate.us_priority = profile.us_priority;
     candidate.risk_aversion = profile.risk_aversion;
     candidate.loss_weights = profile.loss_weights;
-    const Result result = engine.evaluate(candidate);
+    const Result result = engine.evaluate(candidate, options);
     const Scenario* selected = selected_scenario(result);
     if (!selected) continue;
 

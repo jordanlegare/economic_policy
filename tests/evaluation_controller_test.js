@@ -79,11 +79,13 @@ global.applyRecommendation = () => {
 
 let recommendationVerified = true;
 const fullPayload = () => ({
-  scenarios:[{id:'compact',name:'Compact',growth:1.7}],
+  scenarios:[{id:'compact',name:'Compact',growth:1.7,sectors:Array.from({length:20},(_,i)=>({canada:{output:-1-i/100,jobs:-.5,prices:.2},us:{output:-.4,jobs:-.2,prices:.1}}))}],
   recommendation:{
     strategyId:'compact',
     usSectorCoverage:Array(20).fill(50),
     canadaSectorCoverage:Array(20).fill(75),
+    canadaSectorValue:Array(20).fill(61),
+    usSectorOutput:Array(20).fill(64),
     policyCandidatesVerified:301,
     globalSearchComplete:true,
     sectorCandidatesExamined:4200,
@@ -169,39 +171,35 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert.deepStrictEqual(window.EvaluationController.state().searchAnchor.us, calibratedUsCoverage,
     'auto-applied winning agreement must not become a new concession anchor');
 
-  // The delegation table must expose a live bilateral response surface instead
-  // of repeating only the metric vector at the verified recommendation. Use the
-  // status-quo strategy here because its relief envelope leaves sector coverage
-  // free to move across the declared search grid.
-  const savedStrategy = global.result.recommendation.strategyId;
-  const savedScenarioId = global.result.scenarios[0].id;
-  global.result.recommendation.strategyId = 'statusquo';
-  global.result.scenarios[0].id = 'statusquo';
+  // The browser must never run a second economic model. It may display the
+  // last server-verified sector result, but a coverage edit is explicitly
+  // pending until the authoritative server evaluation completes.
   const verifiedMetric = window.EvaluationController.sectorMetrics(0, 50, 75);
-  const exploreUs = window.EvaluationController.sectorMetrics(0, 75, 75);
-  const exploreCanada = window.EvaluationController.sectorMetrics(0, 50, 50);
-  assert(verifiedMetric && exploreUs && exploreCanada,
-    'sector response model must produce metrics for the delegation table');
-  assert.strictEqual(verifiedMetric.verified, true,
-    'the auto-applied recommendation must remain visibly identifiable');
-  assert.strictEqual(exploreUs.verified, false,
-    'moving a delegation slider must switch the row into exploration mode');
-  assert.strictEqual(exploreUs.insideSearchEnvelope, true,
-    'live metrics should cover the same feasible relief envelope searched by the engine');
-  assert.notStrictEqual(exploreUs.canada.output, verifiedMetric.canada.output,
-    'U.S. coverage must immediately change the Canadian sector outcome');
-  assert.notStrictEqual(exploreUs.canada.score, verifiedMetric.canada.score,
-    'U.S. coverage must immediately change the Canadian balanced-deal score');
-  assert.notStrictEqual(exploreCanada.us.prices, verifiedMetric.us.prices,
-    'Canadian retaliation coverage must immediately change the U.S. price outcome');
-  global.result.recommendation.strategyId = savedStrategy;
-  global.result.scenarios[0].id = savedScenarioId;
+  const pendingMetric = window.EvaluationController.sectorMetrics(0, 75, 75);
+  assert(verifiedMetric && pendingMetric, 'server-authoritative sector metrics must be exposed');
+  assert.strictEqual(verifiedMetric.serverAuthoritative, true);
+  assert.strictEqual(verifiedMetric.verified, true);
+  assert.strictEqual(verifiedMetric.pending, false);
+  assert.strictEqual(verifiedMetric.canada.output, -1);
+  assert.strictEqual(verifiedMetric.canada.score, 61);
+  assert.strictEqual(pendingMetric.serverAuthoritative, true);
+  assert.strictEqual(pendingMetric.verified, false);
+  assert.strictEqual(pendingMetric.pending, true,
+    'slider changes must be labelled pending instead of being simulated in JavaScript');
+  assert.strictEqual(pendingMetric.canada.output, verifiedMetric.canada.output,
+    'pending UI state must not fabricate a client-side counterfactual');
+
+  const controllerSource = fs.readFileSync('web/evaluation-controller.js','utf8');
+  assert(!controllerSource.includes('const sectorProfiles = ['),
+    'sector profile/economic constants must not be duplicated in the browser controller');
+  assert(!controllerSource.includes('function sectorUtility('),
+    'browser controller must not contain a parallel sector utility equation');
 
   const appSource = fs.readFileSync('web/app.js','utf8');
   assert(appSource.includes('window.EvaluationController?.sectorMetrics?.('),
     'party table must read live response metrics from the evaluation controller');
-  assert(appSource.includes("updatePartySectorMetric(i,input.parentElement.querySelector('.sector-deal-metric'))"),
-    'party slider input must repaint its metric before re-optimization completes');
+  assert(appSource.includes('Pending verified server re-evaluation'),
+    'party slider must show a pending server state instead of a local economic counterfactual');
 
   // Let the deferred comparison start. It is deliberately unresolved here;
   // the full-screen loading state must already be gone.

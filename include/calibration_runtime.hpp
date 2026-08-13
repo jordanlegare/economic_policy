@@ -11,7 +11,8 @@
 
 namespace cad {
 
-inline Economy apply_calibration(Economy economy, const CalibrationSnapshot& snapshot) {
+inline Economy apply_non_control_calibration(
+    Economy economy, const CalibrationSnapshot& snapshot) {
   auto apply = [&](const char* key, double& field) {
     const auto* p = calibration_detail::parameter(snapshot, key);
     if (p && p->use_in_model && calibration_detail::trusted_kind(p->kind)) field = p->value;
@@ -22,6 +23,39 @@ inline Economy apply_calibration(Economy economy, const CalibrationSnapshot& sna
   apply("imports_from_us_share", economy.imports_from_us_share);
   apply("trade_elasticity", economy.trade_elasticity);
   apply("border_friction", economy.border_friction);
+
+  // Pass-through is a production coefficient, not a negotiation control. The
+  // snapshot therefore reattaches it server-side on every evaluation rather
+  // than relying on the browser to round-trip hidden calibration state.
+  if (const auto* pass = calibration_detail::parameter(
+          snapshot, "tariff_price_pass_through_anchor")) {
+    if (pass->kind == "empirically-estimated" && pass->value >= 0.0
+        && pass->value <= 1.0)
+      economy.tariff_price_pass_through = pass->value;
+  }
+
+  // The current sector elasticity evidence is a production-compatible sector
+  // elasticity rather than a directional tariff-specific estimate, so it is
+  // used in both import directions. The committed pass-through evidence is from
+  // Canadian retaliatory-tariff incidence and is activated only for Canadian
+  // imports; the U.S. direction deliberately continues to use the aggregate
+  // anchor until compatible U.S. evidence exists.
+  for (std::size_t i = 0; i < snapshot.sectors.size(); ++i) {
+    const auto& sector = snapshot.sectors[i];
+    if (sector.elasticity_kind == "empirically-estimated"
+        && sector.trade_elasticity > 0.0) {
+      economy.us_sector_trade_elasticity[i] = sector.trade_elasticity;
+      economy.canada_sector_trade_elasticity[i] = sector.trade_elasticity;
+    }
+    if (calibration_detail::empirical_pass_through_kind(sector.pass_through_kind)
+        && sector.price_pass_through >= 0.0 && sector.price_pass_through <= 1.0)
+      economy.canada_sector_price_pass_through[i] = sector.price_pass_through;
+  }
+  return economy;
+}
+
+inline Economy apply_calibration(Economy economy, const CalibrationSnapshot& snapshot) {
+  economy = apply_non_control_calibration(std::move(economy), snapshot);
 
   // The engine represents the frozen legal/effective tariff calibration as a
   // maximum applied goods rate plus per-sector coverage. Non-merchandise
@@ -43,16 +77,24 @@ inline Economy apply_calibration(Economy economy, const CalibrationSnapshot& sna
         economy.canada_sector_coverage[i] = 100.0 * std::max(0.0, snapshot.sectors[i].canada_effective_tariff) / max_ca;
     }
   }
-
-  // Only direct production mappings should change the aggregate model scalar.
-  // Sector-level literature estimates can certify the evidence layer without
-  // silently redefining the engine's aggregate trade-elasticity estimand.
   return economy;
 }
 
 inline std::string calibration_to_json(const CalibrationSnapshot& snapshot) {
   using calibration_detail::esc;
   const Economy effective = apply_calibration(Economy{}, snapshot);
+  int sector_elasticity_overrides = 0;
+  int canada_pass_through_overrides = 0;
+  int us_pass_through_overrides = 0;
+  for (std::size_t i = 0; i < effective.us_sector_trade_elasticity.size(); ++i) {
+    if (effective.us_sector_trade_elasticity[i] > 0.0
+        || effective.canada_sector_trade_elasticity[i] > 0.0)
+      ++sector_elasticity_overrides;
+    if (effective.canada_sector_price_pass_through[i] > 0.0)
+      ++canada_pass_through_overrides;
+    if (effective.us_sector_price_pass_through[i] > 0.0)
+      ++us_pass_through_overrides;
+  }
   std::ostringstream out;
   out << std::fixed << std::setprecision(4);
   out << "{\"snapshotId\":\"" << esc(snapshot.snapshot_id)
@@ -76,7 +118,11 @@ inline std::string calibration_to_json(const CalibrationSnapshot& snapshot) {
     if (i) out << ',';
     out << effective.canada_sector_coverage[i];
   }
-  out << "]}"
+  out << "],\"runtimeActivation\":{\"aggregateTradeElasticity\":" << effective.trade_elasticity
+      << ",\"aggregateTariffPricePassThrough\":" << effective.tariff_price_pass_through
+      << ",\"sectorElasticityOverrideCount\":" << sector_elasticity_overrides
+      << ",\"canadaPassThroughOverrideCount\":" << canada_pass_through_overrides
+      << ",\"usPassThroughOverrideCount\":" << us_pass_through_overrides << "}}"
       << ",\"checks\":{\"officialTrade\":" << (snapshot.official_trade_complete ? "true" : "false")
       << ",\"tariffLines\":" << (snapshot.tariff_lines_complete ? "true" : "false")
       << ",\"inputOutput\":" << (snapshot.input_output_complete ? "true" : "false")
@@ -133,8 +179,8 @@ class CalibratedPolicyEngine {
     // scenario, those explicit controls are the state to solve; reapplying the
     // snapshot here would silently erase tariff/coverage what-if inputs.
     const Economy calibrated_baseline = apply_calibration(Economy{}, snapshot_);
-    economy.exhaustive_policy_search = true;
-    Result result = base_.evaluate(economy);
+    economy = apply_non_control_calibration(std::move(economy), snapshot_);
+    Result result = base_.evaluate(economy, production_evaluation_options());
     // Initial calibrated opening remains pure maximum welfare. Once the user
     // changes the visible package, preserve that submitted scenario as the
     // anchor and use proximity only inside the declared 0.5-point welfare band.
