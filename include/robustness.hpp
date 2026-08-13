@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -41,18 +43,125 @@ inline DrawRule rule_for(const StructuralParameters& baseline,
 }
 
 inline double sample_value(double baseline, const DrawRule& rule,
-                           std::mt19937_64& rng,
-                           std::normal_distribution<double>& z) {
+                           double standardized_draw) {
   if (!rule.sampled || rule.distribution == "fixed"
       || rule.distribution == "derived" || rule.sigma <= 0.0)
     return std::clamp(baseline, rule.lower, rule.upper);
   const double draw = rule.distribution == "lognormal"
-      ? baseline * std::exp(rule.sigma * z(rng) - 0.5 * rule.sigma * rule.sigma)
-      : baseline * (1.0 + rule.sigma * z(rng));
+      ? baseline * std::exp(rule.sigma * standardized_draw
+                            - 0.5 * rule.sigma * rule.sigma)
+      : baseline * (1.0 + rule.sigma * standardized_draw);
   return std::clamp(draw, rule.lower, rule.upper);
 }
 
+inline std::vector<std::string> sampled_names(
+    const StructuralParameterRegistry& registry) {
+  std::vector<std::string> names;
+  for (const auto& entry : registry.entries) {
+    if (entry.sampled && entry.distribution != "fixed"
+        && entry.distribution != "derived")
+      names.push_back(entry.name);
+  }
+  return names;
+}
+
+inline std::vector<std::vector<double>> correlation_matrix(
+    const StructuralParameterRegistry& registry,
+    const std::vector<std::string>& names) {
+  const std::size_t n = names.size();
+  std::vector<std::vector<double>> matrix(n, std::vector<double>(n, 0.0));
+  std::map<std::string, std::size_t> index;
+  for (std::size_t i = 0; i < n; ++i) {
+    matrix[i][i] = 1.0;
+    index.emplace(names[i], i);
+  }
+  for (const auto& pair : registry.correlations) {
+    const auto left = index.find(pair.left);
+    const auto right = index.find(pair.right);
+    if (left == index.end() || right == index.end())
+      throw std::invalid_argument("correlation references unsampled structural parameter");
+    if (!std::isfinite(pair.correlation) || pair.correlation < -1.0
+        || pair.correlation > 1.0)
+      throw std::invalid_argument("invalid structural correlation coefficient");
+    matrix[left->second][right->second] = pair.correlation;
+    matrix[right->second][left->second] = pair.correlation;
+  }
+  return matrix;
+}
+
+inline std::vector<std::vector<double>> cholesky(
+    const std::vector<std::vector<double>>& matrix) {
+  const std::size_t n = matrix.size();
+  std::vector<std::vector<double>> lower(n, std::vector<double>(n, 0.0));
+  for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t j = 0; j <= i; ++j) {
+      double value = matrix[i][j];
+      for (std::size_t k = 0; k < j; ++k) value -= lower[i][k] * lower[j][k];
+      if (i == j) {
+        if (value < -1e-10)
+          throw std::invalid_argument("structural correlation matrix is not positive semidefinite");
+        lower[i][j] = std::sqrt(std::max(0.0, value));
+      } else if (lower[j][j] > 1e-12) {
+        lower[i][j] = value / lower[j][j];
+      } else if (std::abs(value) > 1e-10) {
+        throw std::invalid_argument("singular structural correlation matrix is inconsistent");
+      }
+    }
+  }
+  return lower;
+}
+
+inline bool correlation_matrix_valid(const StructuralParameterRegistry& registry) {
+  try {
+    const auto names = sampled_names(registry);
+    (void)cholesky(correlation_matrix(registry, names));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+inline std::string dependence_mode(const StructuralParameterRegistry& registry) {
+  return registry.correlations.empty()
+      ? "independent-with-derived-constraints"
+      : "declared-gaussian-copula-with-derived-constraints";
+}
+
+inline std::map<std::string, double> standardized_draws(
+    const StructuralParameterRegistry& registry, std::mt19937_64& rng,
+    std::normal_distribution<double>& normal) {
+  const auto names = sampled_names(registry);
+  const auto lower = cholesky(correlation_matrix(registry, names));
+  std::vector<double> independent(names.size(), 0.0);
+  for (double& value : independent) value = normal(rng);
+  std::map<std::string, double> draws;
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    double value = 0.0;
+    for (std::size_t j = 0; j <= i; ++j) value += lower[i][j] * independent[j];
+    draws.emplace(names[i], value);
+  }
+  return draws;
+}
+
+inline double standardized_for(const std::map<std::string, double>& draws,
+                               const std::string& name,
+                               std::mt19937_64& rng,
+                               std::normal_distribution<double>& normal) {
+  const auto it = draws.find(name);
+  return it == draws.end() ? normal(rng) : it->second;
+}
+
 }  // namespace robustness_detail
+
+inline bool structural_sampling_correlation_matrix_valid(
+    const StructuralParameterRegistry& registry) {
+  return robustness_detail::correlation_matrix_valid(registry);
+}
+
+inline std::string structural_sampling_dependence_mode(
+    const StructuralParameterRegistry& registry) {
+  return robustness_detail::dependence_mode(registry);
+}
 
 inline std::vector<StructuralParameters> draw_structural_parameters(
     const StructuralParameters& baseline,
@@ -62,22 +171,26 @@ inline std::vector<StructuralParameters> draw_structural_parameters(
   using robustness_detail::sample_value;
   std::vector<StructuralParameters> out;
   if (draws <= 0) return out;
+  if (!structural_sampling_correlation_matrix_valid(registry))
+    throw std::invalid_argument("invalid structural uncertainty correlation matrix");
   out.reserve(static_cast<std::size_t>(draws));
   std::mt19937_64 rng(seed);
-  std::normal_distribution<double> z(0.0, 1.0);
+  std::normal_distribution<double> normal(0.0, 1.0);
   const double inf = std::numeric_limits<double>::infinity();
 
   auto rule = [&](const char* name, double lo, double hi, const char* distribution) {
     return rule_for(baseline, registry, name, lo, hi, distribution);
   };
-  auto draw = [&](double value, const char* name, double lo, double hi,
-                  const char* distribution) {
-    return sample_value(value, rule(name, lo, hi, distribution), rng, z);
-  };
 
   for (int i = 0; i < draws; ++i) {
     StructuralParameters p = baseline;
     p.calibration_id = baseline.calibration_id + ":draw-" + std::to_string(i + 1);
+    const auto z = robustness_detail::standardized_draws(registry, rng, normal);
+    auto draw = [&](double value, const char* name, double lo, double hi,
+                    const char* distribution) {
+      return sample_value(value, rule(name, lo, hi, distribution),
+          robustness_detail::standardized_for(z, name, rng, normal));
+    };
 
     p.neutral_rate = draw(baseline.neutral_rate, "neutral_rate", .25, 6.0, "normal");
     p.rate_inflation_response = draw(baseline.rate_inflation_response, "rate_inflation_response", 1e-6, inf, "lognormal");
@@ -92,7 +205,8 @@ inline std::vector<StructuralParameters> draw_structural_parameters(
     const auto persistence_rule = rule("inflation_persistence", .05, .98, "normal");
     const auto expectations_rule = rule("inflation_expectations_weight", .01, .95, "normal");
     p.inflation_persistence = sample_value(
-        baseline.inflation_persistence, persistence_rule, rng, z);
+        baseline.inflation_persistence, persistence_rule,
+        robustness_detail::standardized_for(z, "inflation_persistence", rng, normal));
     const double anchor = baseline.inflation_persistence
         + baseline.inflation_expectations_weight;
     if (expectations_rule.distribution == "derived" || !expectations_rule.sampled) {
@@ -102,7 +216,8 @@ inline std::vector<StructuralParameters> draw_structural_parameters(
       p.inflation_expectations_weight = anchor - p.inflation_persistence;
     } else {
       p.inflation_expectations_weight = sample_value(
-          baseline.inflation_expectations_weight, expectations_rule, rng, z);
+          baseline.inflation_expectations_weight, expectations_rule,
+          robustness_detail::standardized_for(z, "inflation_expectations_weight", rng, normal));
       const double sampled_anchor = p.inflation_persistence + p.inflation_expectations_weight;
       if (sampled_anchor > 1e-12) {
         const double scale = anchor / sampled_anchor;
@@ -118,6 +233,16 @@ inline std::vector<StructuralParameters> draw_structural_parameters(
     p.canada_trade_drag_scale = draw(baseline.canada_trade_drag_scale, "canada_trade_drag_scale", 1e-6, inf, "lognormal");
     p.us_retaliation_drag_scale = draw(baseline.us_retaliation_drag_scale, "us_retaliation_drag_scale", 1e-6, inf, "lognormal");
     p.tariff_revenue_elasticity_scale = draw(baseline.tariff_revenue_elasticity_scale, "tariff_revenue_elasticity_scale", 1e-6, inf, "lognormal");
+
+    p.network_supplier_demand_transmission = draw(baseline.network_supplier_demand_transmission, "network_supplier_demand_transmission", 0.0, .95, "normal");
+    p.network_input_cost_incidence = draw(baseline.network_input_cost_incidence, "network_input_cost_incidence", 0.0, 1.0, "normal");
+    p.network_downstream_cost_transmission = draw(baseline.network_downstream_cost_transmission, "network_downstream_cost_transmission", 0.0, .95, "normal");
+    p.network_price_cost_pass_through = draw(baseline.network_price_cost_pass_through, "network_price_cost_pass_through", 0.0, 1.5, "normal");
+    p.network_output_cost_base = draw(baseline.network_output_cost_base, "network_output_cost_base", 1e-6, 1.0, "lognormal");
+    p.network_output_cost_cyclical = draw(baseline.network_output_cost_cyclical, "network_output_cost_cyclical", 1e-6, 1.0, "lognormal");
+    p.network_jobs_output_base = draw(baseline.network_jobs_output_base, "network_jobs_output_base", 0.0, 1.0, "normal");
+    p.network_jobs_output_exposure = draw(baseline.network_jobs_output_exposure, "network_jobs_output_exposure", 0.0, 1.5, "normal");
+
     p.output_shock_sd = draw(baseline.output_shock_sd, "output_shock_sd", 1e-6, inf, "lognormal");
     p.inflation_shock_sd = draw(baseline.inflation_shock_sd, "inflation_shock_sd", 1e-6, inf, "lognormal");
     p.growth_shock_sd = draw(baseline.growth_shock_sd, "growth_shock_sd", 1e-6, inf, "lognormal");
