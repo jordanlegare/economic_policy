@@ -61,7 +61,7 @@
     const badge = document.querySelector('#incidenceEvidenceBadge');
     if (badge) {
       const empirical = country === 'canada';
-      badge.textContent = empirical ? 'Canada IO · StatCan empirical' : 'U.S. IO · BEA artifact pending';
+      badge.textContent = empirical ? 'Canada IO · StatCan empirical' : 'U.S. IO · BEA artifact pending · EPA USEEIO proxy active';
       badge.className = `incidence-badge ${empirical ? 'empirical' : 'proxy'}`;
     }
     const method = document.querySelector('#tradeIncidenceMethod');

@@ -7,6 +7,7 @@
   const fmt = (value, digits = 2) => Number(value ?? 0).toFixed(digits);
   let structuralCalibration = null;
   let structuralRegistryComplete = false;
+  let runtimeEvidence = null;
 
   function inject() {
     if (document.querySelector('#calibrationTrust')) return;
@@ -34,7 +35,7 @@
         <button id="runWelfareEvidence" type="button">Preference sensitivity</button>
         <button id="runStructuralEvidence" type="button">Structural robustness · 6 draws</button>
       </div>
-      <div id="evidenceNotice" class="evidence-notice">Run a diagnostic when needed. Structural and preference analyses rerun the full policy/sector optimization and can be computationally intensive.</div>
+      <div id="evidenceNotice" class="evidence-notice">Loading the current production-data boundary…</div>
       <div id="evidenceOutput" class="evidence-output"></div>`;
     anchor.insertAdjacentElement('afterend', section);
     bindEvidence();
@@ -97,6 +98,7 @@
       const c = r.calibrationCompleteness || {};
       structuralCalibration = c;
       structuralRegistryComplete = !!r.complete;
+      runtimeEvidence = runtime;
       const coverage = Number(c.directEmpiricalCoverage || 0);
       const gradeText = String(c.grade || (r.complete ? 'mostly-provisional' : 'registry-incomplete')).replaceAll('-', ' ').toUpperCase();
       const grade = document.querySelector('#evidenceGrade');
@@ -107,19 +109,29 @@
       const plumbingPass = runtime.decisionLossWeightsComplete && runtime.stateMeasurementContractComplete;
       const cards = structuralCards(c) + `
         <div><span>Runtime plumbing</span><b>${plumbingPass?'PASS':'CHECK'}</b><small>${Number(runtime.decisionLossWeightCount||0)}/12 loss weights · ${Number(runtime.readyStateMeasurementCount||0)} state-measurement contracts active</small></div>
-        <div><span>U.S. production network</span><b>${runtime.usIoEmpirical?'BEA empirical':'PROXY PENDING'}</b><small>${runtime.usIoEmpirical?'certified U.S. IO artifact active':'Canadian coefficients remain an explicitly labelled structural proxy'}</small></div>`;
+        <div><span>U.S. production network</span><b>${runtime.usIoEmpirical?'BEA EMPIRICAL':'EPA USEEIO PROXY'}</b><small>${runtime.usIoEmpirical?'certified current-vintage U.S. IO artifact active':'USEEIO v2.5 Catbird-22 · 2022 model / 2017 IO basis · BEA certification pending'}</small></div>
+        <div><span>Canada↔U.S. intermediate sourcing</span><b>OECD ICIO PENDING</b><small>domestic IO networks are active; bilateral sourcing awaits official ICIO bytes plus a reviewed fractional crosswalk</small></div>
+        <div><span>Historical macro validation</span><b>${Number(runtime.validHistoricalFixtureCount||0)}/${Number(runtime.historicalFixtureCount||0)} VALID</b><small>descriptive macro-policy fixtures; not statistical validation</small></div>`;
       const target = document.querySelector('#evidenceRegistry');
       if (target) target.innerHTML = cards;
       const panelTarget = document.querySelector('#calibrationStructuralSummary');
       if (panelTarget) panelTarget.innerHTML = cards;
+      const notice = document.querySelector('#evidenceNotice');
+      if (notice) {
+        notice.innerHTML = `<b>Current evidence boundary:</b> ${runtime.usIoEmpirical ? 'the certified BEA U.S. production network is active.' : 'the U.S. production network uses the EPA USEEIO v2.5 proxy until exact BEA certification.'} OECD bilateral intermediate sourcing is not active in production. Structural and preference diagnostics rerun the production optimizer; they do not convert provisional coefficients into empirical estimates.`;
+      }
+      void state;
       updateCalibrationGrade();
     } catch (error) {
       structuralCalibration = null;
       structuralRegistryComplete = false;
+      runtimeEvidence = null;
       const target = document.querySelector('#evidenceRegistry');
       if (target) target.innerHTML = `<div><span>V2 evidence API</span><b>Unavailable</b><small>${esc(error.message)}</small></div>`;
       const panelTarget = document.querySelector('#calibrationStructuralSummary');
       if (panelTarget) panelTarget.innerHTML = `<div><span>Structural calibration API</span><b>Unavailable</b><small>${esc(error.message)}</small></div>`;
+      const notice = document.querySelector('#evidenceNotice');
+      if (notice) notice.textContent = 'The evidence-status API is unavailable; do not infer production-network or calibration readiness from the UI alone.';
       updateCalibrationGrade();
     }
   }
@@ -136,7 +148,7 @@
         <div><span>Unemployment direction</span><b>${ratioPct(s.unemployment?.directionAccuracy)}</b><small>MAE ${fmt(s.unemployment?.meanAbsoluteError,2)}</small></div>
       </div>
       <div class="evidence-cases">${episodes.map(e=>`<article><b>${esc(e.fixtureId)}</b><span>${esc(e.decisionDate)} · ${esc(e.stateGrade)}</span><small>policy ${e.policyDirectionMatch?'direction match':'direction miss'} · predicted ${fmt(e.recommendedFirstMoveBp,0)} bp vs realized ${fmt(e.realizedFirstMoveBp,0)} bp</small></article>`).join('')}</div>
-      <p class="evidence-footnote">Three episodes permit descriptive aggregate reporting only; they do not constitute statistical validation.</p>`;
+      <p class="evidence-footnote">These shipped episodes permit descriptive aggregate reporting only; they do not constitute statistical validation.</p>`;
   }
 
   function renderWelfare(w) {
@@ -239,7 +251,8 @@
       const missing = Object.entries(checks).filter(([,ok]) => !ok).map(([key]) => key).join(', ');
       const sources = (c.sources || []).slice(0,8).map(s => `<li><b>${esc(s.agency)}</b> — ${esc(s.dataset)} · ${esc(s.vintage || 'vintage not captured')} · ${esc(s.status)}</li>`).join('');
       const structural = structuralCalibration ? `<p><b>Structural production calibration:</b> ${fmt(structuralCalibration.directEmpiricalCoverage,1)}% direct empirical mappings (${Number(structuralCalibration.directEmpiricalCount || 0)}/${Number(structuralCalibration.calibrationTargetCount || 0)}); shock variances ${Number(structuralCalibration.directEmpiricalShockCount || 0)}/${Number(structuralCalibration.shockTargetCount || 0)}; remaining multipliers ${Number(structuralCalibration.directEmpiricalMultiplierCount || 0)}/${Number(structuralCalibration.multiplierTargetCount || 0)}; ${Number(structuralCalibration.provisionalCount || 0)} parameters still provisional.</p>` : `<p><b>Structural production calibration:</b> unavailable.</p>`;
-      const section = `<section id="calibrationBriefSection"><h2>Data provenance and calibration</h2><p><b>Snapshot:</b> ${esc(c.snapshotId)} · as of ${esc(c.asOf || 'unknown')} · observed-data calibration completeness ${pct(c.completeness)} · grade <b>${esc(c.grade)}</b>.</p>${structural}<p><b>Observed-data empirical-use certification:</b> ${c.certifiedForEmpiricalUse?'PASS':'NOT YET CERTIFIED'}.</p>${missing?`<p><b>Missing calibration gates:</b> ${esc(missing)}.</p>`:''}<h3>Principal source vintages</h3><ul>${sources}</ul><p><small>Observed, official-derived, empirically estimated and assumption inputs are intentionally distinguished. A verified optimizer result is not equivalent to an empirically calibrated forecast.</small></p></section>`;
+      const network = runtimeEvidence ? `<p><b>Production-network evidence:</b> Canada uses the empirical StatCan 2024 matrix; the U.S. network is ${runtimeEvidence.usIoEmpirical ? 'the certified BEA artifact' : 'the EPA USEEIO v2.5 Catbird-22 proxy (2022 model / 2017 IO basis), with BEA certification pending'}. Canada↔U.S. OECD ICIO intermediate sourcing is not yet active in production.</p>` : `<p><b>Production-network evidence:</b> runtime status unavailable.</p>`;
+      const section = `<section id="calibrationBriefSection"><h2>Data provenance and calibration</h2><p><b>Snapshot:</b> ${esc(c.snapshotId)} · as of ${esc(c.asOf || 'unknown')} · observed-data calibration completeness ${pct(c.completeness)} · grade <b>${esc(c.grade)}</b>.</p>${structural}${network}<p><b>Observed-data empirical-use certification:</b> ${c.certifiedForEmpiricalUse?'PASS':'NOT YET CERTIFIED'}.</p>${missing?`<p><b>Missing calibration gates:</b> ${esc(missing)}.</p>`:''}<h3>Principal source vintages</h3><ul>${sources}</ul><p><small>Observed, official-derived, empirically estimated and assumption inputs are intentionally distinguished. A verified optimizer result is not equivalent to an empirically calibrated forecast.</small></p></section>`;
       const warning = sheet.querySelector('.briefing-warning');
       if (warning) warning.insertAdjacentHTML('beforebegin', section); else sheet.insertAdjacentHTML('beforeend', section);
     }, 0);

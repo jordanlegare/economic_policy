@@ -16,10 +16,16 @@ const required = [
   'direct empirical mappings',
   'Observed-data calibration completeness',
   'structuralCalibration',
+  'runtimeEvidence',
   'directEmpiricalCoverage',
   'directEmpiricalShockCount',
   'directEmpiricalMultiplierCount',
   'provisionalCount',
+  'EPA USEEIO PROXY',
+  'USEEIO v2.5 Catbird-22',
+  'OECD ICIO PENDING',
+  'Historical macro validation',
+  'bilateral sourcing awaits official ICIO bytes',
   '/api/v2/structural-registry',
   '/api/v2/backtests',
   '/api/v2/welfare',
@@ -34,6 +40,10 @@ const required = [
 
 for (const token of required) {
   if (!source.includes(token)) throw new Error(`missing V2 evidence UI contract token: ${token}`);
+}
+
+if (source.includes('Canadian coefficients remain an explicitly labelled structural proxy')) {
+  throw new Error('U.S. IO evidence UI must not describe the EPA USEEIO proxy as Canadian coefficients');
 }
 
 if (/addEventListener\(['"]DOMContentLoaded['"],\s*async/.test(source)) {
