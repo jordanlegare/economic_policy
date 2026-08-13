@@ -11,7 +11,6 @@ const controllerSource = source.slice(start);
 const listeners = {change:[], click:[]};
 let scheduleCalls = 0;
 let dashboardRunClicks = 0;
-let partyRunHandler = null;
 
 const partyView = {
   querySelectorAll() { return []; },
@@ -22,9 +21,7 @@ const partyRun = {
   disabled:false,
   dataset:{},
   setAttribute() {},
-  addEventListener(type, handler) {
-    if (type === 'click') partyRunHandler = handler;
-  }
+  addEventListener() {}
 };
 const dashboardRun = {
   disabled:false,
@@ -72,8 +69,10 @@ vm.runInThisContext(controllerSource);
   assert.strictEqual(scheduleCalls, 1,
     'non-delegation scheduling must retain the existing dashboard behavior');
 
-  assert(partyRunHandler, 'delegation Run new run button must be wired');
-  partyRunHandler();
+  assert(controllerSource.includes(
+    "partyRun.addEventListener('click', () => dashboardRun.click())"),
+    'delegation Run new run button must be wired to the Dashboard run button');
+  window.DelegationRunController.run();
   assert.strictEqual(dashboardRunClicks, 1,
     'delegation Run new run must invoke the Dashboard Run again now button');
   assert.strictEqual(window.DelegationRunController.state().staged, false,
