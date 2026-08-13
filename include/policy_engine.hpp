@@ -76,9 +76,6 @@ struct StructuralParameters {
   double us_retaliation_drag_scale = 1.0;
   double tariff_revenue_elasticity_scale = 1.0;
 
-  // Production-network transmission coefficients. These were historically
-  // embedded in trade_network.cpp; keeping them here makes their provenance,
-  // bounds and structural uncertainty executable and auditable.
   double network_supplier_demand_transmission = 0.30;
   double network_input_cost_incidence = 0.85;
   double network_downstream_cost_transmission = 0.85;
@@ -90,44 +87,27 @@ struct StructuralParameters {
 
   double output_shock_sd = 0.16;
   double inflation_shock_sd = 0.11;
-  // Frozen empirical residual-correlation estimate from the same 75-quarter
-  // output-gap / inflation estimation panel. This captures only the identified
-  // two-equation contemporaneous covariance; it is not a claim that the full
-  // macro innovation vector has been empirically identified.
   double output_inflation_shock_correlation = -0.006249264169;
   double growth_shock_sd = 0.25;
   double us_growth_shock_sd = 0.18;
   double export_shock_sd = 0.35;
   double us_export_shock_sd = 0.30;
 
-  // Tail/regime mechanics are explicit structural assumptions. They transform
-  // the same seeded Gaussian innovations, so common-random-number comparisons
-  // remain deterministic without pretending the tail shape is empirically
-  // identified from the short calibration sample.
   double shock_tail_threshold = 2.0;
   double shock_tail_scale = 1.75;
   double stress_regime_shock_scale = 1.35;
-
-  // Global multiplier for the declared per-parameter uncertainty widths.
-  // 0 disables structural uncertainty; 0.10 is the reference V2 scale.
   double uncertainty_scale = 0.10;
 };
 
-// Internal loss-function coefficients are typed separately from economic
-// structural parameters and delegation priorities. Normal optimization keeps
-// them fixed. V2 welfare sensitivity may vary explicitly declared components
-// without disguising normative/model-design choices as estimated economics.
 struct DecisionLossWeights {
   double boc_inflation = 3.8;
   double boc_unemployment = 1.2;
   double boc_contraction = 0.7;
   double boc_recession = 0.018;
-
   double federal_debt = 0.32;
   double federal_contraction = 0.7;
   double federal_unemployment = 0.8;
   double federal_housing = 0.012;
-
   double us_exports = 0.55;
   double us_inflation = 0.8;
   double us_growth = 0.55;
@@ -155,19 +135,12 @@ struct Economy {
   double risk_aversion = 50.0, cooperation_ceiling = 50.0;
   double minimum_bilateral_growth = 0.0;
   DecisionLossWeights loss_weights{};
-  // Internal structural tuning copied from the PolicyEngine before evaluation.
-  // It is intentionally absent from the public request contract.
   TradeNetworkTuning trade_network_tuning{};
-  // The web application's primary evaluation enables this mode after seeding
-  // controls from the certified baseline. Low-level and robustness tests can
-  // keep the staged mode when they are not claiming startup global optimality.
   bool exhaustive_policy_search = false;
+  // Interactive delegation runs treat submitted tariff/coverage settings as hard constraints.
+  bool lock_delegation_settings = false;
   std::array<double, 20> us_sector_coverage{}, canada_sector_coverage{};
 
-  // Production-compatible directional sector evidence can be supplied here.
-  // Zero means "no direct sector estimate": the trade network then falls back
-  // to the audited aggregate elasticity/pass-through anchors. Reference-only
-  // literature must not be copied into these arrays merely because it exists.
   std::array<double, 20> us_sector_trade_elasticity{};
   std::array<double, 20> canada_sector_trade_elasticity{};
   std::array<double, 20> us_sector_price_pass_through{};
@@ -188,9 +161,6 @@ struct SectorImpact {
   double canada_output = 0.0, canada_jobs = 0.0, canada_prices = 0.0;
   double us_output = 0.0, us_jobs = 0.0, us_prices = 0.0;
   double exposure = 0.0;
-  // Negotiator-facing tariff-incidence and production-network diagnostics.
-  // Tariff values are percentage points; upstream costs are sector marginal-
-  // cost pressure propagated through the country-specific 20x20 networks.
   double us_applied_tariff = 0.0, canada_applied_tariff = 0.0;
   double us_buyer_pass_through = 0.0, canada_buyer_pass_through = 0.0;
   double canada_exporter_absorption = 0.0, us_exporter_absorption = 0.0;
@@ -204,11 +174,7 @@ struct Scenario {
   double negotiated_relief = 0.0, targeted_relief = 0.0, diversification = 0.0;
   double score = 0.0, boc_score = 0.0, federal_score = 0.0;
   double canada_score = 0.0, us_score = 0.0;
-  // Average directional effective-tariff/coverage deviation from the submitted
-  // UI posture, expressed on a 0-100 headline-equivalent distance scale.
   double trade_posture_distance = 0.0;
-  // True when this verified scenario leaves both national welfare scores no
-  // worse than the submitted posture and satisfies the bilateral growth floor.
   bool anchor_win_win = false;
   double inflation = 0.0, growth = 0.0, unemployment = 0.0;
   double us_growth = 0.0, bilateral_growth_floor = 0.0;
@@ -226,8 +192,6 @@ struct Scenario {
   bool sector_verified = false;
   std::array<double, 20> applied_us_sector_coverage{}, applied_canada_sector_coverage{};
   std::array<double, 12> rates{}, inflation_path{}, growth_path{}, us_growth_path{}, debt_path{}, cost_path{}, export_path{}, us_export_path{};
-  // Auditable implementation profiles derived from the chosen policy amplitudes.
-  // These are deterministic policy rules, not additional optimizer dimensions.
   std::array<double, 12> fiscal_path{}, productive_investment_path{}, negotiated_relief_path{}, targeted_relief_path{}, diversification_path{};
   std::vector<SectorImpact> sectors;
 };
@@ -256,12 +220,10 @@ struct RobustnessSummary {
   bool policy_controls_reoptimized = false;
   bool parameter_bounds_active = false;
   bool parameter_provenance_complete = false;
-
   int policy_control_candidates_per_draw = 0;
   std::uint64_t policy_control_candidates_examined = 0;
   std::uint64_t policy_control_changes = 0;
   double reference_policy_control_retention_rate = 0.0;
-
   int sector_frontiers_built = 0;
   std::uint64_t nested_sector_optimizations = 0;
   std::uint64_t nested_sector_candidates_examined = 0;
@@ -287,9 +249,6 @@ struct WinWinRecommendation {
   double verified_canada_score = 0.0, verified_us_score = 0.0;
   double baseline_canada_score = 0.0, baseline_us_score = 0.0;
   double verified_min_sector_metric = 0.0;
-  // User-steered selection: maximize verified welfare first, then within this
-  // practical score band choose the package closest to the submitted trade
-  // posture rather than jumping for an economically negligible score gain.
   double user_anchor_welfare_tolerance = 0.5;
   double best_verified_score = 0.0;
   double selected_trade_posture_distance = 0.0;
@@ -332,9 +291,6 @@ class PolicyEngine {
   }
   Result evaluate(const Economy& economy) const;
   Result evaluate(const Economy& economy, EvaluationOptions options) const;
-  // Full V2 decision robustness samples structural calibrations, re-runs the
-  // complete generated policy-control search, then re-optimizes the 20-sector
-  // negotiation package before stochastic verification inside every draw.
   Result evaluate_robust(const Economy& economy, int parameter_draws = 24) const;
   Result evaluate_robust(const Economy& economy, int parameter_draws,
                          EvaluationOptions options) const;
