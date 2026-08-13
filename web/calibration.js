@@ -89,7 +89,11 @@
 
   async function loadRegistry() {
     try {
-      const r = await jsonFetch('/api/v2/structural-registry', {cache:'no-store'});
+      const [r, runtime, state] = await Promise.all([
+        jsonFetch('/api/v2/structural-registry', {cache:'no-store'}),
+        jsonFetch('/api/v2/evidence-status', {cache:'no-store'}),
+        jsonFetch('/api/v2/state-measurements', {cache:'no-store'})
+      ]);
       const c = r.calibrationCompleteness || {};
       structuralCalibration = c;
       structuralRegistryComplete = !!r.complete;
@@ -100,7 +104,10 @@
         grade.textContent = r.complete ? gradeText : 'REGISTRY INCOMPLETE';
         grade.classList.toggle('certified', !!r.complete && coverage >= 95);
       }
-      const cards = structuralCards(c);
+      const plumbingPass = runtime.decisionLossWeightsComplete && runtime.stateMeasurementContractComplete;
+      const cards = structuralCards(c) + `
+        <div><span>Runtime plumbing</span><b>${plumbingPass?'PASS':'CHECK'}</b><small>${Number(runtime.decisionLossWeightCount||0)}/12 loss weights · ${Number(runtime.readyStateMeasurementCount||0)} state-measurement contracts active</small></div>
+        <div><span>U.S. production network</span><b>${runtime.usIoEmpirical?'BEA empirical':'PROXY PENDING'}</b><small>${runtime.usIoEmpirical?'certified U.S. IO artifact active':'Canadian coefficients remain an explicitly labelled structural proxy'}</small></div>`;
       const target = document.querySelector('#evidenceRegistry');
       if (target) target.innerHTML = cards;
       const panelTarget = document.querySelector('#calibrationStructuralSummary');

@@ -56,6 +56,7 @@ if(WIN32)
     web/principal-briefing.js
     data/calibration/current.snapshot.csv
     data/calibration/structural_parameter_registry.csv
+    data/calibration/decision_loss_weights.csv
     data/calibration/empirical_structural_evidence.csv
     data/calibration/quarterly_structural_estimates.csv
     data/calibration/quarterly_residual_covariance.csv
@@ -129,6 +130,8 @@ cad_add_test(trade_network_tests tests/trade_network_test.cpp trade_network)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
 set_tests_properties(trade_episode_validation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(final_realism_tests tests/final_realism_test.cpp final_realism)
+cad_add_test(plumbing_integration_tests tests/plumbing_integration_test.cpp plumbing_integration)
+set_tests_properties(plumbing_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(robustness_sampler_tests tests/robustness_test.cpp robustness_sampler)
 cad_add_test(robustness_integration_tests tests/robustness_integration_test.cpp robustness_integration)
 cad_add_test(backtest_tests tests/backtest_test.cpp historical_backtest)

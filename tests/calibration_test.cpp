@@ -117,6 +117,12 @@ int main() {
   assert(std::abs(current_calibrated.us_sector_coverage[4] - 100.0) < 1e-9);
   assert(std::abs(current_calibrated.us_sector_coverage[2]) < 1e-9);
   assert(std::abs(current_calibrated.trade_elasticity - 0.65) < 1e-9);
+  assert(std::abs(current_calibrated.tariff_price_pass_through - 0.24) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_trade_elasticity[0] - 5.705) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_trade_elasticity[1] - 12.510) < 1e-9);
+  assert(std::abs(current_calibrated.canada_sector_trade_elasticity[4] - 7.167) < 1e-9);
+  assert(std::abs(current_calibrated.canada_sector_price_pass_through[0] - 0.24) < 1e-9);
+  assert(std::abs(current_calibrated.us_sector_price_pass_through[0]) < 1e-9);
 
   const auto certified_json = cad::calibration_to_json(certified);
   assert(certified_json.find("\"certifiedForEmpiricalUse\":true") != std::string::npos);
@@ -128,6 +134,8 @@ int main() {
   assert(certified_json.find("\"effectiveState\":") != std::string::npos);
   assert(certified_json.find("\"usTariff\":5.0000") != std::string::npos);
   assert(certified_json.find("\"retaliatoryTariff\":1.5000") != std::string::npos);
+  assert(certified_json.find("\"sectorElasticityOverrideCount\":3") != std::string::npos);
+  assert(certified_json.find("\"canadaPassThroughOverrideCount\":3") != std::string::npos);
 
   bool saw_future_section338 = false;
   for (const auto& measure : certified.measures) {

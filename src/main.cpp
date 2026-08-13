@@ -1,6 +1,9 @@
 #include "policy_engine.hpp"
 #include "calibration.hpp"
 #include "model_evidence.hpp"
+#include "runtime_configuration.hpp"
+#include "state_measurement.hpp"
+#include "trade_network.hpp"
 #include "negotiation_support.hpp"
 #include "negotiation_trade_alignment.hpp"
 #include "robust_recommendation.hpp"
@@ -180,16 +183,16 @@ cad::Economy parse(const std::string& body) {
   FIELD("wageGrowth", wage_growth); FIELD("productivity", productivity_growth);
   FIELD("population", population_growth); FIELD("usdcad", usdcad);
   FIELD("oil", oil_price); FIELD("creditSpread", credit_spread);
-  FIELD("housingGap", housing_gap); FIELD("householdDebt", household_debt_income);
+  FIELD("housingGap", housing_gap);
   FIELD("fiscalBalance", fiscal_balance_gdp); FIELD("federalDebt", federal_debt_gdp);
-  FIELD("programGrowth", program_growth); FIELD("taxImpulse", tax_impulse);
-  FIELD("infrastructure", infrastructure_impulse); FIELD("globalGrowth", global_growth);
+  FIELD("globalGrowth", global_growth);
   FIELD("expectations", inflation_expectations); FIELD("usGrowth", us_growth);
   FIELD("usInflation", us_inflation); FIELD("usTariff", us_tariff_canada);
   FIELD("retaliatoryTariff", canada_retaliatory_tariff); FIELD("exportsUs", exports_to_us_share);
   FIELD("importsUs", imports_from_us_share); FIELD("exportsGdp", exports_gdp);
   FIELD("importContent", import_content_consumption); FIELD("tradeElasticity", trade_elasticity);
   FIELD("borderFriction", border_friction); FIELD("tariffRelief", tariff_relief);
+  FIELD("tariffPricePassThrough", tariff_price_pass_through);
   FIELD("diversification", trade_diversification); FIELD("bilateralExportsCad", canada_exports_to_us_cad);
   FIELD("bilateralImportsCad", canada_imports_from_us_cad); FIELD("canadaPriority", canada_priority);
   FIELD("usPriority", us_priority); FIELD("riskAversion", risk_aversion);
@@ -253,8 +256,11 @@ double latest_value(const std::string& json, double fallback) {
   catch (...) { return fallback; }
 }
 
-std::string live_baseline(const cad::CalibrationSnapshot& calibration) {
+std::string live_baseline(const cad::CalibrationSnapshot& calibration,
+                          const cad::DecisionLossCalibration& decision_loss,
+                          const cad::StateMeasurementRegistry& state_registry) {
   cad::Economy economy = cad::apply_calibration(cad::Economy{}, calibration);
+  economy.loss_weights = decision_loss.weights;
   const auto rate = download("https://www.bankofcanada.ca/valet/observations/V39079/json?recent=1");
   const auto fx = download("https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1");
   const auto wti = download("https://www.bankofcanada.ca/valet/observations/WTI/json?recent=1");
@@ -266,11 +272,16 @@ std::string live_baseline(const cad::CalibrationSnapshot& calibration) {
   std::time_t now = std::time(nullptr);
   char stamp[32];
   std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&now));
-  const bool any_live = rate_live || fx_live || wti_live;
+  const int live_fields = static_cast<int>(rate_live) + static_cast<int>(fx_live)
+      + static_cast<int>(wti_live);
+  const bool any_live = live_fields > 0;
   std::ostringstream out;
   out << std::fixed << std::setprecision(3)
-      << "{\"status\":\"" << (any_live ? "live" : "calibrated")
-      << "\",\"statusDetail\":\"" << (any_live ? "calibrated baseline plus live BoC observations" : "calibrated snapshot; live BoC fetch unavailable")
+      << "{\"status\":\"" << (any_live ? "live-partial" : "calibrated")
+      << "\",\"statusDetail\":\""
+      << (any_live
+          ? "partial live baseline: market feeds refreshed where available; macro state fields remain explicitly calibrated/default inputs"
+          : "calibrated/default baseline; live Bank of Canada market fetch unavailable")
       << "\",\"asOf\":\"" << stamp << "\",\"settings\":{";
 #define OUT(k, v) out << "\"" k "\":" << v << ','
   OUT("policyRate", economy.policy_rate); OUT("inflation", economy.inflation);
@@ -279,16 +290,15 @@ std::string live_baseline(const cad::CalibrationSnapshot& calibration) {
   OUT("unemployment", economy.unemployment); OUT("wageGrowth", economy.wage_growth);
   OUT("productivity", economy.productivity_growth); OUT("population", economy.population_growth);
   OUT("creditSpread", economy.credit_spread); OUT("housingGap", economy.housing_gap);
-  OUT("householdDebt", economy.household_debt_income); OUT("usdcad", economy.usdcad);
-  OUT("oil", economy.oil_price); OUT("usTariff", economy.us_tariff_canada);
-  OUT("retaliatoryTariff", economy.canada_retaliatory_tariff); OUT("exportsUs", economy.exports_to_us_share);
-  OUT("importsUs", economy.imports_from_us_share); OUT("exportsGdp", economy.exports_gdp);
-  OUT("importContent", economy.import_content_consumption); OUT("tradeElasticity", economy.trade_elasticity);
-  OUT("borderFriction", economy.border_friction); OUT("usGrowth", economy.us_growth);
-  OUT("usInflation", economy.us_inflation); OUT("fiscalBalance", economy.fiscal_balance_gdp);
-  OUT("federalDebt", economy.federal_debt_gdp); OUT("programGrowth", economy.program_growth);
-  OUT("infrastructure", economy.infrastructure_impulse); OUT("globalGrowth", economy.global_growth);
-  OUT("minimumBilateralGrowth", economy.minimum_bilateral_growth);
+  OUT("usdcad", economy.usdcad); OUT("oil", economy.oil_price);
+  OUT("usTariff", economy.us_tariff_canada); OUT("retaliatoryTariff", economy.canada_retaliatory_tariff);
+  OUT("exportsUs", economy.exports_to_us_share); OUT("importsUs", economy.imports_from_us_share);
+  OUT("exportsGdp", economy.exports_gdp); OUT("importContent", economy.import_content_consumption);
+  OUT("tradeElasticity", economy.trade_elasticity); OUT("borderFriction", economy.border_friction);
+  OUT("tariffPricePassThrough", economy.tariff_price_pass_through);
+  OUT("usGrowth", economy.us_growth); OUT("usInflation", economy.us_inflation);
+  OUT("fiscalBalance", economy.fiscal_balance_gdp); OUT("federalDebt", economy.federal_debt_gdp);
+  OUT("globalGrowth", economy.global_growth); OUT("minimumBilateralGrowth", economy.minimum_bilateral_growth);
 #undef OUT
   out << "\"bilateralExportsCad\":" << economy.canada_exports_to_us_cad
       << ",\"bilateralImportsCad\":" << economy.canada_imports_from_us_cad
@@ -297,11 +307,18 @@ std::string live_baseline(const cad::CalibrationSnapshot& calibration) {
       << "{\"name\":\"Bank of Canada policy rate\",\"fields\":\"Policy rate · Valet V39079\",\"url\":\"https://www.bankofcanada.ca/valet/\"},"
       << "{\"name\":\"Bank of Canada USD/CAD\",\"fields\":\"Exchange rate · Valet FXUSDCAD\",\"url\":\"https://www.bankofcanada.ca/valet/\"},"
       << "{\"name\":\"Bank of Canada WTI\",\"fields\":\"WTI oil price · Valet WTI\",\"url\":\"https://www.bankofcanada.ca/valet/\"}],"
-      << "\"provenance\":{\"observedLive\":["
+      << "\"provenance\":{\"liveFieldCount\":" << live_fields
+      << ",\"liveEligibleFieldCount\":3"
+      << ",\"stateMeasurementContractComplete\":"
+      << (cad::state_measurement_contract_complete(state_registry) ? "true" : "false")
+      << ",\"stateMeasurementReadyCount\":" << cad::ready_state_measurement_count(state_registry)
+      << ",\"decisionLossWeightsComplete\":" << (decision_loss.complete ? "true" : "false")
+      << ",\"observedLive\":["
       << "{\"field\":\"policyRate\",\"source\":\"Bank of Canada Valet V39079\",\"live\":" << (rate_live ? "true" : "false") << "},"
       << "{\"field\":\"usdcad\",\"source\":\"Bank of Canada Valet FXUSDCAD\",\"live\":" << (fx_live ? "true" : "false") << "},"
       << "{\"field\":\"oil\",\"source\":\"Bank of Canada Valet WTI\",\"live\":" << (wti_live ? "true" : "false") << "}],"
-      << "\"warning\":\"Fields not certified by the attached calibration snapshot remain model assumptions or user inputs.\"},"
+      << "\"fallbackStateFields\":[\"inflation\",\"coreInflation\",\"expectations\",\"gdpGrowth\",\"outputGap\",\"unemployment\",\"wageGrowth\",\"productivity\",\"population\",\"creditSpread\",\"housingGap\",\"usGrowth\",\"usInflation\",\"fiscalBalance\",\"federalDebt\",\"globalGrowth\"],"
+      << "\"warning\":\"live-partial never means the full modeled state is observed live; fields not certified by a source remain calibrated defaults or explicit user inputs.\"},"
       << "\"calibration\":" << cad::calibration_to_json(calibration) << "}";
   return out.str();
 }
@@ -431,11 +448,17 @@ int main(int argc, char** argv) {
 
   std::string calibrated_path;
   std::string structural_registry_path;
+  std::string decision_loss_path;
+  std::string state_measurement_path;
   std::vector<std::string> historical_fixture_paths;
   try {
     calibrated_path = calibration_path();
     structural_registry_path = materialized_data_path(
         "data/calibration/structural_parameter_registry.csv");
+    decision_loss_path = materialized_data_path(
+        "data/calibration/decision_loss_weights.csv");
+    state_measurement_path = materialized_data_path(
+        "data/calibration/state_measurement_registry.csv");
     historical_fixture_paths = {
         materialized_data_path("data/backtests/2015-01-20-oil-shock.csv"),
         materialized_data_path("data/backtests/2020-03-03-pandemic-onset.csv"),
@@ -450,6 +473,18 @@ int main(int argc, char** argv) {
       structural_registry_path);
   const auto structural_parameters = cad::apply_structural_parameter_registry(
       cad::StructuralParameters{}, structural_registry);
+  const auto decision_loss = cad::load_decision_loss_calibration(decision_loss_path);
+  const auto state_measurements = cad::load_state_measurement_registry(state_measurement_path);
+  if (!decision_loss.complete || !cad::decision_loss_sensitivity_contract_complete(decision_loss)) {
+    std::cerr << "Decision-loss calibration is incomplete or inconsistent\n";
+    close_socket(server);
+    return 1;
+  }
+  if (!cad::state_measurement_contract_complete(state_measurements)) {
+    std::cerr << "State-measurement contract is incomplete\n";
+    close_socket(server);
+    return 1;
+  }
   cad::PolicyEngine evidence_engine(20260810, structural_parameters, structural_registry);
 
   const auto room_path = (runtime_root() / "negotiation-room.events").string();
@@ -460,6 +495,7 @@ int main(int argc, char** argv) {
   cad::NegotiationAnalysis last_bargaining;
   cad::RobustRecommendationAnalysis last_robustness;
   cad::Economy last_economy = cad::apply_calibration(cad::Economy{}, engine.snapshot());
+  last_economy.loss_weights = decision_loss.weights;
   std::vector<cad::BacktestResult> historical_backtests;
   bool historical_evidence_ready = false;
   bool has_evaluation = false;
@@ -470,6 +506,9 @@ int main(int argc, char** argv) {
             << engine.snapshot().completeness << "% complete, as of " << engine.snapshot().as_of << ")\n"
             << "Structural registry: " << structural_registry.registry_id << " ("
             << cad::sampled_structural_parameter_count(structural_registry) << " sampled parameters)\n"
+            << "Decision loss weights: " << decision_loss.recognized_components << "/12 active\n"
+            << "State measurements: " << cad::ready_state_measurement_count(state_measurements) << " ready registry entries\n"
+            << "U.S. IO network: " << (cad::us_trade_input_output_empirical() ? "empirical" : "proxy pending BEA artifact") << '\n'
             << "Diplomat Room: local append-only persistence at " << room_path << '\n';
   if (launch_browser) open_browser(local_url);
 
@@ -508,7 +547,8 @@ int main(int argc, char** argv) {
 
     if (first.rfind("POST /api/evaluate ", 0) == 0) {
       auto economy = parse(body);
-      auto result = engine.evaluate(economy);  // Mutates economy to the calibrated values actually simulated.
+      economy.loss_weights = decision_loss.weights;
+      auto result = engine.evaluate(economy);  // Reattaches non-control calibration before solving.
       last_economy = economy;
       const bool comparison_only = body.find("\"comparisonOnly\":true") != std::string::npos
           || body.find("\"comparisonOnly\": true") != std::string::npos;
@@ -535,19 +575,23 @@ int main(int argc, char** argv) {
       } else {
         cad::Economy economy = body.empty()
             ? last_economy
-            : cad::apply_calibration(parse(body), engine.snapshot());
+            : cad::apply_non_control_calibration(parse(body), engine.snapshot());
+        economy.loss_weights = decision_loss.weights;
         const int requested = static_cast<int>(number(body, "parameterDraws", 6.0));
         const int draws = std::clamp(requested, 1, 24);
         respond(client, 200, "application/json",
-            cad::robustness_to_json(evidence_engine.evaluate_robust(economy, draws)));
+            cad::robustness_to_json(evidence_engine.evaluate_robust(
+                economy, draws, cad::production_evaluation_options())));
       }
     } else if (first.rfind("POST /api/v2/welfare ", 0) == 0) {
       cad::Economy economy = body.empty()
           ? last_economy
-          : cad::apply_calibration(parse(body), engine.snapshot());
+            : cad::apply_non_control_calibration(parse(body), engine.snapshot());
+      economy.loss_weights = decision_loss.weights;
       respond(client, 200, "application/json",
           cad::welfare_sensitivity_to_json(
-              cad::evaluate_welfare_sensitivity(evidence_engine, economy)));
+              cad::evaluate_welfare_sensitivity(
+                  evidence_engine, economy, {}, cad::production_evaluation_options())));
     } else if (first.rfind("GET /api/v2/backtests ", 0) == 0) {
       if (!historical_evidence_ready) {
         historical_backtests = cad::run_historical_evidence(
@@ -562,12 +606,23 @@ int main(int argc, char** argv) {
             evidence_engine, historical_fixture_paths);
         historical_evidence_ready = true;
       }
-      respond(client, 200, "application/json",
-          cad::model_evidence_status_to_json(
-              cad::model_evidence_status(structural_registry, historical_backtests)));
+      auto status = cad::model_evidence_status(structural_registry, historical_backtests);
+      status.state_measurement_contract_complete =
+          cad::state_measurement_contract_complete(state_measurements);
+      status.ready_state_measurement_count = cad::ready_state_measurement_count(state_measurements);
+      status.decision_loss_weights_complete = decision_loss.complete;
+      status.decision_loss_weight_count = decision_loss.recognized_components;
+      status.observed_calibration_completeness = engine.snapshot().completeness;
+      status.observed_calibration_certified = engine.snapshot().completeness >= 95.0;
+      status.canada_io_empirical = cad::canada_trade_input_output_empirical();
+      status.us_io_empirical = cad::us_trade_input_output_empirical();
+      respond(client, 200, "application/json", cad::model_evidence_status_to_json(status));
     } else if (first.rfind("GET /api/v2/structural-registry ", 0) == 0) {
       respond(client, 200, "application/json",
           cad::structural_parameter_registry_to_json(structural_registry));
+    } else if (first.rfind("GET /api/v2/state-measurements ", 0) == 0) {
+      respond(client, 200, "application/json",
+          cad::state_measurement_registry_to_json(state_measurements));
     } else if (first.rfind("POST /api/room ", 0) == 0) {
       const bool ok = room.apply_event(body,
           has_evaluation ? &last_bargaining : nullptr,
@@ -586,7 +641,8 @@ int main(int argc, char** argv) {
     } else if (first.rfind("GET /api/calibration ", 0) == 0) {
       respond(client, 200, "application/json", cad::calibration_to_json(engine.snapshot()));
     } else if (first.rfind("GET /api/baseline ", 0) == 0) {
-      respond(client, 200, "application/json", live_baseline(engine.snapshot()));
+      respond(client, 200, "application/json",
+          live_baseline(engine.snapshot(), decision_loss, state_measurements));
     } else if (first.rfind("GET / ", 0) == 0) {
       respond(client, 200, "text/html; charset=utf-8", diplomatic_index());
     } else if (first.rfind("GET /app.css ", 0) == 0) respond(client, 200, "text/css", read_file("web/app.css"));
