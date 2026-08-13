@@ -18,14 +18,14 @@ int main() {
   assert(structural.correlations.size() == 2);
 
   const auto audit = cad::audit_empirical_structural_evidence(evidence);
-  // The evidence ledger remains scoped to the empirical-identification program;
-  // newly explicit network assumptions do not masquerade as empirical evidence.
-  assert(audit.parameter_count == 29);
+  // Making hidden network assumptions explicit expands the denominator without
+  // fabricating evidence rows for them. Coverage therefore falls conservatively.
+  assert(audit.parameter_count == 37);
   assert(audit.statistically_anchored_count == 14);
   assert(audit.reference_only_count == 11);
   assert(audit.direct_mapping_count == 3);
-  assert(std::abs(audit.statistically_anchored_coverage - 48.27586206896552) < 1e-10);
-  assert(std::abs(audit.direct_mapping_coverage - 10.34482758620690) < 1e-10);
+  assert(std::abs(audit.statistically_anchored_coverage - 37.83783783783784) < 1e-10);
+  assert(std::abs(audit.direct_mapping_coverage - 8.108108108108109) < 1e-10);
 
   const auto* neutral = structural.find("neutral_rate");
   assert(neutral);
@@ -88,6 +88,7 @@ int main() {
   assert(completeness.direct_empirical_multiplier_count == 0);
 
   const auto json = cad::empirical_structural_audit_to_json(audit);
+  assert(json.find("\"parameterCount\":37") != std::string::npos);
   assert(json.find("\"statisticallyAnchoredCount\":14") != std::string::npos);
   assert(json.find("\"directMappingCount\":3") != std::string::npos);
 
