@@ -133,7 +133,6 @@ global.fetch = async (url, options = {}) => {
   };
 };
 
-// The production app declares evaluate before this controller is appended.
 global.evaluate = async function originalEvaluate() { throw new Error('original evaluator should have been replaced'); };
 
 vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
@@ -171,9 +170,6 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert.deepStrictEqual(window.EvaluationController.state().searchAnchor.us, calibratedUsCoverage,
     'auto-applied winning agreement must not become a new concession anchor');
 
-  // The browser must never run a second economic model. It may display the
-  // last server-verified sector result, but a coverage edit is explicitly
-  // pending until the authoritative server evaluation completes.
   const verifiedMetric = window.EvaluationController.sectorMetrics(0, 50, 75);
   const pendingMetric = window.EvaluationController.sectorMetrics(0, 75, 75);
   assert(verifiedMetric && pendingMetric, 'server-authoritative sector metrics must be exposed');
@@ -201,15 +197,30 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert(appSource.includes('Pending verified server re-evaluation'),
     'party slider must show a pending server state instead of a local economic counterfactual');
 
-  // Let the deferred comparison start. It is deliberately unresolved here;
-  // the full-screen loading state must already be gone.
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.strictEqual(requests.length, 2);
   assert.strictEqual(requests.filter(x=>x.comparisonOnly).length, 1);
+  assert.strictEqual(window.EvaluationController.state().comparisonInFlight, true);
   assert.strictEqual(elements.get('#strategyLoading').hidden, true);
+
+  // Re-run while the first comparator is still unresolved. The primary request
+  // is allowed through, but the background exhaustive comparator must remain
+  // single-flight and only the newest comparison may stay queued.
+  await evaluate();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.strictEqual(requests.filter(x=>!x.comparisonOnly).length, 2,
+    'a second primary evaluation should still run immediately');
+  assert.strictEqual(requests.filter(x=>x.comparisonOnly).length, 1,
+    're-running must not stack another no-tariff comparison');
+  assert.strictEqual(window.EvaluationController.state().comparisonInFlight, true);
+  assert.strictEqual(window.EvaluationController.state().comparisonQueued, true);
 
   releaseComparison();
   await window.EvaluationController.waitForComparison();
+  assert.strictEqual(requests.filter(x=>x.comparisonOnly).length, 1,
+    'same-key stale comparator must populate the cache instead of being rerun');
+  assert.strictEqual(window.EvaluationController.state().comparisonInFlight, false);
+  assert.strictEqual(window.EvaluationController.state().comparisonQueued, false);
   assert.strictEqual(elements.get('#impactGrowth').textContent, '-0.3 pp');
 
   requests.length = 0;
@@ -225,11 +236,8 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert.strictEqual(requests[0].usSector0, calibratedUsCoverage[0],
     'unchanged auto display must continue solving from the certified negotiation anchor');
   assert.strictEqual(publishCount, 1, 'unchanged auto recommendation must not republish');
-  assert.strictEqual(renderCount, 2);
+  assert.strictEqual(renderCount, 3);
 
-  // A tariff-only user edit must start from the currently displayed verified
-  // package, not from the old calibrated sector anchor. This is the iterative
-  // steering contract for every non-sector UI control.
   global.tariff.value = '9';
   requests.length = 0;
   await evaluate();
@@ -243,8 +251,6 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
   assert.strictEqual(publishCount, 1,
     'unchanged verified coverage should not republish merely because a tariff changed');
 
-  // A real user sector edit becomes the next negotiation anchor. The verified
-  // response is then auto-applied back onto both delegations' visible sliders.
   global.positions.us[0] = 42;
   requests.length = 0;
   await evaluate();
@@ -262,8 +268,6 @@ vm.runInThisContext(fs.readFileSync('web/evaluation-controller.js','utf8'));
     'changed verified agreement must publish exactly once for both delegations');
   assert.strictEqual(elements.get('#strategyLoading').hidden, true);
 
-  // An unverified package must never overwrite either delegation's current
-  // posture, even though the engine still explored and returned a recommendation.
   recommendationVerified = false;
   global.positions.us[0] = 61;
   global.positions.canada[0] = 73;
