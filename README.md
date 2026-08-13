@@ -14,7 +14,7 @@ The plumbing is substantially stronger than the empirical identification layer, 
 - **U.S. production network:** the active fallback is the U.S.-specific **EPA USEEIO v2.5 `USEEIOv2.5-catbird-22` proxy**, not the Canadian matrix. EPA's detailed v2.5 model is a 2022 model with underlying 2017 U.S. input-output data. It remains explicitly non-current-vintage and `us_trade_input_output_empirical() == false` until a reviewed BEA artifact is certified.
 - **BEA promotion boundary:** BEA activation is content-bound, not presence-only. The generated year, table IDs, CSV hash, header hash and deterministic artifact fingerprint must match a separately reviewed certification marker before the runtime can switch from EPA USEEIO to BEA.
 - **Canada↔U.S. bilateral sourcing:** the OECD ICIO builder exists and is fail-closed, but bilateral intermediate-input sourcing is **not active in production** until an official OECD archive and reviewed fractional ICIO→20-sector crosswalk are supplied and reviewed.
-- **Structural calibration:** direct empirical mappings are counted separately from reference-only evidence and model assumptions. Many macro multipliers and shock variances remain provisional sensitivity parameters; sensitivity envelopes are not confidence intervals.
+- **Structural calibration:** direct empirical mappings are counted separately from reference-only evidence and model assumptions. V3 makes eight production-network transmission assumptions explicit in the structural registry and denominator rather than leaving them as hidden constants. Their sensitivity ranges and declared dependence assumptions are model-risk inputs, not empirical estimates or confidence intervals.
 - **Historical validation:** three full macro-policy episodes (2015, 2020 and 2022) are shipped with no-look-ahead and state-measurement checks. They support descriptive diagnostics, not statistical validation. A separate 2018 Section 232 fixture stress-tests directional trade channels.
 - **Current legal-state snapshot:** the frozen calibration snapshot is dated **2026-08-12**. Measures announced for later effective dates remain visible in the legal timeline but are excluded from the effective tariff state until their stated effective date; the currently recorded Section 338 measure is therefore marked future until **2026-08-19**.
 
@@ -50,12 +50,12 @@ The repository also carries JavaScript, Python, calibration-integrity, sanitizer
 - **Real block:** output gap, growth, labour market, productivity, population and external demand.
 - **Financial block:** credit spreads, household leverage, housing pressure and rate-sensitive financial conditions.
 - **Fiscal block:** fiscal impulse, debt/balance dynamics and productive-investment supply effects.
-- **Trade block:** bilateral tariff incidence, export exposure, retaliation, border friction, trade elasticities, pass-through and diversification.
+- **Trade block:** bilateral tariff incidence, export exposure, retaliation, border friction, trade elasticities, pass-through and diversification. Macro trade, tariff ledgers, direct sector welfare and the production network share one bounded directional constant-elasticity quantity response rather than maintaining parallel linear volume equations.
 - **Tariff fiscal ledger:** U.S. and Canadian tariff receipts are calculated from effective sector-weighted rates and the elasticity-adjusted bilateral goods base. Bilateral trade balances are reported outcomes, not welfare targets.
-- **Country-specific production networks:** Canada and the United States always use separate network objects. Canada's matrix is the frozen StatCan empirical artifact. The U.S. object is either the EPA USEEIO proxy or, only after exact certification, a BEA artifact.
+- **Country-specific production networks:** Canada and the United States always use separate network objects. Canada's matrix is the frozen StatCan empirical artifact. The U.S. object is either the EPA USEEIO proxy or, only after exact certification, a BEA artifact. Supplier-demand, input-cost, price, output and jobs transmission coefficients are explicit structural-registry parameters.
 - **Directional incidence:** U.S.-import and Canadian-import directions can carry separate sector elasticities and price-pass-through mappings. Missing or incompatible estimates fall back to declared aggregate anchors rather than being silently promoted.
 - **Whole-economy sector view:** 20 sectors expose output, jobs, prices, applied tariffs, buyer pass-through, exporter/importer absorption and propagated input-cost pressure.
-- **Risk layer:** stochastic recession, inflation-tail, debt and stress-regime diagnostics are reported separately from empirical-confidence claims.
+- **Risk layer:** stochastic recession, inflation-tail, debt and stress-regime diagnostics are reported separately from empirical-confidence claims. Structural robustness validates and samples declared parameter-dependence structures rather than silently assuming every structural coefficient is independent.
 - **Decision layer:** Bank of Canada, Canadian fiscal/household and U.S. loss components are combined through disclosed weights, bilateral feasibility checks, fairness protection and tail-risk penalties.
 - **Operational layer:** strict bounded HTTP parsing, per-session mutable state, bounded worker concurrency, authenticated network binding and cached external-market observations are kept outside the model equations.
 
@@ -74,7 +74,7 @@ The engine does not treat a high aggregate score as sufficient for a win-win lab
 - The linked-issue bargaining layer retains the complete practical 0.5-point epsilon-Pareto frontier and evaluates robust candidates with bounded-memory two-pass common-random-number logic.
 - A verified package is therefore **verified within the declared finite model/search design**, not proven globally optimal in continuous policy space.
 
-See [`docs/MODEL_TRUST.md`](docs/MODEL_TRUST.md) and [`docs/NEGOTIATION_ENGINE.md`](docs/NEGOTIATION_ENGINE.md) for the formal trust contract.
+See [`docs/MODEL_TRUST.md`](docs/MODEL_TRUST.md), [`docs/MODEL_CONSISTENCY_V3.md`](docs/MODEL_CONSISTENCY_V3.md), and [`docs/NEGOTIATION_ENGINE.md`](docs/NEGOTIATION_ENGINE.md) for the formal trust contracts.
 
 ## Data, calibration and production-network refresh
 
@@ -96,7 +96,9 @@ See [`docs/US_IO_NETWORK.md`](docs/US_IO_NETWORK.md).
 
 ### Structural parameters
 
-`data/calibration/structural_parameter_registry.csv` is the executable structural registry. It records baselines, units, provenance class, vintage, bounds, distributions and sampling status. `data/calibration/empirical_structural_evidence.csv` records direct versus reference-only evidence, while `data/calibration/realized_calibration_frontier.csv` records which remaining shock variances and transmission multipliers are still blocked by missing aligned realized identification data.
+`data/calibration/structural_parameter_registry.csv` is the executable structural registry. It records baselines, units, provenance class, vintage, bounds, distributions, sampling status and explicit `CORR` dependence records. The current V3 registry includes the production-network transmission coefficients that were formerly embedded in code. `data/calibration/empirical_structural_evidence.csv` records direct versus reference-only evidence, while `data/calibration/realized_calibration_frontier.csv` records which remaining shock variances and transmission multipliers are still blocked by missing aligned realized identification data.
+
+Declared structural dependence is applied through a Gaussian correlation matrix and Cholesky factorization before normal/lognormal parameter transforms. Invalid non-positive-semidefinite dependence structures fail closed during robustness sampling. The frozen output/inflation residual correlation remains a macro innovation-process calibration and is not repurposed as covariance between uncertain parameter estimates.
 
 `tools/verify_structural_promotions.py` prevents reference-only evidence from being silently promoted into a production coefficient.
 
@@ -110,9 +112,9 @@ The visible 50% startup trade shock is applied only to the first scenario evalua
 
 ## Model-evidence APIs
 
-V2 keeps structural uncertainty, historical diagnostics and normative preference sensitivity separate:
+The V2 API surface keeps structural uncertainty, historical diagnostics and normative preference sensitivity separate; the V3 structural registry strengthens the model-consistency and dependence contract behind those endpoints.
 
-- `GET /api/v2/structural-registry` — structural coefficient provenance, bounds, distributions and direct-calibration completeness.
+- `GET /api/v2/structural-registry` — structural coefficient provenance, bounds, distributions, declared correlations and direct-calibration completeness.
 - `GET /api/v2/backtests` — no-look-ahead macro-policy historical diagnostics.
 - `GET /api/v2/evidence-status` — compact runtime/evidence readiness, including state-measurement, decision-loss and country-I/O status.
 - `GET /api/v2/state-measurements` — the production state-measurement contract.
@@ -121,11 +123,11 @@ V2 keeps structural uncertainty, historical diagnostics and normative preference
 - `POST /api/v2/welfare` — delegation-preference and internal-component sensitivity with the production optimizer rerun for every profile.
 - `GET /api/health` — compact operational state for worker/session/cache/auth diagnostics.
 
-Structural robustness reports Wilson 95% intervals and Monte Carlo standard error for recommendation-retention rates, plus a flag indicating whether the discrete robustness classification is stable at 95% relative to its declared thresholds. These intervals measure **simulation sampling precision**, not economic parameter uncertainty or empirical identification.
+Structural robustness reports the dependence mode, declared correlation-pair count and correlation-matrix validity together with Wilson 95% intervals and Monte Carlo standard error for recommendation-retention rates. It also reports whether the discrete robustness classification is stable at 95% relative to its declared thresholds. These intervals measure **simulation sampling precision**, not economic parameter uncertainty or empirical identification.
 
 The interactive structural screen uses 6 draws for responsiveness; larger research runs should use the batch endpoint rather than silently raising the interactive cap.
 
-See [`docs/MODEL_ROBUSTNESS_V2.md`](docs/MODEL_ROBUSTNESS_V2.md), [`docs/HISTORICAL_BACKTESTING.md`](docs/HISTORICAL_BACKTESTING.md), [`docs/WELFARE_SENSITIVITY.md`](docs/WELFARE_SENSITIVITY.md), and [`docs/SERVER_OPERATIONS.md`](docs/SERVER_OPERATIONS.md).
+See [`docs/MODEL_ROBUSTNESS_V2.md`](docs/MODEL_ROBUSTNESS_V2.md), [`docs/MODEL_CONSISTENCY_V3.md`](docs/MODEL_CONSISTENCY_V3.md), [`docs/HISTORICAL_BACKTESTING.md`](docs/HISTORICAL_BACKTESTING.md), [`docs/WELFARE_SENSITIVITY.md`](docs/WELFARE_SENSITIVITY.md), and [`docs/SERVER_OPERATIONS.md`](docs/SERVER_OPERATIONS.md).
 
 ## Repository governance
 
@@ -135,6 +137,6 @@ This protects software/evidence contracts from unreviewed drift; it does not tur
 
 ## Responsible decision use
 
-Before operational use, analysts should replace scenario inputs with a dated tariff inventory and reviewed assumptions appropriate to the decision date, inspect the legal timeline, and run structural and preference sensitivity. Particular caution is warranted around the still-provisional macro multipliers, shock variances, U.S. input-output vintage and inactive bilateral-sourcing layer.
+Before operational use, analysts should replace scenario inputs with a dated tariff inventory and reviewed assumptions appropriate to the decision date, inspect the legal timeline, and run structural and preference sensitivity. Particular caution is warranted around the still-provisional macro multipliers, shock variances, production-network transmission coefficients, U.S. input-output vintage and inactive bilateral-sourcing layer.
 
 Useful primary reference points include the [Bank of Canada Monetary Policy Report](https://www.bankofcanada.ca/mpr/), [Statistics Canada Canadian international merchandise trade](https://www.statcan.gc.ca/en/subjects-start/international_trade), [Statistics Canada input-output tables](https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3610000101), [U.S. BEA Input-Output Accounts](https://www.bea.gov/data/industries/input-output-accounts-data), [U.S. EPA USEEIO](https://www.epa.gov/land-research/us-environmentally-extended-input-output-useeio-models), [Department of Finance Canada](https://www.canada.ca/en/department-finance.html), and the [U.S. International Trade Commission HTS](https://hts.usitc.gov/).
