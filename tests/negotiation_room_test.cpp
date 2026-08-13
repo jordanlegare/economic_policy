@@ -3,9 +3,11 @@
 #include "negotiation_support.hpp"
 #include "policy_engine.hpp"
 #include "robust_recommendation.hpp"
+#include "room_action.hpp"
 
 #include <cassert>
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 int main() {
@@ -50,7 +52,37 @@ int main() {
     assert(json.find("Opening package") != std::string::npos);
     assert(json.find("Conditional tranche") != std::string::npos);
     assert(json.find("Counterpart focused on procurement") != std::string::npos);
+    assert(json.find("eventSchemaVersion\":1") != std::string::npos);
     assert(json.find("secureForProtectedInformation\":false") != std::string::npos);
+
+    // Invalid live actions fail closed and cannot mutate revision/state. The old
+    // best-effort parser would have accepted several of these via fallbacks.
+    const std::string before = room.json(&negotiation, &robust);
+    assert(!room.apply_event("{\"action\":\"set-round\",\"round\":2.5}"));
+    assert(!room.apply_event("{\"action\":\"concession\",\"side\":\"third-party\",\"issueId\":\"x\"}"));
+    assert(!room.apply_event("{\"action\":\"concession\",\"issueId\":\"x\",\"magnitude\":-1}"));
+    assert(!room.apply_event("{\"action\":\"set-mandate\",\"issueId\":\"x\",\"maxCanadaMove\":\"wide\"}"));
+    assert(!room.apply_event("{\"action\":\"debrief\",\"summary\":\"x\",\"surprise\":true}"));
+    assert(!room.apply_event("{\"schemaVersion\":2,\"action\":\"debrief\",\"summary\":\"x\"}"));
+    assert(!room.apply_event("{\"action\":\"debrief\",\"summary\":"));
+    assert(room.json(&negotiation, &robust) == before);
+  }
+
+  // Newly persisted records are canonical V1 events even though legacy valid
+  // unversioned records remain accepted on replay.
+  {
+    std::ifstream in(path);
+    assert(in.good());
+    std::string line;
+    int lines = 0;
+    while (std::getline(in, line)) {
+      ++lines;
+      assert(line.find("\"schemaVersion\":1") != std::string::npos);
+      const auto parsed = cad::room_action::parse(line);
+      assert(parsed.valid);
+      assert(cad::room_action::to_json(parsed) == line);
+    }
+    assert(lines == 7);
   }
 
   {
