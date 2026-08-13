@@ -105,6 +105,16 @@ assert(controllerSource.includes('delegationLockedRecommendation'),
   'automatic verified recommendations must not rewrite delegation controls');
 assert(controllerSource.includes('if (run) return baseApplyRecommendation'),
   'only an explicit Apply action may invoke the legacy recommendation write path');
+assert(controllerSource.includes('scenarioLockedEvaluate'),
+  'explicit runs must be guarded by a click-time delegation scenario snapshot');
+assert(controllerSource.includes('const snapshot = snapshotScenario();'),
+  'the run guard must snapshot the visible scenario before evaluation');
+assert(controllerSource.includes("payload['usSector' + i] = v"),
+  'the run guard must force submitted U.S. sector values into the primary request');
+assert(controllerSource.includes("payload['canadaSector' + i] = v"),
+  'the run guard must force submitted Canadian sector values into the primary request');
+assert(controllerSource.includes('restoreScenario(snapshot);'),
+  'the same submitted scenario must be restored after the run');
 assert(controllerSource.includes('No feasible Pareto package found'),
   'the UI must expose a no-feasible-Pareto result');
 assert(controllerSource.includes(

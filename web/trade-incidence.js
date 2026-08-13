@@ -226,6 +226,116 @@
   window.DelegationRunController = controller;
 })();
 
+// A run is evaluated from the exact delegation state visible at click time.
+// This guard sits outside the legacy opening/calibration wrapper: even if that
+// wrapper reasserts defaults internally on the first solve, the primary API
+// request is rewritten to the captured scenario and the controls are restored.
+(() => {
+  'use strict';
+
+  let installed = false;
+
+  function value(selector, fallback = 0) {
+    const node = document.querySelector(selector);
+    return node && Number.isFinite(+node.value) ? +node.value : fallback;
+  }
+
+  function snapshotScenario() {
+    return {
+      usTariff: Number.isFinite(+tariff?.value) ? +tariff.value : 0,
+      retaliatoryTariff: value('#retaliatoryTariff'),
+      canadaPriority: value('#canadaPriority', 50),
+      usPriority: value('#usPriority', 50),
+      riskAversion: value('#riskAversion', 50),
+      cooperationCeiling: value('#cooperationCeiling', 50),
+      usSectorCoverage: [...positions.us],
+      canadaSectorCoverage: [...positions.canada]
+    };
+  }
+
+  function restoreScenario(snapshot) {
+    tariff.value = String(snapshot.usTariff);
+    const retaliation = document.querySelector('#retaliatoryTariff');
+    if (retaliation) retaliation.value = String(snapshot.retaliatoryTariff);
+    const controls = {
+      canadaPriority:snapshot.canadaPriority,
+      usPriority:snapshot.usPriority,
+      riskAversion:snapshot.riskAversion,
+      cooperationCeiling:snapshot.cooperationCeiling
+    };
+    Object.entries(controls).forEach(([id, value_]) => {
+      const node = document.querySelector('#' + id);
+      if (node) node.value = String(value_);
+    });
+    positions.us.splice(0, positions.us.length, ...snapshot.usSectorCoverage);
+    positions.canada.splice(0, positions.canada.length, ...snapshot.canadaSectorCoverage);
+
+    if (typeof updateTariff === 'function') updateTariff();
+    const retaliationValue = document.querySelector('#retaliatoryTariffValue');
+    if (retaliationValue) retaliationValue.textContent = snapshot.retaliatoryTariff + '%';
+    const caValue = document.querySelector('#canadaPriorityValue');
+    const usValue = document.querySelector('#usPriorityValue');
+    const riskValue = document.querySelector('#riskAversionValue');
+    const ceilingValue = document.querySelector('#cooperationCeilingValue');
+    const total = document.querySelector('#priorityTotal');
+    if (caValue) caValue.textContent = snapshot.canadaPriority + '%';
+    if (usValue) usValue.textContent = snapshot.usPriority + '%';
+    if (riskValue) riskValue.textContent = String(snapshot.riskAversion);
+    if (ceilingValue) ceilingValue.textContent = snapshot.cooperationCeiling + '%';
+    if (total) total.textContent = (snapshot.canadaPriority + snapshot.usPriority) + '%';
+    if (typeof updatePosition === 'function') updatePosition();
+    if (typeof syncPartyView === 'function') syncPartyView();
+    const partyView = document.querySelector('#partyView');
+    if (partyView && !partyView.hidden && typeof renderPartySectors === 'function')
+      renderPartySectors();
+  }
+
+  function installScenarioRunGuard() {
+    if (installed || typeof evaluate !== 'function' || typeof window.fetch !== 'function') return;
+    installed = true;
+    const underlyingEvaluate = evaluate;
+
+    evaluate = async function scenarioLockedEvaluate(...args) {
+      const snapshot = snapshotScenario();
+      const previousFetch = window.fetch.bind(window);
+      window.fetch = function scenarioLockedFetch(input, init = {}) {
+        if (String(input) === '/api/evaluate' && init?.method === 'POST'
+            && typeof init.body === 'string') {
+          try {
+            const payload = JSON.parse(init.body);
+            payload.canadaPriority = snapshot.canadaPriority;
+            payload.usPriority = snapshot.usPriority;
+            payload.riskAversion = snapshot.riskAversion;
+            payload.cooperationCeiling = snapshot.cooperationCeiling;
+            snapshot.usSectorCoverage.forEach((v, i) => { payload['usSector' + i] = v; });
+            snapshot.canadaSectorCoverage.forEach((v, i) => { payload['canadaSector' + i] = v; });
+            if (payload.comparisonOnly !== true) {
+              payload.usTariff = snapshot.usTariff;
+              payload.retaliatoryTariff = snapshot.retaliatoryTariff;
+            }
+            return previousFetch(input, {...init, body:JSON.stringify(payload)});
+          } catch (_) {}
+        }
+        return previousFetch(input, init);
+      };
+
+      try {
+        return await underlyingEvaluate(...args);
+      } finally {
+        window.fetch = previousFetch;
+        restoreScenario(snapshot);
+        window.EvaluationController?.resetNegotiationAnchor?.();
+      }
+    };
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installScenarioRunGuard, {once:true});
+  } else {
+    setTimeout(installScenarioRunGuard, 0);
+  }
+})();
+
 // The bargaining layer retains a diagnostic fallback when no candidate clears
 // both reservation values. Do not present that fallback as a Pareto solution.
 (() => {
