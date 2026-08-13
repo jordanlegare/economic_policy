@@ -147,16 +147,19 @@ int main() {
   }
   assert(saw_future_section338);
 
-  // V2 structural assumptions must be auditable independently of observed-data
+  // V3 structural assumptions must be auditable independently of observed-data
   // completeness. Every coefficient has a source classification, vintage and
-  // bounded uncertainty rule; mandate/derived parameters are not sampled.
+  // bounded uncertainty rule; mandate/derived parameters are not sampled, and
+  // declared parameter dependence is explicit rather than hidden in code.
   const auto registry = cad::load_structural_parameter_registry(
       "data/calibration/structural_parameter_registry.csv");
   assert(registry.loaded);
-  assert(registry.registry_id == "v2-structural-quarterly-2026-08-12");
-  assert(registry.as_of == "2026-08-12");
+  assert(registry.registry_id == "v3-structural-network-2026-08-13");
+  assert(registry.as_of == "2026-08-13");
   assert(cad::structural_parameter_registry_complete(registry));
+  assert(cad::structural_correlation_registry_valid(registry));
   assert(registry.entries.size() == cad::required_structural_parameter_names().size());
+  assert(registry.correlations.size() == 2);
   assert(cad::sampled_structural_parameter_count(registry) > 0);
 
   const auto* neutral = registry.find("neutral_rate");
@@ -175,6 +178,10 @@ int main() {
   assert(pass_through && pass_through->sampled);
   assert(pass_through->lower_bound < pass_through->baseline);
   assert(pass_through->upper_bound > pass_through->baseline);
+  const auto* network_transmission = registry.find("network_supplier_demand_transmission");
+  assert(network_transmission && network_transmission->kind == "assumed");
+  assert(network_transmission->source_id == "internal_model_design_v3");
+  assert(network_transmission->sampled);
 
   const auto structural = cad::apply_structural_parameter_registry(
       cad::StructuralParameters{}, registry);
@@ -183,13 +190,17 @@ int main() {
   assert(structural.uncertainty_registry.loaded);
   assert(std::abs(structural.neutral_rate - 2.75) < 1e-12);
   assert(std::abs(structural.import_price_pass_through - pass_through->baseline) < 1e-12);
+  assert(std::abs(structural.network_supplier_demand_transmission
+      - network_transmission->baseline) < 1e-12);
 
   const auto registry_json = cad::structural_parameter_registry_to_json(registry);
   assert(registry_json.find("\"complete\":true") != std::string::npos);
+  assert(registry_json.find("\"correlationPairCount\":2") != std::string::npos);
+  assert(registry_json.find("\"correlationRegistryValid\":true") != std::string::npos);
   assert(registry_json.find("\"kind\":\"mandate\"") != std::string::npos);
   assert(registry_json.find("\"distribution\":\"derived\"") != std::string::npos);
   assert(registry_json.find("\"sourceId\":\"boc_neutral_rate_2026\"") != std::string::npos);
-  assert(registry_json.find("\"sourceId\":\"internal_model_design_v2\"") != std::string::npos);
+  assert(registry_json.find("\"sourceId\":\"internal_model_design_v3\"") != std::string::npos);
 
   std::remove(path.c_str());
   return 0;
