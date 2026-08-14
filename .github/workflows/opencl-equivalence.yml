@@ -1,0 +1,29 @@
+name: OpenCL Monte Carlo equivalence
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  opencl-equivalence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CPU OpenCL validation runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pocl-opencl-icd
+      - name: Configure Release validation build
+        run: cmake -S . -B build-opencl -DCMAKE_BUILD_TYPE=Release
+      - name: Build OpenCL equivalence contract
+        run: cmake --build build-opencl --parallel --target monte_carlo_opencl_tests
+      - name: Run OpenCL kernel equivalence gate
+        env:
+          CAD_OPENCL_ALLOW_CPU: "1"
+          CAD_OPENCL_REQUIRED: "1"
+        run: ctest --test-dir build-opencl --output-on-failure -R '^monte_carlo_opencl_equivalence$'
