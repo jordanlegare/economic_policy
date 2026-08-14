@@ -63,7 +63,7 @@ std::size_t accumulate_avx2_prefix(
   if (vectorized == 0) return 0;
 
   const auto& p = in.parameters;
-  auto& aggregate = result.draws.back();
+  auto& aggregate = result.aggregate;
   const __m256d zero = _mm256_setzero_pd();
   const __m256d neutral_rate = _mm256_set1_pd(p.neutral_rate);
   const __m256d inflation_target = _mm256_set1_pd(p.inflation_target);
@@ -237,9 +237,8 @@ std::size_t accumulate_avx2_prefix(
         _mm256_store_pd(terminal_inf, inf);
         _mm256_store_pd(terminal_debt, debt);
         for (std::size_t lane = 0; lane < 4; ++lane) {
-          auto& tail = result.draws[base + lane];
-          tail.terminal_inflation = terminal_inf[lane];
-          tail.terminal_debt = terminal_debt[lane];
+          aggregate.terminal_inflation[base + lane] = terminal_inf[lane];
+          aggregate.terminal_debt[base + lane] = terminal_debt[lane];
         }
         add4(growth, aggregate.terminal_growth);
         add4(us_growth, aggregate.terminal_us_growth);
@@ -254,8 +253,9 @@ std::size_t accumulate_avx2_prefix(
     }
 
     const int recession_bits = _mm256_movemask_pd(recession_mask);
-    for (std::size_t lane = 0; lane < 4; ++lane)
-      result.draws[base + lane].recession = (recession_bits & (1 << lane)) != 0;
+    for (std::size_t lane = 0; lane < 4; ++lane) {
+      if ((recession_bits & (1 << lane)) != 0) aggregate.recessions += 1.0;
+    }
   }
   return vectorized;
 #endif
