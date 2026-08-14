@@ -4,6 +4,7 @@
   const sessionKey = 'cad-policy-studio.session-id';
   const tokenKey = 'cad-policy-studio.api-token';
   const lastRunKey = 'cad-policy-studio.last-run-settings.v1';
+  const replaySafeMutationPaths = new Set(['/api/room', '/api/negotiation']);
   const scalarRunFields = {
     usTariff: [0, 60],
     retaliatoryTariff: [0, 60],
@@ -208,6 +209,32 @@
   storageSet(globalThis.localStorage, sessionKey, sessionId);
   storageSet(globalThis.sessionStorage, sessionKey, sessionId);
 
+  let mutationSequence = 0;
+  function nextMutationOperationId() {
+    mutationSequence += 1;
+    const entropy = randomId().replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 16);
+    return `mut:${sessionId}:${Date.now().toString(36)}:${mutationSequence.toString(36)}:${entropy}`;
+  }
+
+  function prepareReplaySafeMutation(url, init) {
+    if (!replaySafeMutationPaths.has(url.pathname)
+        || String(init.method || 'GET').toUpperCase() !== 'POST'
+        || typeof init.body !== 'string') return {init, retryable:false};
+    try {
+      const payload = JSON.parse(init.body);
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+        return {init, retryable:false};
+      if (typeof payload.operationId !== 'string' || !payload.operationId)
+        payload.operationId = nextMutationOperationId();
+      return {
+        init:{...init, body:JSON.stringify(payload)},
+        retryable:true
+      };
+    } catch (_) {
+      return {init, retryable:false};
+    }
+  }
+
   function accessToken() {
     if (!globalThis.CAD_API_AUTH_REQUIRED) return '';
     let token = storageGet(globalThis.sessionStorage, tokenKey);
@@ -228,14 +255,27 @@
       return nativeFetch(input, init);
     }
 
-    captureEvaluateRequest(url, init);
+    const prepared = prepareReplaySafeMutation(url, init);
+    const requestInit = prepared.init;
+    captureEvaluateRequest(url, requestInit);
     const headers = new Headers(
-      init.headers || (typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined)
+      requestInit.headers
+      || (typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined)
     );
     headers.set('X-CAD-Session-Id', sessionId);
     const token = accessToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    return nativeFetch(input, {...init, headers});
+    const finalInit = {...requestInit, headers};
+    const send = () => nativeFetch(input, finalInit);
+    if (!prepared.retryable) return send();
+
+    // One replay-safe retry covers a dropped response or transient admission
+    // failure. The identical operationId/body is reused, so a first request that
+    // committed before the connection failed cannot mutate state twice.
+    return send().then(response => {
+      if (response && [502, 503, 504].includes(Number(response.status))) return send();
+      return response;
+    }, () => send());
   };
 
   if (globalThis.document?.readyState === 'loading') {
