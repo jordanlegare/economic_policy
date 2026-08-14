@@ -60,6 +60,11 @@ jobs:
           grep -q '"scenarios":\[' /tmp/initial-evaluate.json
           grep -q '"robustness":{' /tmp/initial-evaluate.json
           grep -q '"secondStageMonteCarloDraws":5000' /tmp/initial-evaluate.json
+          grep -q '"evaluationProvenance":{' /tmp/initial-evaluate.json
+          grep -q '"inputFingerprint":"fnv1a64:' /tmp/initial-evaluate.json
+          grep -q '"stale":false' /tmp/initial-evaluate.json
+          test -s runtime/sessions/ci-smoke/evaluation-submissions.events
+          grep -q '"inputFingerprint":"fnv1a64:' runtime/sessions/ci-smoke/evaluation-submissions.events
           curl -fsS http://127.0.0.1:18080/trade-incidence.js | grep -q 'Tariff incidence'
           curl -fsS http://127.0.0.1:18080/session.js | grep -q 'X-CAD-Session-Id'
       - name: Check calibration tooling
