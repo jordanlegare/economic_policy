@@ -167,6 +167,21 @@ inline std::string attach_calibration_json(std::string base_json,
   return base_json;
 }
 
+inline std::string linked_bargaining_cache_namespace(
+    const std::string& snapshot_id, const Economy& economy) {
+  // evaluation_cache::make_key predates the finalist-only bargaining channels.
+  // Namespace those internal reruns here so packages that differ only in
+  // procurement or supply-chain state cannot alias the same cached production
+  // solve. The public calibration snapshot identifier itself remains unchanged.
+  std::ostringstream out;
+  out << std::setprecision(17) << snapshot_id
+      << "|linkedProcurementPp="
+      << economy.trade_network_tuning.procurement_quantity_uplift_pp
+      << "|linkedSupplyChainMitigation="
+      << economy.trade_network_tuning.supply_chain_mitigation;
+  return out.str();
+}
+
 class CalibratedPolicyEngine {
  public:
   explicit CalibratedPolicyEngine(std::string snapshot_path,
@@ -184,7 +199,8 @@ class CalibratedPolicyEngine {
     const Economy calibrated_baseline = apply_calibration(Economy{}, snapshot_);
     economy = apply_non_control_calibration(std::move(economy), snapshot_);
     const std::string cache_key = evaluation_cache::make_key(
-        economy, base_.parameters(), snapshot_.snapshot_id,
+        economy, base_.parameters(),
+        linked_bargaining_cache_namespace(snapshot_.snapshot_id, economy),
         base_.parameter_registry().registry_id, true);
     Result result = result_cache_->get_or_compute(cache_key, [&] {
       return base_.evaluate(economy, production_evaluation_options());
