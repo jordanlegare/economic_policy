@@ -25,6 +25,8 @@ jobs:
         run: node tests/dashboard_surface_test.js
       - name: Verify deal-focused decision overview
         run: node tests/decision_overview_ui_test.js
+      - name: Verify attributable outcome hierarchy
+        run: node tests/joint_dashboard_outcomes_test.js
       - name: Verify collapse and expand cover every remaining panel
         run: node tests/dashboard_panels_test.js
       - name: Preserve Principal Brief contract
