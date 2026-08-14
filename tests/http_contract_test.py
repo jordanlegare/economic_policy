@@ -67,19 +67,21 @@ def wait_ready(
         if process.poll() is not None:
             raise RuntimeError(f"server exited early with status {process.returncode}")
         try:
-            status, _ = request("GET", "/api/health", port=port, headers=headers)
-            if status == 200:
+            status, payload = request("GET", "/api/ready", port=port, headers=headers)
+            if status == 200 and json.loads(payload).get("ready") is True:
                 return
-        except OSError:
+        except (OSError, json.JSONDecodeError):
             pass
         time.sleep(0.1)
     raise RuntimeError("server did not become ready")
 
 
 def terminate(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
     process.terminate()
     try:
-        process.wait(timeout=3)
+        process.wait(timeout=8)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=3)
@@ -106,6 +108,20 @@ def main() -> int:
         health = json.loads(expect_status("GET", "/api/health", None, 200))
         assert health["workers"] == 2
         assert health["authRequired"] is False
+        assert health["queueCapacity"] == 64
+        assert health["queueDepth"] >= 0
+        assert health["activeJobs"] >= 1
+        assert health["failedJobs"] >= 0
+        assert "baselineRefreshFailures" in health
+        assert "baselineLastAttempt" in health
+        assert "baselineLastSuccess" in health
+
+        readiness = json.loads(expect_status("GET", "/api/ready", None, 200))
+        assert readiness["ready"] is True
+        assert readiness["reason"] == "ready"
+        assert readiness["queueCapacity"] == 64
+        assert readiness["queueDepth"] < readiness["queueCapacity"]
+        assert "baselineLastError" in readiness
 
         # Occupy one real worker with an intentionally incomplete HTTP header.
         # A second request must still be serviced promptly by the other worker;
@@ -246,17 +262,34 @@ def main() -> int:
         try:
             wait_ready(auth_process, port=AUTH_PORT, headers=auth_headers)
             expect_status("GET", "/api/health", None, 401, port=AUTH_PORT)
+            expect_status("GET", "/api/ready", None, 401, port=AUTH_PORT)
             authenticated = json.loads(
                 expect_status(
                     "GET", "/api/health", None, 200, port=AUTH_PORT, headers=auth_headers
                 )
             )
             assert authenticated["authRequired"] is True
+            authenticated_ready = json.loads(
+                expect_status(
+                    "GET", "/api/ready", None, 200, port=AUTH_PORT, headers=auth_headers
+                )
+            )
+            assert authenticated_ready["ready"] is True
             # Static UI remains loadable so it can prompt for the bearer token;
             # API data and mutations remain protected.
             expect_status("GET", "/", None, 200, port=AUTH_PORT)
         finally:
             terminate(auth_process)
+
+        # SIGTERM is a graceful lifecycle event: stop admission, drain the pool,
+        # stop the baseline refresher, and exit successfully rather than dying -15.
+        process.terminate()
+        process.wait(timeout=10)
+        assert process.returncode == 0, f"graceful shutdown returned {process.returncode}"
+        stdout, stderr = process.communicate()
+        assert b"Shutdown requested; draining" in stdout, stdout.decode(errors="replace")
+        assert b"Shutdown complete" in stdout, stdout.decode(errors="replace")
+        assert not stderr, stderr.decode(errors="replace")
 
         print("HTTP operational contract tests passed")
         return 0
