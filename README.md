@@ -1,8 +1,8 @@
 # Canada Policy Studio
 
-Canada Policy Studio is a dependency-light C++17 monetary, fiscal, trade and negotiation scenario engine with a browser dashboard for examining Canada–U.S. tariff shocks and policy responses. It searches monetary, fiscal, productive-investment, negotiated-relief, diversification and sector-tariff choices, then reruns candidate packages through stochastic macro, trade-network and bilateral-welfare checks.
+Canada Policy Studio is a dependency-light C++17 monetary, fiscal, trade and negotiation scenario engine with a browser dashboard for examining Canada–U.S. tariff shocks and policy responses. It searches monetary, fiscal, productive-investment, negotiated-relief and diversification choices under an explicit submitted 20-sector tariff posture, then reruns candidate policy packages through stochastic macro, trade-network and bilateral-welfare checks before linked-issue bargaining and robust recommendation.
 
-The production search contains **288 generated policy-control combinations plus 13 expert strategies**. Ordinary strategy evaluation uses 700 common-random-number stochastic paths over 12 quarters; sector-selected finalists can be re-simulated at 2,800 draws before a package is allowed to carry the stronger verified-win-win label.
+The production search contains **288 generated policy-control combinations plus 13 expert strategies**. Ordinary strategy evaluation uses 700 common-random-number stochastic paths over 12 quarters; retained policy candidates can be re-simulated at 2,800 draws with the submitted sector posture. Sector coverage itself is an authoritative operator/delegation input and is not optimized by the production engine. A bargaining package that subsequently changes linked concessions is not treated as fully macro-resimulated merely because its upstream policy scenario passed that sector-posture verification.
 
 > **Research disclaimer:** This is a research decision-support and scenario-comparison system, not an official Bank of Canada model, government forecast, negotiating mandate or causal estimate. Monte Carlo precision is conditional on the model. A software-verifiable optimum is not the same thing as empirical validation, political acceptance or legal authority.
 
@@ -66,13 +66,13 @@ Legacy request-state members that do not yet have production equations remain in
 The engine does not treat a high aggregate score as sufficient for a win-win label.
 
 - The generated policy grid spans monetary, fiscal, productive-investment, negotiated-relief and diversification choices.
-- Sector tariff coverage is searched jointly through a finite Pareto dynamic program rather than optimized one sector at a time and concatenated afterward.
-- The searched sector grid includes 0%, 25%, 50%, 75%, 100% and the submitted coverage value when it lies between those points.
-- Selected sector schedules are propagated back through the stochastic macro engine.
-- Common random numbers are used so alternatives are compared under the same shock draws.
-- Bilateral growth floors and modeled national no-harm/reservation checks can reject otherwise attractive packages.
+- The submitted Canada and U.S. 20-sector coverage vectors are **authoritative posture inputs**. Production `coverage_levels()` returns only the submitted value; sector coverage is not searched, Pareto-optimized or reoptimized by the policy engine.
+- Retained policy candidates are propagated back through the stochastic macro and trade-network engine using that exact submitted sector posture.
+- Production JSON distinguishes `policyGridComplete` from `sectorPostureMode: "authoritative-input"`, reports `sectorSearchPerformed: false`, and separately reports whether the submitted posture passed sector verification. Legacy `globalSearchComplete` is retained only for compatibility and is explicitly labelled with its fixed-posture semantics.
+- Common random numbers are used so policy alternatives are compared under the same shock draws.
+- Bilateral growth floors and modeled national no-harm/reservation checks can reject otherwise attractive policy packages.
 - The linked-issue bargaining layer retains the complete practical 0.5-point epsilon-Pareto frontier and evaluates robust candidates with bounded-memory two-pass common-random-number logic.
-- A verified package is therefore **verified within the declared finite model/search design**, not proven globally optimal in continuous policy space.
+- Policy-search completeness therefore describes only dimensions that were actually searched. A verified policy scenario is **verified within the declared finite policy grid and submitted sector posture**, not proven globally optimal in continuous policy or sector space; bargaining-package verification is reported separately.
 
 See [`docs/MODEL_TRUST.md`](docs/MODEL_TRUST.md), [`docs/MODEL_CONSISTENCY_V3.md`](docs/MODEL_CONSISTENCY_V3.md), and [`docs/NEGOTIATION_ENGINE.md`](docs/NEGOTIATION_ENGINE.md) for the formal trust contracts.
 
@@ -118,12 +118,12 @@ The V2 API surface keeps structural uncertainty, historical diagnostics and norm
 - `GET /api/v2/backtests` — no-look-ahead macro-policy historical diagnostics.
 - `GET /api/v2/evidence-status` — compact runtime/evidence readiness, including state-measurement, decision-loss and country-I/O status.
 - `GET /api/v2/state-measurements` — the production state-measurement contract.
-- `POST /api/v2/robustness` — interactive full nested structural-decision robustness; `parameterDraws` must be 1–24 (default 6), and every draw reruns the production `PolicyEngine`.
-- `POST /api/v2/robustness-batch` — explicit research batch mode; `parameterDraws` must be 25–128 (default 48), with the same full production re-optimization per draw.
-- `POST /api/v2/welfare` — delegation-preference and internal-component sensitivity with the production optimizer rerun for every profile.
+- `POST /api/v2/robustness` — interactive nested structural-policy robustness; `parameterDraws` must be 1–24 (default 6), and every draw reruns the production `PolicyEngine` over policy controls while preserving the submitted sector posture.
+- `POST /api/v2/robustness-batch` — explicit research batch mode; `parameterDraws` must be 25–128 (default 48), with the same policy re-optimization under the submitted sector posture per draw.
+- `POST /api/v2/welfare` — delegation-preference and internal-component sensitivity with the production policy optimizer rerun for every profile under the submitted sector posture.
 - `GET /api/health` — compact operational state for worker/session/cache/auth diagnostics.
 
-Structural robustness reports the dependence mode, declared correlation-pair count and correlation-matrix validity together with Wilson 95% intervals and Monte Carlo standard error for recommendation-retention rates. It also reports whether the discrete robustness classification is stable at 95% relative to its declared thresholds. These intervals measure **simulation sampling precision**, not economic parameter uncertainty or empirical identification.
+Structural robustness reports the dependence mode, declared correlation-pair count and correlation-matrix validity together with Wilson 95% intervals and Monte Carlo standard error for recommendation-retention rates. It also reports whether the discrete robustness classification is stable at 95% relative to its declared thresholds. These intervals measure **simulation sampling precision**, not economic parameter uncertainty or empirical identification. Sector-package retention fields in legacy outputs should be read as fixed-posture consistency diagnostics, not evidence that sector coverage was reoptimized.
 
 The interactive structural screen uses 6 draws for responsiveness; larger research runs should use the batch endpoint rather than silently raising the interactive cap.
 

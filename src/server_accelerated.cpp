@@ -2,6 +2,7 @@
 #include "evaluation_profile.hpp"
 #include "interactive_frontier.hpp"
 #include "negotiation_support.hpp"
+#include "policy_truth_surface.hpp"
 #include "robust_recommendation_hot.hpp"
 #include "robust_trade_diplomacy.hpp"
 #include "server_session.hpp"
@@ -40,6 +41,17 @@ PublishedTradeDiplomacyPlatform profiled_build_trade_diplomacy_platform(
       negotiation, robustness.recommended_package_id);
   return ::cad::build_trade_diplomacy_publication(
       economy, result, negotiation, robustness);
+}
+
+std::string profiled_to_json(const Result& result) {
+  evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
+  return policy_truth_surface::to_json(result);
+}
+
+template<class T>
+auto profiled_to_json(const T& value) -> decltype(::cad::to_json(value)) {
+  evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
+  return ::cad::to_json(value);
 }
 
 template<class... Args>
@@ -99,12 +111,14 @@ bool parse_economy_with_negotiation_authority(
 }  // namespace cad::server
 
 // Keep the server routing/session implementation unchanged. Interpose only the
-// synchronous phases that execute after PolicyEngine::evaluate() and the
-// negotiation-owned input boundary for stateful evaluation. `comparisonOnly`
-// deliberately bypasses negotiation-state authority for stateless comparisons.
+// synchronous phases that execute after PolicyEngine::evaluate(), the production
+// truth serializer, and the negotiation-owned input boundary for stateful
+// evaluation. `comparisonOnly` deliberately bypasses negotiation-state authority
+// for stateless comparisons.
 #define parse_economy(object, economy, error) \
   ::cad::server::parse_economy_with_negotiation_authority( \
       (object), (economy), (error), session, request.path)
+#define to_json profiled_to_json
 #define analyze_negotiation profiled_analyze_negotiation
 #define analyze_robust_recommendations profiled_analyze_robust_recommendations
 #define build_trade_diplomacy_platform(economy, result, negotiation) \
@@ -121,4 +135,5 @@ bool parse_economy_with_negotiation_authority(
 #undef build_trade_diplomacy_platform
 #undef analyze_robust_recommendations
 #undef analyze_negotiation
+#undef to_json
 #undef parse_economy
