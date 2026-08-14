@@ -47,7 +47,8 @@ add_library(policy_engine
   src/welfare_sensitivity.cpp
   src/model_evidence.cpp
   src/monte_carlo_backend.cpp
-  src/monte_carlo_opencl.cpp)
+  src/monte_carlo_opencl.cpp
+  src/monte_carlo_opencl_reduced.cpp)
 target_include_directories(policy_engine PUBLIC include)
 target_compile_definitions(policy_engine PUBLIC CAD_SOURCE_REVISION="${CAD_SOURCE_REVISION}")
 if(CMAKE_DL_LIBS)
