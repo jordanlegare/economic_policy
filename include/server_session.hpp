@@ -44,6 +44,7 @@ struct SessionState {
   SessionState(std::string session_id, std::filesystem::path event_log_path,
                Economy baseline)
       : id(std::move(session_id)),
+        negotiation((event_log_path.parent_path() / "negotiation.events").string()),
         room(event_log_path.string()),
         last_economy(std::move(baseline)) {}
 
