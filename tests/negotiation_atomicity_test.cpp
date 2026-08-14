@@ -9,6 +9,48 @@
 int main() {
   using namespace cad::server;
 
+  // The public evaluation contract already accepts a 100% U.S. tariff shock.
+  // The durable negotiation authority must accept the same endpoint and fail
+  // atomically above it, while Canada's retaliatory ceiling remains 60%.
+  {
+    NegotiationState bounds;
+    std::string error;
+    const auto maximum = cad::request_json::parse_object(
+        R"({"actor":"us","operationId":"us-max-100","usTariff":100,"usPriority":50})");
+    assert(maximum.valid);
+    assert(bounds.update(maximum, error));
+    assert(bounds.revision() == 1);
+    assert(bounds.json().find("\"usTariff\":100") != std::string::npos);
+
+    const std::string at_maximum = bounds.json();
+    const auto too_high = cad::request_json::parse_object(
+        R"({"actor":"us","operationId":"us-over-100","usTariff":101,"usPriority":50})");
+    assert(too_high.valid);
+    error.clear();
+    assert(!bounds.update(too_high, error));
+    assert(!error.empty());
+    assert(bounds.revision() == 1);
+    assert(bounds.json() == at_maximum);
+
+    const auto automatic_maximum = cad::request_json::parse_object(
+        R"({"actor":"automatic","operationId":"automatic-us-max-100","usTariff":100,"retaliatoryTariff":60})");
+    assert(automatic_maximum.valid);
+    error.clear();
+    assert(bounds.update(automatic_maximum, error));
+    assert(bounds.revision() == 2);
+    assert(bounds.json().find("\"usTariff\":100") != std::string::npos);
+    assert(bounds.json().find("\"retaliatoryTariff\":60") != std::string::npos);
+
+    const std::string after_automatic = bounds.json();
+    const auto retaliation_too_high = cad::request_json::parse_object(
+        R"({"actor":"automatic","operationId":"automatic-retaliation-over-60","usTariff":100,"retaliatoryTariff":61})");
+    assert(retaliation_too_high.valid);
+    error.clear();
+    assert(!bounds.update(retaliation_too_high, error));
+    assert(bounds.revision() == 2);
+    assert(bounds.json() == after_automatic);
+  }
+
   const std::string path = "negotiation-state-test.events";
   std::remove(path.c_str());
   const std::string accepted_json =
