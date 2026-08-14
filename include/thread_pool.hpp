@@ -68,6 +68,7 @@ class ThreadPool {
   }
 
   std::size_t worker_count() const { return workers_.size(); }
+  std::size_t capacity() const { return max_queue_; }
 
   std::size_t queued() const {
     std::lock_guard<std::mutex> lock(mutex_);
