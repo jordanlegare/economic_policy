@@ -3,6 +3,8 @@
 #include "policy_engine.hpp"
 #include "robust_recommendation.hpp"
 #include "robust_recommendation_fast.hpp"
+#include "robust_recommendation_hot.hpp"
+#include "robustness_runtime.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -41,26 +43,8 @@ void compare_metrics(const cad::RobustPackageMetrics& expected,
   assert(expected.clears_probability_gate == actual.clears_probability_gate);
 }
 
-}  // namespace
-
-int main() {
-  cad::Economy economy;
-  const auto calibration = cad::load_calibration_snapshot(
-      "data/calibration/current.snapshot.csv");
-  economy = cad::apply_calibration(economy, calibration);
-
-  cad::PolicyEngine engine(20260810);
-  const auto result = engine.evaluate(economy);
-  const auto negotiation = cad::analyze_negotiation(economy, result);
-  assert(!negotiation.frontier.empty());
-
-  constexpr int draws = 600;
-  constexpr std::uint64_t seed = 123456;
-  const auto expected = cad::analyze_robust_recommendations(
-      economy, result, negotiation, calibration, draws, seed);
-  const auto actual = cad::analyze_robust_recommendations_fast(
-      economy, result, negotiation, calibration, draws, seed);
-
+void compare_analysis(const cad::RobustRecommendationAnalysis& expected,
+                      const cad::RobustRecommendationAnalysis& actual) {
   assert(expected.second_stage_monte_carlo_draws == actual.second_stage_monte_carlo_draws);
   assert(expected.seed == actual.seed);
   close(expected.cvar_tail_probability, actual.cvar_tail_probability);
@@ -78,18 +62,63 @@ int main() {
   assert(expected.selection_rule == actual.selection_rule);
   assert(expected.distributions.size() == actual.distributions.size());
   assert(expected.packages.size() == actual.packages.size());
-
   for (std::size_t i = 0; i < expected.packages.size(); ++i)
     compare_metrics(expected.packages[i], actual.packages[i]);
+}
 
-  // Repeat the parallel implementation to ensure scheduling does not affect
-  // package ordering, random-number use, or the selected recommendation.
-  const auto repeat = cad::analyze_robust_recommendations_fast(
+}  // namespace
+
+int main() {
+  cad::Economy economy;
+  const auto calibration = cad::load_calibration_snapshot(
+      "data/calibration/current.snapshot.csv");
+  economy = cad::apply_calibration(economy, calibration);
+
+  cad::PolicyEngine engine(20260810);
+  const auto result = engine.evaluate(economy);
+  const auto negotiation = cad::analyze_negotiation(economy, result);
+  assert(!negotiation.frontier.empty());
+
+  constexpr int draws = 600;
+  constexpr std::uint64_t seed = 123456;
+  const auto expected = cad::analyze_robust_recommendations(
       economy, result, negotiation, calibration, draws, seed);
-  assert(repeat.recommended_package_id == actual.recommended_package_id);
-  assert(repeat.packages.size() == actual.packages.size());
-  for (std::size_t i = 0; i < actual.packages.size(); ++i)
-    compare_metrics(actual.packages[i], repeat.packages[i]);
+  const auto fast = cad::analyze_robust_recommendations_fast(
+      economy, result, negotiation, calibration, draws, seed);
+  const auto hot = cad::analyze_robust_recommendations_hot(
+      economy, result, negotiation, calibration, draws, seed);
+
+  compare_analysis(expected, fast);
+  // The hot kernel uses sqrt(CA*US) only for the exact 50/50 mandate. The
+  // complete package metrics and selected recommendation must remain within the
+  // existing numerical contract against the untouched scalar reference.
+  compare_analysis(expected, hot);
+
+  const auto runtime = cad::robustness_runtime::snapshot();
+  assert(runtime.active == 0);
+  assert(runtime.draws == static_cast<std::uint64_t>(draws));
+  assert(runtime.packages == negotiation.frontier.size());
+  assert(runtime.completed_evaluations == runtime.total_evaluations);
+  assert(runtime.total_evaluations
+      == 2u * static_cast<std::uint64_t>(draws)
+          * static_cast<std::uint64_t>(negotiation.frontier.size()));
+
+  // Repeat the production implementation to ensure scheduling does not affect
+  // package ordering, random-number use, or the selected recommendation.
+  const auto repeat = cad::analyze_robust_recommendations_hot(
+      economy, result, negotiation, calibration, draws, seed);
+  compare_analysis(hot, repeat);
+
+  // Unequal diplomatic weights must stay on the general log/exp formula.
+  cad::Economy weighted = economy;
+  weighted.canada_priority = 60.0;
+  weighted.us_priority = 40.0;
+  const auto weighted_negotiation = cad::analyze_negotiation(weighted, result);
+  const auto weighted_expected = cad::analyze_robust_recommendations(
+      weighted, result, weighted_negotiation, calibration, 200, seed + 1);
+  const auto weighted_hot = cad::analyze_robust_recommendations_hot(
+      weighted, result, weighted_negotiation, calibration, 200, seed + 1);
+  compare_analysis(weighted_expected, weighted_hot);
 
   return 0;
 }
