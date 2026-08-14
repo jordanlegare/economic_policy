@@ -83,7 +83,7 @@ DrawResult run_cpu_draw(const Input& in, const Innovation* innovations) {
         + 1.5 * in.deescalation[q] + z.us_export_z * p.us_export_shock_sd;
 
     gap = p.output_persistence * gap + demand - in.trade_drag[q]
-        + .08 * (in.global_growth - 2.7)
+        + p.global_growth_sensitivity * (in.global_growth - 2.7)
         + z.output_z * p.output_shock_sd;
     inf = p.inflation_persistence * inf
         + p.inflation_expectations_weight * in.inflation_expectations
