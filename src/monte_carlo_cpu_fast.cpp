@@ -33,8 +33,7 @@ void validate_fast(const Input& input, const InnovationBank& innovations) {
 void accumulate_scalar_draw(const Input& in, const Innovation* innovations,
                             std::size_t draw_index, BatchResult& result) {
   const auto& p = in.parameters;
-  auto& aggregate = result.draws.back();
-  auto& tail = result.draws[draw_index];
+  auto& aggregate = result.aggregate;
 
   double rate = in.policy_rate;
   double inf = in.core_inflation;
@@ -118,8 +117,8 @@ void accumulate_scalar_draw(const Input& in, const Innovation* innovations,
     aggregate.us_exports[q] += us_export_change;
 
     if (q + 1 == kQuarterCount) {
-      tail.terminal_inflation = inf;
-      tail.terminal_debt = debt;
+      aggregate.terminal_inflation[draw_index] = inf;
+      aggregate.terminal_debt[draw_index] = debt;
       aggregate.terminal_growth += growth;
       aggregate.terminal_us_growth += us_growth;
       aggregate.terminal_unemployment += unemployment;
@@ -130,7 +129,7 @@ void accumulate_scalar_draw(const Input& in, const Innovation* innovations,
       aggregate.terminal_us_exports += us_export_change;
     }
   }
-  tail.recession = recession;
+  if (recession) aggregate.recessions += 1.0;
 }
 
 bool detect_avx2() {
@@ -169,7 +168,9 @@ BatchResult run_cpu_fast(const Input& input, const InnovationBank& innovations) 
   BatchResult result;
   result.backend = "cpu";
   result.aggregate_encoded = true;
-  result.draws.assign(static_cast<std::size_t>(input.draws), DrawResult{});
+  result.aggregate.sample_count = static_cast<std::size_t>(input.draws);
+  result.aggregate.terminal_inflation.resize(result.aggregate.sample_count);
+  result.aggregate.terminal_debt.resize(result.aggregate.sample_count);
 
   fast_runs.fetch_add(1, std::memory_order_relaxed);
   std::size_t processed = 0;
