@@ -76,8 +76,8 @@ else()
 endif()
 
 add_executable(cad-policy-studio
-  src/main.cpp
-  src/server.cpp)
+  src/main_end_to_end.cpp
+  src/server_accelerated.cpp)
 target_link_libraries(cad-policy-studio PRIVATE policy_engine Threads::Threads)
 cad_enable_warnings(cad-policy-studio)
 
@@ -168,6 +168,8 @@ cad_add_test(calibration_tests tests/calibration_test.cpp calibration_integrity)
 set_tests_properties(calibration_integrity PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(robust_recommendation_tests tests/robust_recommendation_test.cpp robust_recommendation)
 set_tests_properties(robust_recommendation PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+cad_add_test(robust_recommendation_fast_tests tests/robust_recommendation_fast_test.cpp robust_recommendation_fast)
+set_tests_properties(robust_recommendation_fast PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(negotiation_room_tests tests/negotiation_room_test.cpp negotiation_room)
 set_tests_properties(negotiation_room PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(trade_diplomacy_platform_tests tests/trade_diplomacy_platform_test.cpp trade_diplomacy_platform)
