@@ -9,22 +9,40 @@
 int main() {
   using namespace cad::server;
 
-  // The public evaluation contract already accepts a 100% U.S. tariff shock.
-  // The durable negotiation authority must accept the same endpoint and fail
-  // atomically above it, while Canada's retaliatory ceiling remains 60%.
+  // The stateless evaluation request and durable negotiation authority share
+  // one U.S. tariff ceiling. Exactly 200% is admissible; 201% fails closed.
+  {
+    cad::Economy economy;
+    std::string error;
+    const auto maximum = cad::request_json::parse_object(
+        R"({"usTariff":200})");
+    assert(maximum.valid);
+    assert(parse_economy(maximum, economy, error));
+    assert(economy.us_tariff_canada == 200.0);
+
+    const auto too_high = cad::request_json::parse_object(
+        R"({"usTariff":201})");
+    assert(too_high.valid);
+    error.clear();
+    assert(!parse_economy(too_high, economy, error));
+    assert(!error.empty());
+  }
+
+  // The durable live room uses the same 200% endpoint and remains transactional
+  // above it, while Canada's retaliatory ceiling stays at 60%.
   {
     NegotiationState bounds;
     std::string error;
     const auto maximum = cad::request_json::parse_object(
-        R"({"actor":"us","operationId":"us-max-100","usTariff":100,"usPriority":50})");
+        R"({"actor":"us","operationId":"us-max-200","usTariff":200,"usPriority":50})");
     assert(maximum.valid);
     assert(bounds.update(maximum, error));
     assert(bounds.revision() == 1);
-    assert(bounds.json().find("\"usTariff\":100") != std::string::npos);
+    assert(bounds.json().find("\"usTariff\":200") != std::string::npos);
 
     const std::string at_maximum = bounds.json();
     const auto too_high = cad::request_json::parse_object(
-        R"({"actor":"us","operationId":"us-over-100","usTariff":101,"usPriority":50})");
+        R"({"actor":"us","operationId":"us-over-200","usTariff":201,"usPriority":50})");
     assert(too_high.valid);
     error.clear();
     assert(!bounds.update(too_high, error));
@@ -33,17 +51,17 @@ int main() {
     assert(bounds.json() == at_maximum);
 
     const auto automatic_maximum = cad::request_json::parse_object(
-        R"({"actor":"automatic","operationId":"automatic-us-max-100","usTariff":100,"retaliatoryTariff":60})");
+        R"({"actor":"automatic","operationId":"automatic-us-max-200","usTariff":200,"retaliatoryTariff":60})");
     assert(automatic_maximum.valid);
     error.clear();
     assert(bounds.update(automatic_maximum, error));
     assert(bounds.revision() == 2);
-    assert(bounds.json().find("\"usTariff\":100") != std::string::npos);
+    assert(bounds.json().find("\"usTariff\":200") != std::string::npos);
     assert(bounds.json().find("\"retaliatoryTariff\":60") != std::string::npos);
 
     const std::string after_automatic = bounds.json();
     const auto retaliation_too_high = cad::request_json::parse_object(
-        R"({"actor":"automatic","operationId":"automatic-retaliation-over-60","usTariff":100,"retaliatoryTariff":61})");
+        R"({"actor":"automatic","operationId":"automatic-retaliation-over-60","usTariff":200,"retaliatoryTariff":61})");
     assert(retaliation_too_high.valid);
     error.clear();
     assert(!bounds.update(retaliation_too_high, error));

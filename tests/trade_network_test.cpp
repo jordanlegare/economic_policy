@@ -117,12 +117,14 @@ int main() {
   assert(directional_source.us_tariff.quantity_loss
       > network.sectors[4].us_tariff.quantity_loss);
 
-  // Even a 100% tariff with an extreme elasticity leaves a positive quantity
+  // Even a 200% tariff with an extreme elasticity leaves a positive quantity
   // ratio: no linear response or arbitrary quantity floor is reintroduced.
   cad::TradeNetworkInput extreme = input;
-  extreme.us_headline_tariff = 100.0;
+  extreme.us_headline_tariff = 200.0;
   extreme.us_trade_elasticity[4] = 20.0;
   const auto extreme_source = cad::evaluate_trade_source(extreme, 4, 100.0, 0.0);
+  assert(std::abs(extreme_source.us_tariff.applied_tariff - 200.0) < 1e-9);
+  assert(std::isfinite(extreme_source.us_tariff.quantity_loss));
   assert(extreme_source.us_tariff.quantity_loss > .99);
   assert(extreme_source.us_tariff.quantity_loss < 1.0);
   assert(1.0 - extreme_source.us_tariff.quantity_loss > 0.0);
