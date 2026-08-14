@@ -60,6 +60,11 @@ inline BilateralTradeState build_bilateral_trade_state(
   const double diversification = clamp(
       policy.diversification + economy.trade_diversification, 0.0, 0.75);
   const double border = std::max(0.0, economy.border_friction) / 100.0;
+  // The procurement bargaining mapping uses percentage-point units, not a
+  // fitted elasticity: a fully mapped 100-point reciprocity move means at most
+  // +1.0 percentage point to each direction's bilateral quantity ratio.
+  const double procurement_uplift = clamp(
+      economy.trade_network_tuning.procurement_quantity_uplift_pp, 0.0, 1.0) / 100.0;
 
   double ca_weight = 0.0;
   double us_weight = 0.0;
@@ -82,8 +87,12 @@ inline BilateralTradeState build_bilateral_trade_state(
         economy.canada_sector_trade_elasticity[i], economy.trade_elasticity)
         * std::max(0.0, parameters.tariff_revenue_elasticity_scale);
 
-    const double ca_ratio = quantity_ratio(ca_eps, us_tariff + border);
-    const double us_ratio = quantity_ratio(us_eps, ca_tariff + 0.45 * border);
+    const double ca_ratio = clamp(
+        quantity_ratio(ca_eps, us_tariff + border) + procurement_uplift,
+        0.0, 1.5);
+    const double us_ratio = clamp(
+        quantity_ratio(us_eps, ca_tariff + 0.45 * border) + procurement_uplift,
+        0.0, 1.5);
 
     ca_weight += ca_w;
     us_weight += us_w;
@@ -105,18 +114,26 @@ inline BilateralTradeState build_bilateral_trade_state(
   // Diversification cushions Canadian aggregate export/GDP exposure by
   // redirecting part of the trade displaced from the U.S. market. It does not
   // fabricate Canada-U.S. bilateral exports: the bilateral ledger below still
-  // uses the unadjusted bilateral quantity ratio.
+  // uses the unadjusted bilateral quantity ratio. Procurement-led gains above
+  // the submitted bilateral quantity level are not diversified away.
   const double bilateral_loss = std::max(0.0, 1.0 - out.canada_bilateral_quantity_ratio);
-  out.canada_total_export_quantity_ratio = clamp(
-      1.0 - bilateral_loss * (1.0 - diversification), 0.0, 1.5);
+  if (out.canada_bilateral_quantity_ratio <= 1.0) {
+    out.canada_total_export_quantity_ratio = clamp(
+        1.0 - bilateral_loss * (1.0 - diversification), 0.0, 1.5);
+  } else {
+    out.canada_total_export_quantity_ratio = out.canada_bilateral_quantity_ratio;
+  }
 
   const double exposed_exports = clamp(economy.exports_to_us_share / 100.0, 0.0, 1.0);
+  // Signed quantity gaps make procurement access a genuine trade-demand channel:
+  // ratios below one are drags; ratios above one are demand support. With zero
+  // procurement, the historical engine remains on the same <=1 branch.
   out.canada_macro_trade_drag = parameters.canada_trade_drag_scale
       * exposed_exports * economy.exports_gdp / 100.0
-      * std::max(0.0, 1.0 - out.canada_total_export_quantity_ratio);
+      * (1.0 - out.canada_total_export_quantity_ratio);
   out.us_macro_trade_drag = parameters.us_retaliation_drag_scale
       * clamp(economy.imports_from_us_share / 100.0, 0.0, 1.0)
-      * std::max(0.0, 1.0 - out.us_bilateral_quantity_ratio);
+      * (1.0 - out.us_bilateral_quantity_ratio);
 
   out.canada_exports_to_us_cad = std::max(0.0, economy.canada_exports_to_us_cad)
       * out.canada_bilateral_quantity_ratio;
@@ -126,7 +143,8 @@ inline BilateralTradeState build_bilateral_trade_state(
       * bilateral_loss * diversification;
 
   // Revenue is integrated over the same sector quantity response used above,
-  // rather than recomputed from a separate aggregate elasticity equation.
+  // including procurement-owned access, rather than recomputed from a separate
+  // aggregate elasticity equation.
   out.us_tariff_revenue_cad = std::max(0.0, economy.canada_exports_to_us_cad)
       * (us_revenue_rate_sum / ca_weight);
   out.canada_tariff_revenue_cad = std::max(0.0, economy.canada_imports_from_us_cad)
