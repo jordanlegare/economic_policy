@@ -63,7 +63,7 @@ std::size_t accumulate_avx2_prefix(
   if (vectorized == 0) return 0;
 
   const auto& p = in.parameters;
-  auto& aggregate = result.aggregate;
+  auto& aggregate = result.draws.aggregate();
   const __m256d zero = _mm256_setzero_pd();
   const __m256d neutral_rate = _mm256_set1_pd(p.neutral_rate);
   const __m256d inflation_target = _mm256_set1_pd(p.inflation_target);
