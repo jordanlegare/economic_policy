@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "compute_executor.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
   options.launch_browser = false;
 #endif
 
+  int compute_workers = 0;
   bool port_set = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -55,6 +57,16 @@ int main(int argc, char** argv) {
         std::cerr << "--workers requires an integer\n";
         return 2;
       }
+    } else if (arg == "--compute-workers") {
+      if (i + 1 >= argc || !parse_integer(argv[++i], compute_workers)) {
+        std::cerr << "--compute-workers requires a non-negative integer (0 = auto)\n";
+        return 2;
+      }
+    } else if (arg.rfind("--compute-workers=", 0) == 0) {
+      if (!parse_integer(arg.substr(std::string("--compute-workers=").size()), compute_workers)) {
+        std::cerr << "--compute-workers requires a non-negative integer (0 = auto)\n";
+        return 2;
+      }
     } else if (!port_set && parse_integer(arg, options.port)) {
       port_set = true;
     } else {
@@ -62,6 +74,12 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+
+  if (compute_workers < 0) {
+    std::cerr << "--compute-workers must be non-negative (0 = auto)\n";
+    return 2;
+  }
+  cad::compute::set_worker_limit(static_cast<std::size_t>(compute_workers));
 
   if (options.auth_token.empty()) {
     if (const char* token = std::getenv("CAD_POLICY_STUDIO_TOKEN"))

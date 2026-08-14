@@ -1,5 +1,6 @@
 #include "policy_engine.hpp"
 #include "calibration.hpp"
+#include "compute_executor.hpp"
 #include "negotiation_support.hpp"
 #include "robust_recommendation.hpp"
 
@@ -22,6 +23,19 @@ int main() {
   cad::PolicyEngine engine(42);
   cad::Economy defaults;
   const auto baseline = engine.evaluate(defaults);
+
+  // Coarse-grained multicore execution must not change any seeded scenario,
+  // ordering decision, floating-point reduction, or serialized result. Force a
+  // single compute lane and require byte-for-byte equivalence with auto mode.
+  if (cad::compute::worker_capacity() > 1) {
+    const std::string parallel_json = cad::to_json(baseline);
+    cad::compute::set_worker_limit(1);
+    const auto serial_baseline = engine.evaluate(defaults);
+    assert(cad::to_json(serial_baseline) == parallel_json);
+    cad::compute::set_worker_limit(0);
+    assert(cad::compute::configured_worker_count()
+        == cad::compute::worker_capacity());
+  }
 
   assert(baseline.scenarios.size() == 14);
   assert(baseline.candidates_examined == 288);
