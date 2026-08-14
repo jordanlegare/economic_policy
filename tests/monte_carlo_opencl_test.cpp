@@ -93,13 +93,25 @@ int main() {
 
   const double maximum = cad::monte_carlo::maximum_difference(reference, device);
   assert(std::isfinite(maximum));
+  assert(!device.aggregate_encoded);
   const auto after_first = cad::monte_carlo::opencl::probe();
   assert(after_first.innovation_uploads == 1);
   assert(after_first.resident_innovation_banks == 1);
 
-  // Regress the queue architecture itself. All lanes share one context/program
-  // and one resident innovation bank, while each lane recycles its own queue,
-  // kernel, scalar/path buffers and output buffer.
+  cad::monte_carlo::BatchResult reduced;
+  std::string reduced_error;
+  assert(cad::monte_carlo::run_opencl_reduced_for_equivalence_test(
+      input, innovations, reduced, reduced_error));
+  assert(reduced.aggregate_encoded);
+  const double reduced_maximum = cad::monte_carlo::maximum_aggregate_difference(reference, reduced);
+  assert(std::isfinite(reduced_maximum));
+  const auto after_reduced = cad::monte_carlo::opencl::reduced_probe();
+  assert(after_reduced.innovation_uploads == 1);
+  assert(after_reduced.resident_innovation_banks == 1);
+  assert(after_reduced.reduced_dispatches >= 1);
+  assert(after_reduced.batched_scenarios >= 1);
+  assert(after_reduced.host_values_read >= 105 + 2 * static_cast<std::uint64_t>(input.draws));
+
   auto concurrent_input = fixture(256);
   const auto concurrent_innovations = cad::monte_carlo::generate_innovations(
       20260811, concurrent_input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
@@ -136,7 +148,7 @@ int main() {
   }
   const auto concurrent_probe = cad::monte_carlo::opencl::probe();
   if (concurrent_probe.max_concurrent_runs < 2) {
-    std::cerr << "OpenCL runtime did not observe concurrent submissions; peak="
+    std::cerr << "OpenCL runtime did not observe concurrent detailed submissions; peak="
               << concurrent_probe.max_concurrent_runs << '\n';
     return 1;
   }
@@ -144,8 +156,6 @@ int main() {
   assert(concurrent_probe.resident_innovation_banks == 2);
   assert(concurrent_probe.innovation_uploads == 2);
 
-  // Reuse the first bank after concurrent work. It must stay resident: no new
-  // innovation upload is allowed and at least one pooled lane must be reused.
   cad::monte_carlo::BatchResult reused;
   std::string reuse_error;
   assert(cad::monte_carlo::run_opencl_for_equivalence_test(
@@ -155,18 +165,73 @@ int main() {
   assert(reuse_probe.innovation_uploads == 2);
   assert(reuse_probe.lane_reuses >= 1);
 
-  // Exercise the production qualification and promotion gate on the same
-  // runtime. CAD_OPENCL_ALLOW_CPU=1 lets CI use POCL while production still
-  // restricts automatic selection to actual GPU devices.
+  // The production search fans out 700-draw scenarios concurrently. The new
+  // reduced path must coalesce those requests into a two-dimensional launch
+  // and return policy-equivalent aggregates while retaining only debt and
+  // inflation tails per draw on the host.
+  auto batch_input = fixture(cad::monte_carlo::kSharedInnovationBankMinimumDraws);
+  const auto batch_innovations = cad::monte_carlo::generate_innovations(
+      20260812, batch_input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
+  const auto batch_reference = cad::monte_carlo::run_cpu(batch_input, batch_innovations);
+  const auto before_batch = cad::monte_carlo::opencl::reduced_probe();
+  std::array<cad::monte_carlo::Input, lanes> batch_inputs{};
+  std::array<cad::monte_carlo::BatchResult, lanes> batch_references{};
+  for (std::size_t lane = 0; lane < lanes; ++lane) {
+    batch_inputs[lane] = batch_input;
+    batch_inputs[lane].move_bp += static_cast<double>(lane) * 5.0;
+    batch_references[lane] = cad::monte_carlo::run_cpu(batch_inputs[lane], batch_innovations);
+  }
+  std::array<cad::monte_carlo::BatchResult, lanes> batch_results{};
+  std::array<std::string, lanes> batch_errors{};
+  std::array<bool, lanes> batch_ok{};
+  ready.store(0, std::memory_order_relaxed);
+  go.store(false, std::memory_order_relaxed);
+  workers.clear();
+  for (std::size_t lane = 0; lane < lanes; ++lane) {
+    workers.emplace_back([&, lane] {
+      ready.fetch_add(1, std::memory_order_release);
+      while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+      batch_ok[lane] = cad::monte_carlo::run_opencl_reduced_for_equivalence_test(
+          batch_inputs[lane], batch_innovations, batch_results[lane], batch_errors[lane]);
+      if (batch_ok[lane]) {
+        const double diff = cad::monte_carlo::maximum_aggregate_difference(
+            batch_references[lane], batch_results[lane]);
+        if (!std::isfinite(diff)) batch_ok[lane] = false;
+      }
+    });
+  }
+  while (ready.load(std::memory_order_acquire) < lanes) std::this_thread::yield();
+  go.store(true, std::memory_order_release);
+  for (auto& worker : workers) worker.join();
+  for (std::size_t lane = 0; lane < lanes; ++lane) {
+    if (!batch_ok[lane]) {
+      std::cerr << "Batched reduced OpenCL lane " << lane << " failed: "
+                << batch_errors[lane] << '\n';
+      return 1;
+    }
+    assert(batch_results[lane].aggregate_encoded);
+  }
+  (void)batch_reference;
+  const auto batch_probe = cad::monte_carlo::opencl::reduced_probe();
+  assert(batch_probe.innovation_uploads == before_batch.innovation_uploads + 1);
+  assert(batch_probe.max_batch_scenarios >= 2);
+  assert(batch_probe.batched_scenarios >= before_batch.batched_scenarios + lanes);
+  assert(batch_probe.reduced_dispatches < before_batch.reduced_dispatches + lanes);
+  const std::uint64_t compact_values_per_scenario =
+      105 + 2 * static_cast<std::uint64_t>(batch_input.draws);
+  assert(batch_probe.host_values_read
+      >= before_batch.host_values_read + compact_values_per_scenario * lanes);
+
   set_env("CAD_MONTE_CARLO_BACKEND", "gpu");
   const auto selected = cad::monte_carlo::run(input, innovations);
   const auto status = cad::monte_carlo::status();
   if (!status.equivalence_passed) {
-    std::cerr << "OpenCL kernel ran but production equivalence gate rejected it; max error="
+    std::cerr << "OpenCL kernel/reduction ran but production equivalence gate rejected it; max error="
               << status.max_equivalence_error << " detail=" << status.detail << '\n';
     return 1;
   }
   assert(selected.backend == "opencl-gpu");
+  assert(selected.aggregate_encoded);
   assert(status.active);
   assert(status.gpu_runs >= 1);
   assert(status.max_concurrent_gpu_runs >= 2);
@@ -174,9 +239,16 @@ int main() {
   assert(status.pooled_opencl_lanes >= 2);
   assert(status.resident_innovation_banks == 2);
   assert(status.opencl_lane_reuses >= 1);
-  std::cout << "OpenCL Monte Carlo equivalence passed; max absolute error=" << maximum
-            << "; peak concurrent submissions=" << status.max_concurrent_gpu_runs
-            << "; pooled lanes=" << status.pooled_opencl_lanes
-            << "; resident bank uploads=" << status.gpu_innovation_uploads << '\n';
+  const auto final_reduced_probe = cad::monte_carlo::opencl::reduced_probe();
+  assert(final_reduced_probe.innovation_uploads == 2);
+  assert(final_reduced_probe.reduced_dispatches >= 1);
+  assert(final_reduced_probe.batched_scenarios >= lanes);
+  assert(final_reduced_probe.max_batch_scenarios >= 2);
+  assert(final_reduced_probe.host_values_read >= compact_values_per_scenario * lanes);
+  std::cout << "OpenCL Monte Carlo equivalence passed; max detailed error=" << maximum
+            << "; max aggregate error=" << reduced_maximum
+            << "; peak detailed submissions=" << status.max_concurrent_gpu_runs
+            << "; max scenario batch=" << final_reduced_probe.max_batch_scenarios
+            << "; reduced dispatches=" << final_reduced_probe.reduced_dispatches << '\n';
   return 0;
 }

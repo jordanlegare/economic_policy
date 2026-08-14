@@ -97,10 +97,9 @@ int main() {
       == static_cast<std::size_t>(cad::monte_carlo::kSharedInnovationBankDraws) * 12);
   assert(base_bank.size()
       == static_cast<std::size_t>(cad::monte_carlo::kSharedInnovationBankMinimumDraws) * 12);
+  assert(cad::monte_carlo::kAutoGpuMinimumDraws
+      == cad::monte_carlo::kSharedInnovationBankMinimumDraws);
 
-  // Multiple scenario workers commonly reach the first shared CRN request at
-  // nearly the same time. They must coalesce under contention rather than each
-  // generating a separate 2,800-draw bank.
   const auto before_concurrent = cad::monte_carlo::status();
   constexpr std::size_t concurrent_lanes = 8;
   std::array<cad::monte_carlo::InnovationBank, concurrent_lanes> concurrent_banks{};
@@ -137,8 +136,10 @@ int main() {
   const auto first = cad::monte_carlo::run_cpu(input, innovations);
   const auto second = cad::monte_carlo::run_cpu(input, innovations);
   assert(first.backend == "cpu");
+  assert(!first.aggregate_encoded);
   assert(first.draws.size() == static_cast<std::size_t>(input.draws));
   assert(cad::monte_carlo::maximum_difference(first, second) == 0.0);
+  assert(cad::monte_carlo::maximum_aggregate_difference(first, second) == 0.0);
 
   for (const auto& draw : first.draws) {
     assert(std::isfinite(draw.terminal_inflation));
@@ -153,6 +154,7 @@ int main() {
   changed.move_bp = 25.0;
   const auto changed_result = cad::monte_carlo::run_cpu(changed, innovations);
   assert(cad::monte_carlo::maximum_difference(first, changed_result) > 0.0);
+  assert(cad::monte_carlo::maximum_aggregate_difference(first, changed_result) > 0.0);
 
   const auto backend_status = cad::monte_carlo::status();
   assert(backend_status.innovation_bank_generations >= 1);

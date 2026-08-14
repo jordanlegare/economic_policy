@@ -13,7 +13,11 @@ namespace cad::monte_carlo {
 inline constexpr std::size_t kQuarterCount = 12;
 inline constexpr std::size_t kInnovationsPerQuarter = 8;
 inline constexpr double kGpuEquivalenceTolerance = 1e-10;
-inline constexpr int kAutoGpuMinimumDraws = 2048;
+// The production policy search starts at 700 draws. Automatic GPU promotion
+// is still gated by measured concurrent throughput, but batching lets the
+// accelerator compete on the actual first-stage workload rather than only on
+// isolated 2,048+ draw calls.
+inline constexpr int kAutoGpuMinimumDraws = 700;
 inline constexpr double kAutoGpuMinimumConcurrentSpeedup = 1.10;
 inline constexpr int kSharedInnovationBankMinimumDraws = 700;
 inline constexpr int kSharedInnovationBankDraws = 2800;
@@ -98,9 +102,6 @@ struct Innovation {
   double housing_z = 0.0;
 };
 
-// Immutable shared common-random-number bank. A requested 700-draw view can
-// point at the same 2,800-draw storage later used for verification, so policy
-// scenarios neither regenerate nor copy identical stochastic innovations.
 class InnovationBank {
  public:
   using const_iterator = std::vector<Innovation>::const_iterator;
@@ -169,6 +170,12 @@ struct DrawResult {
 struct BatchResult {
   std::vector<DrawResult> draws;
   std::string backend = "cpu";
+  // When true, the vector is an aggregate transport encoding rather than a
+  // detailed per-draw trajectory: terminal inflation/debt remain per draw for
+  // P90 calculation, while all other sums are carried by the final element.
+  // Policy-engine aggregation therefore remains unchanged while PCIe traffic
+  // falls from 107 doubles/draw to two tail doubles/draw plus fixed sums.
+  bool aggregate_encoded = false;
 };
 
 struct BackendStatus {
@@ -197,6 +204,10 @@ struct BackendStatus {
   std::uint64_t innovation_bank_generations = 0;
   std::uint64_t gpu_innovation_uploads = 0;
   std::uint64_t opencl_lane_reuses = 0;
+  std::uint64_t gpu_reduced_dispatches = 0;
+  std::uint64_t gpu_batched_scenarios = 0;
+  std::size_t max_gpu_batch_scenarios = 0;
+  std::uint64_t gpu_host_values_read = 0;
 };
 
 InnovationBank generate_innovations(
@@ -208,12 +219,14 @@ BatchResult run_cpu(const Input& input, const InnovationBank& innovations);
 BatchResult run(const Input& input, const InnovationBank& innovations);
 BackendStatus status();
 
-// Test/diagnostic entrypoint. Production selection still goes through run(),
-// which qualifies a device against run_cpu() before promotion.
 bool run_opencl_for_equivalence_test(
+    const Input& input, const InnovationBank& innovations,
+    BatchResult& output, std::string& error);
+bool run_opencl_reduced_for_equivalence_test(
     const Input& input, const InnovationBank& innovations,
     BatchResult& output, std::string& error);
 
 double maximum_difference(const BatchResult& reference, const BatchResult& candidate);
+double maximum_aggregate_difference(const BatchResult& reference, const BatchResult& candidate);
 
 }  // namespace cad::monte_carlo
