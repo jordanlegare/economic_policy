@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <stdexcept>
@@ -28,7 +29,7 @@ double tail_innovation(double z, double threshold, double scale,
   return out;
 }
 
-void validate(const Input& input, const std::vector<Innovation>& innovations) {
+void validate(const Input& input, const InnovationBank& innovations) {
   if (input.draws <= 0) throw std::invalid_argument("Monte Carlo draws must be positive");
   const auto expected = static_cast<std::size_t>(input.draws) * kQuarterCount;
   if (innovations.size() != expected)
@@ -105,6 +106,70 @@ DrawResult run_cpu_draw(const Input& in, const Innovation* innovations) {
     }
   }
   out.recession = recession;
+  return out;
+}
+
+struct InnovationCacheKey {
+  std::uint64_t seed = 0;
+  double correlation = 0.0;
+  double tail_threshold = 0.0;
+  double tail_scale = 0.0;
+  double stress_scale = 0.0;
+  bool stress_regime = false;
+
+  bool operator==(const InnovationCacheKey& other) const {
+    return seed == other.seed
+        && correlation == other.correlation
+        && tail_threshold == other.tail_threshold
+        && tail_scale == other.tail_scale
+        && stress_scale == other.stress_scale
+        && stress_regime == other.stress_regime;
+  }
+};
+
+struct InnovationCacheEntry {
+  InnovationCacheKey key;
+  std::shared_ptr<const std::vector<Innovation>> storage;
+  std::uint64_t identity = 0;
+  std::uint64_t last_used = 0;
+};
+
+struct InnovationCache {
+  std::mutex mutex;
+  std::vector<InnovationCacheEntry> entries;
+  std::uint64_t next_identity = 1;
+  std::uint64_t clock = 0;
+  std::atomic<std::uint64_t> hits{0};
+  std::atomic<std::uint64_t> generations{0};
+};
+
+InnovationCache& innovation_cache() {
+  static InnovationCache cache;
+  return cache;
+}
+
+std::shared_ptr<const std::vector<Innovation>> build_innovation_storage(
+    const InnovationCacheKey& key, int draws) {
+  std::mt19937_64 rng(key.seed);
+  std::normal_distribution<double> shock(0.0, 1.0);
+  auto out = std::make_shared<std::vector<Innovation>>(
+      static_cast<std::size_t>(draws) * kQuarterCount);
+  const double rho = clamp_value(key.correlation, -.999, .999);
+  const double independent_scale = std::sqrt(std::max(0.0, 1.0 - rho * rho));
+  for (int d = 0; d < draws; ++d) for (std::size_t q = 0; q < kQuarterCount; ++q) {
+    auto& z = (*out)[static_cast<std::size_t>(d) * kQuarterCount + q];
+    z.export_z = tail_innovation(shock(rng), key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    z.us_export_z = tail_innovation(shock(rng), key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    const double raw_output_z = shock(rng);
+    const double inflation_independent_z = shock(rng);
+    const double raw_inflation_z = rho * raw_output_z + independent_scale * inflation_independent_z;
+    z.output_z = tail_innovation(raw_output_z, key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    z.inflation_z = tail_innovation(raw_inflation_z, key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    z.growth_z = tail_innovation(shock(rng), key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    z.us_growth_z = tail_innovation(shock(rng), key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    z.unemployment_z = tail_innovation(shock(rng), key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+    z.housing_z = tail_innovation(shock(rng), key.tail_threshold, key.tail_scale, key.stress_scale, key.stress_regime);
+  }
   return out;
 }
 
@@ -217,33 +282,55 @@ double concurrent_elapsed_microseconds(std::size_t lanes, Function&& function,
 
 }  // namespace
 
-std::vector<Innovation> generate_innovations(
+InnovationBank generate_innovations(
     std::uint64_t seed, int draws, double output_inflation_correlation,
     double tail_threshold, double tail_scale, double stress_scale, bool stress_regime) {
   if (draws <= 0) throw std::invalid_argument("Monte Carlo draws must be positive");
-  std::mt19937_64 rng(seed);
-  std::normal_distribution<double> shock(0.0, 1.0);
-  std::vector<Innovation> out(static_cast<std::size_t>(draws) * kQuarterCount);
-  const double rho = clamp_value(output_inflation_correlation, -.999, .999);
-  const double independent_scale = std::sqrt(std::max(0.0, 1.0 - rho * rho));
-  for (int d = 0; d < draws; ++d) for (std::size_t q = 0; q < kQuarterCount; ++q) {
-    auto& z = out[static_cast<std::size_t>(d) * kQuarterCount + q];
-    z.export_z = tail_innovation(shock(rng), tail_threshold, tail_scale, stress_scale, stress_regime);
-    z.us_export_z = tail_innovation(shock(rng), tail_threshold, tail_scale, stress_scale, stress_regime);
-    const double raw_output_z = shock(rng);
-    const double inflation_independent_z = shock(rng);
-    const double raw_inflation_z = rho * raw_output_z + independent_scale * inflation_independent_z;
-    z.output_z = tail_innovation(raw_output_z, tail_threshold, tail_scale, stress_scale, stress_regime);
-    z.inflation_z = tail_innovation(raw_inflation_z, tail_threshold, tail_scale, stress_scale, stress_regime);
-    z.growth_z = tail_innovation(shock(rng), tail_threshold, tail_scale, stress_scale, stress_regime);
-    z.us_growth_z = tail_innovation(shock(rng), tail_threshold, tail_scale, stress_scale, stress_regime);
-    z.unemployment_z = tail_innovation(shock(rng), tail_threshold, tail_scale, stress_scale, stress_regime);
-    z.housing_z = tail_innovation(shock(rng), tail_threshold, tail_scale, stress_scale, stress_regime);
+  const InnovationCacheKey key{
+      seed, output_inflation_correlation, tail_threshold, tail_scale,
+      stress_scale, stress_regime};
+  const int bank_draws = draws >= kSharedInnovationBankMinimumDraws
+      && draws <= kSharedInnovationBankDraws ? kSharedInnovationBankDraws : draws;
+  const std::size_t bank_size = static_cast<std::size_t>(bank_draws) * kQuarterCount;
+  const std::size_t requested_size = static_cast<std::size_t>(draws) * kQuarterCount;
+
+  auto& cache = innovation_cache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  ++cache.clock;
+  for (auto& entry : cache.entries) {
+    if (entry.key == key && entry.storage && entry.storage->size() >= bank_size) {
+      entry.last_used = cache.clock;
+      cache.hits.fetch_add(1, std::memory_order_relaxed);
+      return InnovationBank(entry.storage, requested_size, entry.identity);
+    }
   }
-  return out;
+
+  auto storage = build_innovation_storage(key, bank_draws);
+  cache.generations.fetch_add(1, std::memory_order_relaxed);
+  std::uint64_t identity = cache.next_identity++;
+
+  auto existing = std::find_if(cache.entries.begin(), cache.entries.end(),
+      [&](const InnovationCacheEntry& entry) { return entry.key == key; });
+  if (existing != cache.entries.end()) {
+    existing->storage = storage;
+    existing->identity = identity;
+    existing->last_used = cache.clock;
+  } else {
+    constexpr std::size_t max_entries = 4;
+    if (cache.entries.size() >= max_entries) {
+      existing = std::min_element(cache.entries.begin(), cache.entries.end(),
+          [](const InnovationCacheEntry& a, const InnovationCacheEntry& b) {
+            return a.last_used < b.last_used;
+          });
+      *existing = InnovationCacheEntry{key, storage, identity, cache.clock};
+    } else {
+      cache.entries.push_back(InnovationCacheEntry{key, storage, identity, cache.clock});
+    }
+  }
+  return InnovationBank(std::move(storage), requested_size, identity);
 }
 
-BatchResult run_cpu(const Input& input, const std::vector<Innovation>& innovations) {
+BatchResult run_cpu(const Input& input, const InnovationBank& innovations) {
   validate(input, innovations);
   BatchResult result; result.backend = "cpu"; result.draws.resize(static_cast<std::size_t>(input.draws));
   for (int d = 0; d < input.draws; ++d)
@@ -275,13 +362,13 @@ double maximum_difference(const BatchResult& reference, const BatchResult& candi
   return maximum;
 }
 
-bool run_opencl_for_equivalence_test(const Input& input, const std::vector<Innovation>& innovations,
+bool run_opencl_for_equivalence_test(const Input& input, const InnovationBank& innovations,
                                      BatchResult& output, std::string& error) {
   validate(input, innovations);
   return opencl::run(input, innovations, output, error);
 }
 
-BatchResult run(const Input& input, const std::vector<Innovation>& innovations) {
+BatchResult run(const Input& input, const InnovationBank& innovations) {
   validate(input, innovations);
   auto& state = dispatcher_state();
   const Preference requested = preference();
@@ -296,8 +383,7 @@ BatchResult run(const Input& input, const std::vector<Innovation>& innovations) 
     if (probe.device_present && probe.fp64_supported && !state.equivalence_checked) {
       const int gate_draws = std::min(input.draws, 64);
       Input gate_input = input; gate_input.draws = gate_draws;
-      std::vector<Innovation> gate_innovations(innovations.begin(), innovations.begin()
-          + static_cast<std::ptrdiff_t>(gate_draws * static_cast<int>(kQuarterCount)));
+      const auto gate_innovations = innovations.prefix(gate_draws);
       const auto reference = run_cpu(gate_input, gate_innovations);
       BatchResult candidate; std::string error;
       const bool ran = opencl::run(gate_input, gate_innovations, candidate, error);
@@ -316,8 +402,7 @@ BatchResult run(const Input& input, const std::vector<Innovation>& innovations) 
       const std::size_t lanes = std::min(host_lanes, max_measured_lanes);
       const int perf_draws = std::min(input.draws, sample_draws);
       Input perf_input = input; perf_input.draws = perf_draws;
-      std::vector<Innovation> perf_innovations(innovations.begin(), innovations.begin()
-          + static_cast<std::ptrdiff_t>(perf_draws * static_cast<int>(kQuarterCount)));
+      const auto perf_innovations = innovations.prefix(perf_draws);
       BatchResult warm; std::string warm_error;
       bool gpu_ok = opencl::run(perf_input, perf_innovations, warm, warm_error);
       double cpu_us = 0.0, gpu_us = 0.0;
@@ -394,8 +479,14 @@ BackendStatus status() {
   out.performance_lanes = state.performance_lanes;
   out.performance_draws = state.performance_draws;
   out.max_concurrent_gpu_runs = probe.max_concurrent_runs;
+  out.pooled_opencl_lanes = probe.pooled_lanes;
+  out.resident_innovation_banks = probe.resident_innovation_banks;
   out.gpu_runs = state.gpu_runs.load(std::memory_order_relaxed);
   out.cpu_fallback_runs = state.cpu_fallback_runs.load(std::memory_order_relaxed);
+  out.innovation_bank_hits = innovation_cache().hits.load(std::memory_order_relaxed);
+  out.innovation_bank_generations = innovation_cache().generations.load(std::memory_order_relaxed);
+  out.gpu_innovation_uploads = probe.innovation_uploads;
+  out.opencl_lane_reuses = probe.lane_reuses;
   return out;
 }
 

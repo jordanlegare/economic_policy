@@ -1,0 +1,30 @@
+name: Monte Carlo residency TSan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  innovation-bank-races:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ThreadSanitizer
+        env:
+          CC: clang
+          CXX: clang++
+          CXXFLAGS: -fsanitize=thread -fno-omit-frame-pointer
+          LDFLAGS: -fsanitize=thread
+        run: cmake -S . -B build-tsan-monte -DCMAKE_BUILD_TYPE=Debug
+      - name: Build Monte Carlo concurrency contract
+        run: cmake --build build-tsan-monte --parallel --target monte_carlo_backend_tests
+      - name: Race-test innovation bank coalescing
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+          CAD_MONTE_CARLO_BACKEND: cpu
+        run: ctest --test-dir build-tsan-monte --output-on-failure -R '^monte_carlo_backend$'

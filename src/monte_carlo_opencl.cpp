@@ -2,14 +2,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -58,6 +61,8 @@ constexpr cl_program_build_info CL_PROGRAM_BUILD_LOG = 0x1183;
 constexpr std::size_t kScalarCount = 40;
 constexpr std::size_t kPathSeriesCount = 14;
 constexpr std::size_t kOutputStride = 8 * kQuarterCount + 11;
+constexpr std::size_t kResidentBankLimit = 4;
+constexpr std::size_t kDefaultLaneLimit = 16;
 
 class DynamicLibrary {
  public:
@@ -319,39 +324,64 @@ __kernel void cad_monte_carlo(
 )CLC";
 }
 
+std::size_t configured_lane_limit() {
+  if (const char* raw = std::getenv("CAD_OPENCL_LANES")) {
+    try {
+      const long parsed = std::stol(raw);
+      if (parsed > 0) return std::min<std::size_t>(64, static_cast<std::size_t>(parsed));
+    } catch (...) {
+    }
+  }
+  const unsigned detected = std::thread::hardware_concurrency();
+  const std::size_t host = detected == 0 ? std::size_t{4} : static_cast<std::size_t>(detected);
+  return std::max<std::size_t>(2, std::min(kDefaultLaneLimit, host));
+}
+
 class Runtime {
  public:
-  Runtime() = default;
+  Runtime() : max_lanes_(configured_lane_limit()) {}
   Runtime(const Runtime&) = delete;
   Runtime& operator=(const Runtime&) = delete;
   ~Runtime() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    shutting_down_ = true;
-    idle_.wait(lock, [this] { return active_runs_ == 0; });
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      shutting_down_ = true;
+      idle_.wait(lock, [this] { return active_runs_ == 0; });
+    }
     release_all();
   }
+
   Probe probe() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    ensure_probe();
-    return probe_;
+    Probe out;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      ensure_probe();
+      out = probe_;
+    }
+    {
+      std::lock_guard<std::mutex> lock(lane_mutex_);
+      out.pooled_lanes = lanes_.size();
+    }
+    {
+      std::lock_guard<std::mutex> lock(resident_mutex_);
+      out.resident_innovation_banks = resident_banks_.size();
+    }
+    out.innovation_uploads = innovation_uploads_.load(std::memory_order_relaxed);
+    out.lane_reuses = lane_reuses_.load(std::memory_order_relaxed);
+    return out;
   }
-  bool run(const Input& input, const std::vector<Innovation>& innovations,
+
+  bool run(const Input& input, const InnovationBank& innovations,
            BatchResult& output, std::string& error) {
     if (!acquire_run(error)) return false;
-    RunLease lease(*this);
-    cl_int rc = CL_SUCCESS;
-    cl_command_queue queue = functions_.create_command_queue(context_, device_, 0, &rc);
-    if (!queue || rc != CL_SUCCESS) {
-      error = "clCreateCommandQueue failed: " + std::to_string(rc);
-      return false;
-    }
-    QueueGuard queue_guard(functions_, queue);
-    cl_kernel kernel = functions_.create_kernel(program_, "cad_monte_carlo", &rc);
-    if (!kernel || rc != CL_SUCCESS) {
-      error = "clCreateKernel failed: " + std::to_string(rc);
-      return false;
-    }
-    KernelGuard kernel_guard(functions_, kernel);
+    RunLease run_lease(*this);
+
+    Lane* lane = acquire_lane(error);
+    if (!lane) return false;
+    LaneLease lane_lease(*this, *lane);
+
+    auto resident = acquire_resident_bank(*lane, innovations, error);
+    if (!resident) return false;
 
     std::array<double, kScalarCount> scalars{};
     scalars[0] = input.move_bp; scalars[1] = input.productive_share;
@@ -387,45 +417,30 @@ class Runtime {
     copy_path(10, input.supply); copy_path(11, input.relief_cost);
     copy_path(12, input.canada_export_quantity_ratio); copy_path(13, input.us_export_quantity_ratio);
 
-    std::vector<double> flat_innovations;
-    flat_innovations.reserve(innovations.size() * kInnovationsPerQuarter);
-    for (const auto& z : innovations) {
-      flat_innovations.push_back(z.export_z); flat_innovations.push_back(z.us_export_z);
-      flat_innovations.push_back(z.output_z); flat_innovations.push_back(z.inflation_z);
-      flat_innovations.push_back(z.growth_z); flat_innovations.push_back(z.us_growth_z);
-      flat_innovations.push_back(z.unemployment_z); flat_innovations.push_back(z.housing_z);
-    }
-    std::vector<double> flat_output(static_cast<std::size_t>(input.draws) * kOutputStride, 0.0);
+    const std::size_t output_values = static_cast<std::size_t>(input.draws) * kOutputStride;
+    const std::size_t output_bytes = output_values * sizeof(double);
+    if (!ensure_output_capacity(*lane, output_bytes, error)) return false;
+    lane->host_output.resize(output_values);
 
-    cl_mem scalar_buffer = functions_.create_buffer(context_, CL_MEM_READ_ONLY, sizeof(scalars), nullptr, &rc);
-    if (!scalar_buffer || rc != CL_SUCCESS) { error = "clCreateBuffer(scalars) failed: " + std::to_string(rc); return false; }
-    BufferGuard scalar_guard(functions_, scalar_buffer);
-    cl_mem path_buffer = functions_.create_buffer(context_, CL_MEM_READ_ONLY, sizeof(paths), nullptr, &rc);
-    if (!path_buffer || rc != CL_SUCCESS) { error = "clCreateBuffer(paths) failed: " + std::to_string(rc); return false; }
-    BufferGuard path_guard(functions_, path_buffer);
-    cl_mem innovation_buffer = functions_.create_buffer(context_, CL_MEM_READ_ONLY, flat_innovations.size() * sizeof(double), nullptr, &rc);
-    if (!innovation_buffer || rc != CL_SUCCESS) { error = "clCreateBuffer(innovations) failed: " + std::to_string(rc); return false; }
-    BufferGuard innovation_guard(functions_, innovation_buffer);
-    cl_mem output_buffer = functions_.create_buffer(context_, CL_MEM_WRITE_ONLY, flat_output.size() * sizeof(double), nullptr, &rc);
-    if (!output_buffer || rc != CL_SUCCESS) { error = "clCreateBuffer(output) failed: " + std::to_string(rc); return false; }
-    BufferGuard output_guard(functions_, output_buffer);
+    if (!write_buffer(lane->queue, lane->scalar_buffer, scalars.data(), sizeof(scalars), error)
+        || !write_buffer(lane->queue, lane->path_buffer, paths.data(), sizeof(paths), error)) return false;
 
-    if (!write_buffer(queue, scalar_buffer, scalars.data(), sizeof(scalars), error)
-        || !write_buffer(queue, path_buffer, paths.data(), sizeof(paths), error)
-        || !write_buffer(queue, innovation_buffer, flat_innovations.data(), flat_innovations.size() * sizeof(double), error)) return false;
-    if ((rc = functions_.set_kernel_arg(kernel, 0, sizeof(cl_mem), &scalar_buffer)) != CL_SUCCESS
-        || (rc = functions_.set_kernel_arg(kernel, 1, sizeof(cl_mem), &path_buffer)) != CL_SUCCESS
-        || (rc = functions_.set_kernel_arg(kernel, 2, sizeof(cl_mem), &innovation_buffer)) != CL_SUCCESS
-        || (rc = functions_.set_kernel_arg(kernel, 3, sizeof(cl_mem), &output_buffer)) != CL_SUCCESS
-        || (rc = functions_.set_kernel_arg(kernel, 4, sizeof(int), &input.draws)) != CL_SUCCESS) {
+    cl_int rc = CL_SUCCESS;
+    cl_mem innovation_buffer = resident->buffer;
+    if ((rc = functions_.set_kernel_arg(lane->kernel, 0, sizeof(cl_mem), &lane->scalar_buffer)) != CL_SUCCESS
+        || (rc = functions_.set_kernel_arg(lane->kernel, 1, sizeof(cl_mem), &lane->path_buffer)) != CL_SUCCESS
+        || (rc = functions_.set_kernel_arg(lane->kernel, 2, sizeof(cl_mem), &innovation_buffer)) != CL_SUCCESS
+        || (rc = functions_.set_kernel_arg(lane->kernel, 3, sizeof(cl_mem), &lane->output_buffer)) != CL_SUCCESS
+        || (rc = functions_.set_kernel_arg(lane->kernel, 4, sizeof(int), &input.draws)) != CL_SUCCESS) {
       error = "clSetKernelArg failed: " + std::to_string(rc); return false;
     }
     const std::size_t global = static_cast<std::size_t>(input.draws);
-    rc = functions_.enqueue_nd_range_kernel(queue, kernel, 1, nullptr, &global, nullptr, 0, nullptr, nullptr);
+    rc = functions_.enqueue_nd_range_kernel(lane->queue, lane->kernel, 1, nullptr, &global, nullptr, 0, nullptr, nullptr);
     if (rc != CL_SUCCESS) { error = "clEnqueueNDRangeKernel failed: " + std::to_string(rc); return false; }
-    rc = functions_.enqueue_read_buffer(queue, output_buffer, CL_TRUE, 0, flat_output.size() * sizeof(double), flat_output.data(), 0, nullptr, nullptr);
+    rc = functions_.enqueue_read_buffer(lane->queue, lane->output_buffer, CL_TRUE, 0, output_bytes,
+                                        lane->host_output.data(), 0, nullptr, nullptr);
     if (rc != CL_SUCCESS) { error = "clEnqueueReadBuffer failed: " + std::to_string(rc); return false; }
-    rc = functions_.finish(queue);
+    rc = functions_.finish(lane->queue);
     if (rc != CL_SUCCESS) { error = "clFinish failed: " + std::to_string(rc); return false; }
 
     output.backend = "opencl-gpu";
@@ -434,49 +449,234 @@ class Runtime {
       const std::size_t base = static_cast<std::size_t>(d) * kOutputStride;
       auto& draw = output.draws[static_cast<std::size_t>(d)];
       for (std::size_t q = 0; q < kQuarterCount; ++q) {
-        draw.rates[q] = flat_output[base + 0 * kQuarterCount + q];
-        draw.inflation[q] = flat_output[base + 1 * kQuarterCount + q];
-        draw.growth[q] = flat_output[base + 2 * kQuarterCount + q];
-        draw.us_growth[q] = flat_output[base + 3 * kQuarterCount + q];
-        draw.debt[q] = flat_output[base + 4 * kQuarterCount + q];
-        draw.cost[q] = flat_output[base + 5 * kQuarterCount + q];
-        draw.exports[q] = flat_output[base + 6 * kQuarterCount + q];
-        draw.us_exports[q] = flat_output[base + 7 * kQuarterCount + q];
+        draw.rates[q] = lane->host_output[base + 0 * kQuarterCount + q];
+        draw.inflation[q] = lane->host_output[base + 1 * kQuarterCount + q];
+        draw.growth[q] = lane->host_output[base + 2 * kQuarterCount + q];
+        draw.us_growth[q] = lane->host_output[base + 3 * kQuarterCount + q];
+        draw.debt[q] = lane->host_output[base + 4 * kQuarterCount + q];
+        draw.cost[q] = lane->host_output[base + 5 * kQuarterCount + q];
+        draw.exports[q] = lane->host_output[base + 6 * kQuarterCount + q];
+        draw.us_exports[q] = lane->host_output[base + 7 * kQuarterCount + q];
       }
-      draw.terminal_inflation = flat_output[base + 96]; draw.terminal_growth = flat_output[base + 97];
-      draw.terminal_us_growth = flat_output[base + 98]; draw.terminal_unemployment = flat_output[base + 99];
-      draw.terminal_debt = flat_output[base + 100]; draw.terminal_housing = flat_output[base + 101];
-      draw.terminal_cost = flat_output[base + 102]; draw.terminal_income = flat_output[base + 103];
-      draw.terminal_exports = flat_output[base + 104]; draw.terminal_us_exports = flat_output[base + 105];
-      draw.recession = flat_output[base + 106] != 0.0;
+      draw.terminal_inflation = lane->host_output[base + 96]; draw.terminal_growth = lane->host_output[base + 97];
+      draw.terminal_us_growth = lane->host_output[base + 98]; draw.terminal_unemployment = lane->host_output[base + 99];
+      draw.terminal_debt = lane->host_output[base + 100]; draw.terminal_housing = lane->host_output[base + 101];
+      draw.terminal_cost = lane->host_output[base + 102]; draw.terminal_income = lane->host_output[base + 103];
+      draw.terminal_exports = lane->host_output[base + 104]; draw.terminal_us_exports = lane->host_output[base + 105];
+      draw.recession = lane->host_output[base + 106] != 0.0;
     }
     return true;
   }
+
  private:
-  struct RunLease { Runtime& runtime; explicit RunLease(Runtime& value) : runtime(value) {} ~RunLease() { runtime.release_run(); } };
-  struct QueueGuard { Functions& functions; cl_command_queue value = nullptr; QueueGuard(Functions& f, cl_command_queue v) : functions(f), value(v) {} ~QueueGuard() { if (value) functions.release_command_queue(value); } };
-  struct KernelGuard { Functions& functions; cl_kernel value = nullptr; KernelGuard(Functions& f, cl_kernel v) : functions(f), value(v) {} ~KernelGuard() { if (value) functions.release_kernel(value); } };
-  struct BufferGuard { Functions& functions; cl_mem value = nullptr; BufferGuard(Functions& f, cl_mem v) : functions(f), value(v) {} ~BufferGuard() { if (value) functions.release_mem_object(value); } };
+  struct Lane {
+    Functions* functions = nullptr;
+    cl_command_queue queue = nullptr;
+    cl_kernel kernel = nullptr;
+    cl_mem scalar_buffer = nullptr;
+    cl_mem path_buffer = nullptr;
+    cl_mem output_buffer = nullptr;
+    std::size_t output_capacity_bytes = 0;
+    std::vector<double> host_output;
+    bool in_use = false;
+
+    ~Lane() {
+      if (!functions) return;
+      if (output_buffer) functions->release_mem_object(output_buffer);
+      if (path_buffer) functions->release_mem_object(path_buffer);
+      if (scalar_buffer) functions->release_mem_object(scalar_buffer);
+      if (kernel) functions->release_kernel(kernel);
+      if (queue) functions->release_command_queue(queue);
+    }
+  };
+
+  struct ResidentBank {
+    Functions* functions = nullptr;
+    cl_mem buffer = nullptr;
+    std::uint64_t identity = 0;
+    std::size_t innovation_count = 0;
+    std::uint64_t last_used = 0;
+    ~ResidentBank() { if (buffer && functions) functions->release_mem_object(buffer); }
+  };
+
+  struct RunLease {
+    Runtime& runtime;
+    explicit RunLease(Runtime& value) : runtime(value) {}
+    ~RunLease() { runtime.release_run(); }
+  };
+
+  struct LaneLease {
+    Runtime& runtime;
+    Lane& lane;
+    LaneLease(Runtime& runtime_value, Lane& lane_value) : runtime(runtime_value), lane(lane_value) {}
+    ~LaneLease() { runtime.release_lane(lane); }
+  };
+
   bool acquire_run(std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (shutting_down_) { error = "OpenCL runtime is shutting down"; return false; }
     ensure_probe();
-    if (!probe_.device_present || !probe_.fp64_supported) { error = probe_.detail.empty() ? "no FP64 OpenCL device" : probe_.detail; return false; }
+    if (!probe_.device_present || !probe_.fp64_supported) {
+      error = probe_.detail.empty() ? "no FP64 OpenCL device" : probe_.detail;
+      return false;
+    }
     if (!ensure_program(error)) return false;
     ++active_runs_;
     probe_.max_concurrent_runs = std::max(probe_.max_concurrent_runs, active_runs_);
     return true;
   }
+
   void release_run() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (active_runs_ > 0) --active_runs_;
     if (active_runs_ == 0) idle_.notify_all();
   }
+
+  Lane* acquire_lane(std::string& error) {
+    std::unique_lock<std::mutex> lock(lane_mutex_);
+    for (;;) {
+      for (auto& lane : lanes_) {
+        if (!lane->in_use) {
+          lane->in_use = true;
+          lane_reuses_.fetch_add(1, std::memory_order_relaxed);
+          return lane.get();
+        }
+      }
+      if (lanes_.size() < max_lanes_) {
+        auto lane = create_lane(error);
+        if (!lane) return nullptr;
+        lane->in_use = true;
+        Lane* raw = lane.get();
+        lanes_.push_back(std::move(lane));
+        return raw;
+      }
+      lane_idle_.wait(lock);
+    }
+  }
+
+  void release_lane(Lane& lane) {
+    {
+      std::lock_guard<std::mutex> lock(lane_mutex_);
+      lane.in_use = false;
+    }
+    lane_idle_.notify_one();
+  }
+
+  std::unique_ptr<Lane> create_lane(std::string& error) {
+    cl_int rc = CL_SUCCESS;
+    auto lane = std::make_unique<Lane>();
+    lane->functions = &functions_;
+    lane->queue = functions_.create_command_queue(context_, device_, 0, &rc);
+    if (!lane->queue || rc != CL_SUCCESS) {
+      error = "clCreateCommandQueue failed: " + std::to_string(rc);
+      return nullptr;
+    }
+    lane->kernel = functions_.create_kernel(program_, "cad_monte_carlo", &rc);
+    if (!lane->kernel || rc != CL_SUCCESS) {
+      error = "clCreateKernel failed: " + std::to_string(rc);
+      return nullptr;
+    }
+    lane->scalar_buffer = functions_.create_buffer(context_, CL_MEM_READ_ONLY,
+        kScalarCount * sizeof(double), nullptr, &rc);
+    if (!lane->scalar_buffer || rc != CL_SUCCESS) {
+      error = "clCreateBuffer(scalars) failed: " + std::to_string(rc);
+      return nullptr;
+    }
+    lane->path_buffer = functions_.create_buffer(context_, CL_MEM_READ_ONLY,
+        kPathSeriesCount * kQuarterCount * sizeof(double), nullptr, &rc);
+    if (!lane->path_buffer || rc != CL_SUCCESS) {
+      error = "clCreateBuffer(paths) failed: " + std::to_string(rc);
+      return nullptr;
+    }
+    return lane;
+  }
+
+  bool ensure_output_capacity(Lane& lane, std::size_t bytes, std::string& error) {
+    if (lane.output_buffer && lane.output_capacity_bytes >= bytes) return true;
+    if (lane.output_buffer) {
+      functions_.release_mem_object(lane.output_buffer);
+      lane.output_buffer = nullptr;
+      lane.output_capacity_bytes = 0;
+    }
+    cl_int rc = CL_SUCCESS;
+    lane.output_buffer = functions_.create_buffer(context_, CL_MEM_WRITE_ONLY, bytes, nullptr, &rc);
+    if (!lane.output_buffer || rc != CL_SUCCESS) {
+      error = "clCreateBuffer(output) failed: " + std::to_string(rc);
+      return false;
+    }
+    lane.output_capacity_bytes = bytes;
+    return true;
+  }
+
+  std::shared_ptr<ResidentBank> acquire_resident_bank(
+      Lane& lane, const InnovationBank& bank, std::string& error) {
+    if (bank.identity() == 0 || !bank.storage_data() || bank.storage_size() == 0) {
+      error = "invalid shared innovation bank";
+      return {};
+    }
+    std::lock_guard<std::mutex> lock(resident_mutex_);
+    ++resident_clock_;
+    for (auto& resident : resident_banks_) {
+      if (resident->identity == bank.identity()) {
+        resident->last_used = resident_clock_;
+        return resident;
+      }
+    }
+
+    std::vector<double> flat;
+    flat.reserve(bank.storage_size() * kInnovationsPerQuarter);
+    for (std::size_t i = 0; i < bank.storage_size(); ++i) {
+      const auto& z = bank.storage_data()[i];
+      flat.push_back(z.export_z); flat.push_back(z.us_export_z);
+      flat.push_back(z.output_z); flat.push_back(z.inflation_z);
+      flat.push_back(z.growth_z); flat.push_back(z.us_growth_z);
+      flat.push_back(z.unemployment_z); flat.push_back(z.housing_z);
+    }
+
+    cl_int rc = CL_SUCCESS;
+    cl_mem buffer = functions_.create_buffer(context_, CL_MEM_READ_ONLY,
+        flat.size() * sizeof(double), nullptr, &rc);
+    if (!buffer || rc != CL_SUCCESS) {
+      error = "clCreateBuffer(innovations) failed: " + std::to_string(rc);
+      return {};
+    }
+    if (!write_buffer(lane.queue, buffer, flat.data(), flat.size() * sizeof(double), error)) {
+      functions_.release_mem_object(buffer);
+      return {};
+    }
+
+    auto resident = std::make_shared<ResidentBank>();
+    resident->functions = &functions_;
+    resident->buffer = buffer;
+    resident->identity = bank.identity();
+    resident->innovation_count = bank.storage_size();
+    resident->last_used = resident_clock_;
+    innovation_uploads_.fetch_add(1, std::memory_order_relaxed);
+
+    if (resident_banks_.size() >= kResidentBankLimit) {
+      auto oldest = std::min_element(resident_banks_.begin(), resident_banks_.end(),
+          [](const auto& a, const auto& b) { return a->last_used < b->last_used; });
+      if (oldest != resident_banks_.end()) resident_banks_.erase(oldest);
+    }
+    resident_banks_.push_back(resident);
+    return resident;
+  }
+
   void release_all() {
+    {
+      std::lock_guard<std::mutex> lock(resident_mutex_);
+      resident_banks_.clear();
+    }
+    {
+      std::lock_guard<std::mutex> lock(lane_mutex_);
+      lanes_.clear();
+    }
     if (program_ && functions_.release_program) functions_.release_program(program_);
     if (context_ && functions_.release_context) functions_.release_context(context_);
-    program_ = nullptr; context_ = nullptr;
+    program_ = nullptr;
+    context_ = nullptr;
   }
+
   bool load_library() {
 #ifdef _WIN32
     if (!library_.open("OpenCL.dll")) return false;
@@ -507,6 +707,7 @@ class Runtime {
     functions_.finish = function<Finish>(library_, "clFinish");
     return functions_.complete();
   }
+
   std::string device_string(cl_device_id device, cl_device_info parameter) const {
     std::size_t bytes = 0;
     if (functions_.get_device_info(device, parameter, 0, nullptr, &bytes) != CL_SUCCESS || bytes == 0) return {};
@@ -515,12 +716,14 @@ class Runtime {
     while (!value.empty() && value.back() == '\0') value.pop_back();
     return value;
   }
+
   bool has_fp64(cl_device_id device) const {
     cl_bitfield config = 0;
     if (functions_.get_device_info(device, CL_DEVICE_DOUBLE_FP_CONFIG, sizeof(config), &config, nullptr) == CL_SUCCESS && config != 0) return true;
     const auto extensions = device_string(device, CL_DEVICE_EXTENSIONS);
     return extensions.find("cl_khr_fp64") != std::string::npos || extensions.find("cl_amd_fp64") != std::string::npos;
   }
+
   bool select_device(cl_device_type type) {
     cl_uint platform_count = 0;
     if (functions_.get_platform_ids(0, nullptr, &platform_count) != CL_SUCCESS || platform_count == 0) return false;
@@ -533,13 +736,17 @@ class Runtime {
       if (functions_.get_device_ids(platform, type, device_count, devices.data(), nullptr) != CL_SUCCESS) continue;
       for (const auto device : devices) {
         if (!has_fp64(device)) continue;
-        device_ = device; probe_.device_present = true; probe_.fp64_supported = true;
-        probe_.device_name = device_string(device, CL_DEVICE_NAME); return true;
+        device_ = device;
+        probe_.device_present = true;
+        probe_.fp64_supported = true;
+        probe_.device_name = device_string(device, CL_DEVICE_NAME);
+        return true;
       }
       probe_.device_present = true;
     }
     return false;
   }
+
   void ensure_probe() {
     if (probed_) return;
     probed_ = true;
@@ -548,10 +755,12 @@ class Runtime {
     if (select_device(CL_DEVICE_TYPE_GPU)) { probe_.detail = "FP64 OpenCL GPU available"; return; }
     const char* allow_cpu = std::getenv("CAD_OPENCL_ALLOW_CPU");
     if (allow_cpu && std::string(allow_cpu) == "1" && select_device(CL_DEVICE_TYPE_CPU)) {
-      probe_.detail = "FP64 OpenCL CPU device selected for equivalence testing"; return;
+      probe_.detail = "FP64 OpenCL CPU device selected for equivalence testing";
+      return;
     }
     probe_.detail = probe_.device_present ? "OpenCL device found but FP64 is unavailable" : "No OpenCL GPU device available";
   }
+
   std::string build_log() const {
     if (!program_ || !device_) return {};
     std::size_t bytes = 0;
@@ -561,31 +770,57 @@ class Runtime {
     while (!log.empty() && log.back() == '\0') log.pop_back();
     return log;
   }
+
   bool ensure_program(std::string& error) {
     if (program_) return true;
     cl_int rc = CL_SUCCESS;
     context_ = functions_.create_context(nullptr, 1, &device_, nullptr, nullptr, &rc);
-    if (!context_ || rc != CL_SUCCESS) { error = "clCreateContext failed: " + std::to_string(rc); return false; }
+    if (!context_ || rc != CL_SUCCESS) {
+      error = "clCreateContext failed: " + std::to_string(rc);
+      return false;
+    }
     const char* source = kernel_source();
     const std::size_t source_size = std::strlen(source);
     program_ = functions_.create_program_with_source(context_, 1, &source, &source_size, &rc);
-    if (!program_ || rc != CL_SUCCESS) { error = "clCreateProgramWithSource failed: " + std::to_string(rc); return false; }
+    if (!program_ || rc != CL_SUCCESS) {
+      error = "clCreateProgramWithSource failed: " + std::to_string(rc);
+      return false;
+    }
     rc = functions_.build_program(program_, 1, &device_, nullptr, nullptr, nullptr);
     if (rc != CL_SUCCESS) {
       error = "clBuildProgram failed: " + std::to_string(rc);
-      const auto log = build_log(); if (!log.empty()) error += ": " + log; return false;
+      const auto log = build_log();
+      if (!log.empty()) error += ": " + log;
+      return false;
     }
     return true;
   }
-  bool write_buffer(cl_command_queue queue, cl_mem buffer, const void* data, std::size_t bytes, std::string& error) {
-    const cl_int rc = functions_.enqueue_write_buffer(queue, buffer, CL_TRUE, 0, bytes, data, 0, nullptr, nullptr);
+
+  bool write_buffer(cl_command_queue queue, cl_mem buffer, const void* data,
+                    std::size_t bytes, std::string& error) {
+    const cl_int rc = functions_.enqueue_write_buffer(
+        queue, buffer, CL_TRUE, 0, bytes, data, 0, nullptr, nullptr);
     if (rc == CL_SUCCESS) return true;
-    error = "clEnqueueWriteBuffer failed: " + std::to_string(rc); return false;
+    error = "clEnqueueWriteBuffer failed: " + std::to_string(rc);
+    return false;
   }
+
   std::mutex mutex_;
   std::condition_variable idle_;
   bool shutting_down_ = false;
   std::size_t active_runs_ = 0;
+
+  std::mutex lane_mutex_;
+  std::condition_variable lane_idle_;
+  std::vector<std::unique_ptr<Lane>> lanes_;
+  const std::size_t max_lanes_;
+  std::atomic<std::uint64_t> lane_reuses_{0};
+
+  std::mutex resident_mutex_;
+  std::vector<std::shared_ptr<ResidentBank>> resident_banks_;
+  std::uint64_t resident_clock_ = 0;
+  std::atomic<std::uint64_t> innovation_uploads_{0};
+
   DynamicLibrary library_;
   Functions functions_;
   Probe probe_;
@@ -601,7 +836,7 @@ Runtime& runtime() { static Runtime instance; return instance; }
 
 Probe probe() { return runtime().probe(); }
 
-bool run(const Input& input, const std::vector<Innovation>& innovations,
+bool run(const Input& input, const InnovationBank& innovations,
          BatchResult& output, std::string& error) {
   return runtime().run(input, innovations, output, error);
 }

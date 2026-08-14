@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -14,6 +15,8 @@ inline constexpr std::size_t kInnovationsPerQuarter = 8;
 inline constexpr double kGpuEquivalenceTolerance = 1e-10;
 inline constexpr int kAutoGpuMinimumDraws = 2048;
 inline constexpr double kAutoGpuMinimumConcurrentSpeedup = 1.10;
+inline constexpr int kSharedInnovationBankMinimumDraws = 700;
+inline constexpr int kSharedInnovationBankDraws = 2800;
 
 struct StructuralInputs {
   double neutral_rate = 2.5;
@@ -95,6 +98,51 @@ struct Innovation {
   double housing_z = 0.0;
 };
 
+// Immutable shared common-random-number bank. A requested 700-draw view can
+// point at the same 2,800-draw storage later used for verification, so policy
+// scenarios neither regenerate nor copy identical stochastic innovations.
+class InnovationBank {
+ public:
+  using const_iterator = std::vector<Innovation>::const_iterator;
+
+  InnovationBank() = default;
+  std::size_t size() const { return count_; }
+  bool empty() const { return count_ == 0; }
+  const Innovation& operator[](std::size_t index) const { return (*storage_)[index]; }
+  const Innovation* data() const { return storage_ ? storage_->data() : nullptr; }
+  const_iterator begin() const { return storage_ ? storage_->begin() : empty_storage().begin(); }
+  const_iterator end() const {
+    return storage_ ? storage_->begin() + static_cast<std::ptrdiff_t>(count_)
+                    : empty_storage().end();
+  }
+
+  std::uint64_t identity() const { return identity_; }
+  std::size_t storage_size() const { return storage_ ? storage_->size() : 0; }
+  const Innovation* storage_data() const { return storage_ ? storage_->data() : nullptr; }
+  InnovationBank prefix(int draws) const {
+    if (draws <= 0) return {};
+    const std::size_t requested = static_cast<std::size_t>(draws) * kQuarterCount;
+    if (!storage_ || requested > storage_->size()) return {};
+    return InnovationBank(storage_, requested, identity_);
+  }
+
+ private:
+  static const std::vector<Innovation>& empty_storage() {
+    static const std::vector<Innovation> empty;
+    return empty;
+  }
+  InnovationBank(std::shared_ptr<const std::vector<Innovation>> storage,
+                 std::size_t count, std::uint64_t identity)
+      : storage_(std::move(storage)), count_(count), identity_(identity) {}
+
+  std::shared_ptr<const std::vector<Innovation>> storage_;
+  std::size_t count_ = 0;
+  std::uint64_t identity_ = 0;
+
+  friend InnovationBank generate_innovations(
+      std::uint64_t, int, double, double, double, double, bool);
+};
+
 struct DrawResult {
   std::array<double, kQuarterCount> rates{};
   std::array<double, kQuarterCount> inflation{};
@@ -141,23 +189,29 @@ struct BackendStatus {
   std::size_t performance_lanes = 0;
   int performance_draws = 0;
   std::size_t max_concurrent_gpu_runs = 0;
+  std::size_t pooled_opencl_lanes = 0;
+  std::size_t resident_innovation_banks = 0;
   std::uint64_t gpu_runs = 0;
   std::uint64_t cpu_fallback_runs = 0;
+  std::uint64_t innovation_bank_hits = 0;
+  std::uint64_t innovation_bank_generations = 0;
+  std::uint64_t gpu_innovation_uploads = 0;
+  std::uint64_t opencl_lane_reuses = 0;
 };
 
-std::vector<Innovation> generate_innovations(
+InnovationBank generate_innovations(
     std::uint64_t seed, int draws, double output_inflation_correlation,
     double tail_threshold, double tail_scale, double stress_scale,
     bool stress_regime);
 
-BatchResult run_cpu(const Input& input, const std::vector<Innovation>& innovations);
-BatchResult run(const Input& input, const std::vector<Innovation>& innovations);
+BatchResult run_cpu(const Input& input, const InnovationBank& innovations);
+BatchResult run(const Input& input, const InnovationBank& innovations);
 BackendStatus status();
 
 // Test/diagnostic entrypoint. Production selection still goes through run(),
 // which qualifies a device against run_cpu() before promotion.
 bool run_opencl_for_equivalence_test(
-    const Input& input, const std::vector<Innovation>& innovations,
+    const Input& input, const InnovationBank& innovations,
     BatchResult& output, std::string& error);
 
 double maximum_difference(const BatchResult& reference, const BatchResult& candidate);

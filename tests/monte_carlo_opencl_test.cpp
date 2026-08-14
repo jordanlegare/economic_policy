@@ -1,6 +1,7 @@
 #include "monte_carlo_backend.hpp"
 #include "monte_carlo_opencl.hpp"
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cmath>
@@ -92,10 +93,13 @@ int main() {
 
   const double maximum = cad::monte_carlo::maximum_difference(reference, device);
   assert(std::isfinite(maximum));
+  const auto after_first = cad::monte_carlo::opencl::probe();
+  assert(after_first.innovation_uploads == 1);
+  assert(after_first.resident_innovation_banks == 1);
 
-  // Regress the queue architecture itself. All lanes share one context/program,
-  // but each submission owns its queue, kernel and buffers. The start barrier
-  // makes a process-wide run mutex observable as a failed peak-concurrency check.
+  // Regress the queue architecture itself. All lanes share one context/program
+  // and one resident innovation bank, while each lane recycles its own queue,
+  // kernel, scalar/path buffers and output buffer.
   auto concurrent_input = fixture(256);
   const auto concurrent_innovations = cad::monte_carlo::generate_innovations(
       20260811, concurrent_input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
@@ -136,6 +140,20 @@ int main() {
               << concurrent_probe.max_concurrent_runs << '\n';
     return 1;
   }
+  assert(concurrent_probe.pooled_lanes >= 2);
+  assert(concurrent_probe.resident_innovation_banks == 2);
+  assert(concurrent_probe.innovation_uploads == 2);
+
+  // Reuse the first bank after concurrent work. It must stay resident: no new
+  // innovation upload is allowed and at least one pooled lane must be reused.
+  cad::monte_carlo::BatchResult reused;
+  std::string reuse_error;
+  assert(cad::monte_carlo::run_opencl_for_equivalence_test(
+      input, innovations, reused, reuse_error));
+  assert(std::isfinite(cad::monte_carlo::maximum_difference(reference, reused)));
+  const auto reuse_probe = cad::monte_carlo::opencl::probe();
+  assert(reuse_probe.innovation_uploads == 2);
+  assert(reuse_probe.lane_reuses >= 1);
 
   // Exercise the production qualification and promotion gate on the same
   // runtime. CAD_OPENCL_ALLOW_CPU=1 lets CI use POCL while production still
@@ -152,7 +170,13 @@ int main() {
   assert(status.active);
   assert(status.gpu_runs >= 1);
   assert(status.max_concurrent_gpu_runs >= 2);
+  assert(status.gpu_innovation_uploads == 2);
+  assert(status.pooled_opencl_lanes >= 2);
+  assert(status.resident_innovation_banks == 2);
+  assert(status.opencl_lane_reuses >= 1);
   std::cout << "OpenCL Monte Carlo equivalence passed; max absolute error=" << maximum
-            << "; peak concurrent submissions=" << status.max_concurrent_gpu_runs << '\n';
+            << "; peak concurrent submissions=" << status.max_concurrent_gpu_runs
+            << "; pooled lanes=" << status.pooled_opencl_lanes
+            << "; resident bank uploads=" << status.gpu_innovation_uploads << '\n';
   return 0;
 }
