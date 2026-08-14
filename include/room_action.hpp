@@ -2,6 +2,7 @@
 
 #include "request_json.hpp"
 
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <optional>
@@ -16,6 +17,7 @@ struct Event {
   std::string error;
   int schema_version = 1;
   std::string action;
+  std::optional<std::string> operation_id;
 
   std::optional<int> round;
   std::optional<std::string> phase;
@@ -153,6 +155,15 @@ inline bool schema_version(const request_json::Object& object, Event& event) {
   return true;
 }
 
+inline bool valid_operation_id(const std::string& value) {
+  if (value.empty() || value.size() > 128) return false;
+  for (const unsigned char c : value) {
+    if (!(std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == ':'))
+      return false;
+  }
+  return true;
+}
+
 inline Event parse(const request_json::Object& object) {
   Event out;
   if (!object.valid) {
@@ -166,8 +177,13 @@ inline Event parse(const request_json::Object& object) {
     return out;
   }
   out.action = *action;
+  if (!optional_string(object, "operationId", 128, out.operation_id, out.error)) return out;
+  if (out.operation_id && !valid_operation_id(*out.operation_id)) {
+    out.error = "operationId contains unsupported characters";
+    return out;
+  }
 
-  std::set<std::string> allowed{"schemaVersion", "action"};
+  std::set<std::string> allowed{"schemaVersion", "action", "operationId"};
   auto allow = [&](std::initializer_list<const char*> keys) {
     for (const char* key : keys) allowed.emplace(key);
   };
@@ -260,6 +276,7 @@ inline std::string to_json(const Event& event) {
   auto bool_field = [&](const char* key, const std::optional<bool>& value) {
     if (value) out << ",\"" << key << "\":" << (*value ? "true" : "false");
   };
+  string_field("operationId", event.operation_id);
   if (event.round) out << ",\"round\":" << *event.round;
   string_field("phase", event.phase);
   string_field("issueId", event.issue_id);
