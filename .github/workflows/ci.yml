@@ -31,6 +31,7 @@ jobs:
           node tests/evaluation_controller_test.js
           node tests/model_evidence_ui_test.js
           node tests/dashboard_panels_test.js
+          node tests/session_persistence_test.js
       - name: Verify optimized Release build and active tests
         env:
           CXXFLAGS: -Werror
@@ -203,3 +204,21 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-sanitize --output-on-failure
+
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure TSan
+        env:
+          CC: clang
+          CXX: clang++
+          CXXFLAGS: -fsanitize=thread -fno-omit-frame-pointer
+          LDFLAGS: -fsanitize=thread
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug
+      - name: Build concurrency contracts
+        run: cmake --build build-tsan --parallel --target thread_pool_tests server_session_tests negotiation_atomicity_tests
+      - name: Run concurrency contracts
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-tsan --output-on-failure -R 'thread_pool_concurrency|server_session_contract|negotiation_atomicity'

@@ -135,6 +135,14 @@ class NegotiationState {
   }
 
   bool update(const request_json::Object& object, std::string& error) {
+    NegotiationState candidate = *this;
+    if (!candidate.update_in_place(object, error)) return false;
+    *this = candidate;
+    return true;
+  }
+
+ private:
+  bool update_in_place(const request_json::Object& object, std::string& error) {
     const auto actor = object.string("actor");
     if (!actor || (*actor != "canada" && *actor != "us" && *actor != "automatic")) {
       error = "actor must be canada, us, or automatic";
@@ -179,7 +187,6 @@ class NegotiationState {
     return true;
   }
 
- private:
   unsigned long revision_ = 0;
   double us_tariff_ = 50.0;
   double retaliatory_tariff_ = 5.0;
