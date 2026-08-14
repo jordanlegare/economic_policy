@@ -1,5 +1,6 @@
 #include "policy_engine.hpp"
 #include "compute_executor.hpp"
+#include "monte_carlo_backend.hpp"
 #include "policy_dynamics.hpp"
 #include "trade_network.hpp"
 #include "bilateral_trade.hpp"
@@ -10,7 +11,6 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
-#include <random>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -330,8 +330,6 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   s.applied_us_sector_coverage = e.us_sector_coverage;
   s.applied_canada_sector_coverage = e.canada_sector_coverage;
 
-  std::mt19937_64 rng(seed);
-  std::normal_distribution<double> shock(0.0, 1.0);
   double inf_sum = 0.0, growth_sum = 0.0, us_growth_sum = 0.0, u_sum = 0.0;
   double debt_sum = 0.0, house_sum = 0.0, cost_sum = 0.0, income_sum = 0.0;
   double export_sum = 0.0, us_export_sum = 0.0, recessions = 0.0;
@@ -393,95 +391,95 @@ Scenario simulate(const Economy& e, const StructuralParameters& p, std::string i
   const bool stress_regime = macro_stress_regime(e);
   const double fx = (e.usdcad - 1.34) * p.fx_pass_through;
 
-  for (int d = 0; d < draws; ++d) {
-    double rate = e.policy_rate, inf = e.core_inflation, gap = e.output_gap, u = e.unemployment;
-    double debt = e.federal_debt_gdp, housing = e.housing_gap;
-    double export_change = 0.0, us_export_change = 0.0, cost = e.inflation;
-    bool recession = false;
+  monte_carlo::Input monte;
+  monte.draws = draws;
+  monte.move_bp = move;
+  monte.productive_share = productive;
+  monte.policy_rate = e.policy_rate;
+  monte.core_inflation = e.core_inflation;
+  monte.output_gap = e.output_gap;
+  monte.unemployment = e.unemployment;
+  monte.federal_debt_gdp = e.federal_debt_gdp;
+  monte.housing_gap = e.housing_gap;
+  monte.us_growth = e.us_growth;
+  monte.gdp_growth = e.gdp_growth;
+  monte.population_growth = e.population_growth;
+  monte.credit_spread = e.credit_spread;
+  monte.fiscal_balance_gdp = e.fiscal_balance_gdp;
+  monte.wage_growth = e.wage_growth;
+  monte.headline_inflation = e.inflation;
+  monte.global_growth = e.global_growth;
+  monte.inflation_expectations = e.inflation_expectations;
+  monte.oil_price = e.oil_price;
+  monte.border_friction = e.border_friction;
+  monte.fx_pressure = fx;
+  monte.parameters.neutral_rate = p.neutral_rate;
+  monte.parameters.inflation_target = p.inflation_target;
+  monte.parameters.rate_inflation_response = p.rate_inflation_response;
+  monte.parameters.rate_output_response = p.rate_output_response;
+  monte.parameters.max_quarterly_rate_step = p.max_quarterly_rate_step;
+  monte.parameters.output_persistence = p.output_persistence;
+  monte.parameters.fiscal_demand_multiplier = p.fiscal_demand_multiplier;
+  monte.parameters.real_rate_demand_sensitivity = p.real_rate_demand_sensitivity;
+  monte.parameters.global_growth_sensitivity = p.global_growth_sensitivity;
+  monte.parameters.inflation_persistence = p.inflation_persistence;
+  monte.parameters.inflation_expectations_weight = p.inflation_expectations_weight;
+  monte.parameters.phillips_curve_slope = p.phillips_curve_slope;
+  monte.parameters.import_price_pass_through = p.import_price_pass_through;
+  monte.parameters.oil_inflation_sensitivity = p.oil_inflation_sensitivity;
+  monte.parameters.output_shock_sd = p.output_shock_sd;
+  monte.parameters.inflation_shock_sd = p.inflation_shock_sd;
+  monte.parameters.growth_shock_sd = p.growth_shock_sd;
+  monte.parameters.us_growth_shock_sd = p.us_growth_shock_sd;
+  monte.parameters.export_shock_sd = p.export_shock_sd;
+  monte.parameters.us_export_shock_sd = p.us_export_shock_sd;
+  monte.fiscal = implementation.fiscal;
+  monte.productive_investment = implementation.productive_investment;
+  monte.targeted_relief = implementation.targeted_relief;
+  monte.diversification = implementation.diversification;
+  monte.deescalation = deescalation_path;
+  monte.us_tariff = us_tariff_path;
+  monte.canada_tariff = ca_tariff_path;
+  monte.trade_drag = trade_drag_path;
+  monte.import_price = import_price_path;
+  monte.supply = supply_path;
+  monte.relief_cost = relief_cost_path;
+  for (std::size_t q = 0; q < monte_carlo::kQuarterCount; ++q) {
+    monte.us_supply_chain_drag[q] = networks[q].us_supply_chain_drag;
+    monte.canada_export_quantity_ratio[q] = trade_states[q].canada_total_export_quantity_ratio;
+    monte.us_export_quantity_ratio[q] = trade_states[q].us_bilateral_quantity_ratio;
+  }
 
-    for (int q = 0; q < 12; ++q) {
-      const double rate_target = clamp(p.neutral_rate
-          + p.rate_inflation_response * (inf - p.inflation_target)
-          + p.rate_output_response * gap, .25, 7.0);
-      if (q == 0) {
-        rate = clamp(rate + move / 100.0, 0.0, 8.0);
-      } else {
-        double policy_step = clamp(rate_target - rate,
-            -p.max_quarterly_rate_step, p.max_quarterly_rate_step);
-        if (q == 1 && std::abs(move) > 1e-9) {
-          const double followup = std::min(.25, p.max_quarterly_rate_step);
-          const bool continue_easing = move < 0.0
-              && gap < -.25 && inf <= p.inflation_target + .35;
-          const bool continue_tightening = move > 0.0
-              && (inf >= p.inflation_target + .50 || gap > .50);
-          if (continue_easing) policy_step = std::min(policy_step, -followup);
-          if (continue_tightening) policy_step = std::max(policy_step, followup);
-        }
-        rate = clamp(rate + policy_step, 0.0, 8.0);
-      }
-      const auto qi = static_cast<std::size_t>(q);
-      const double demand = implementation.fiscal[qi] * (1.0 - productive)
-          * p.fiscal_demand_multiplier
-          - (rate - p.neutral_rate) * p.real_rate_demand_sensitivity;
+  const auto innovations = monte_carlo::generate_innovations(
+      seed, draws, p.output_inflation_shock_correlation,
+      p.shock_tail_threshold, p.shock_tail_scale,
+      p.stress_regime_shock_scale, stress_regime);
+  const auto monte_result = monte_carlo::run(monte, innovations);
 
-      const double export_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      export_change = 100.0 * (trade_states[qi].canada_total_export_quantity_ratio - 1.0)
-          + .35 * (e.us_growth - 2.0)
-          + 2.0 * implementation.diversification[qi] + export_z * p.export_shock_sd;
-      const double us_export_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      us_export_change = 100.0 * (trade_states[qi].us_bilateral_quantity_ratio - 1.0)
-          + .30 * (e.gdp_growth - 1.5)
-          + 1.5 * deescalation_path[qi] + us_export_z * p.us_export_shock_sd;
-
-      const double raw_output_z = shock(rng);
-      const double inflation_independent_z = shock(rng);
-      const double rho = clamp(p.output_inflation_shock_correlation, -.999, .999);
-      const double raw_inflation_z = rho * raw_output_z
-          + std::sqrt(std::max(0.0, 1.0 - rho * rho)) * inflation_independent_z;
-      const double output_z = regime_tail_innovation(raw_output_z, p, stress_regime);
-      const double inflation_z = regime_tail_innovation(raw_inflation_z, p, stress_regime);
-      gap = p.output_persistence * gap + demand - trade_drag_path[qi]
-          + p.global_growth_sensitivity * (e.global_growth - 2.7)
-          + output_z * p.output_shock_sd;
-      inf = p.inflation_persistence * inf
-          + p.inflation_expectations_weight * e.inflation_expectations
-          + p.phillips_curve_slope * gap + fx - supply_path[qi]
-          + p.import_price_pass_through * import_price_path[qi]
-          - p.oil_inflation_sensitivity * (e.oil_price - 75.0)
-          + inflation_z * p.inflation_shock_sd;
-      const double growth_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      const double growth = clamp(1.75 + gap - .18 * e.credit_spread
-          + implementation.productive_investment[qi] * .24
-          + growth_z * p.growth_shock_sd, -3.0, 5.5);
-      const double us_growth_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      const double us_growth = clamp(e.us_growth
-          + .16 * implementation.productive_investment[qi] + .28 * deescalation_path[qi]
-          - .010 * us_tariff_path[qi] - .014 * ca_tariff_path[qi] - .04 * e.border_friction
-          - .40 * networks[qi].us_supply_chain_drag
-          + us_growth_z * p.us_growth_shock_sd, -3.0, 5.5);
-      const double unemployment_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      u = clamp(u - .10 * (growth - 1.7) + unemployment_z * .035, 3.5, 11.0);
-      const double housing_z = regime_tail_innovation(shock(rng), p, stress_regime);
-      housing = clamp(.78 * housing - 1.15 * (rate - p.neutral_rate)
-          + .08 * (e.population_growth - 1.2) + housing_z * .5, -15.0, 30.0);
-      debt += (-e.fiscal_balance_gdp + implementation.fiscal[qi] * .8
-          + relief_cost_path[qi] * .55
-          + .045 * (rate - p.neutral_rate) * debt - .18 * growth) / 4.0;
-      cost = .56 * inf + .22 * std::max(0.0, housing / 10.0)
-          + .14 * std::max(0.0, e.wage_growth - growth) + .08 * import_price_path[qi];
-      recession = recession || growth < 0.0;
-
-      rp[q] += rate; ip[q] += inf; gp[q] += growth; ugp[q] += us_growth;
-      dp[q] += debt; cp[q] += cost; xp[q] += export_change; uxp[q] += us_export_change;
-      if (q == 11) {
-        inf_sum += inf; growth_sum += growth; us_growth_sum += us_growth; u_sum += u;
-        debt_sum += debt; house_sum += housing; cost_sum += cost;
-        income_sum += growth - cost + implementation.targeted_relief[qi] * .15;
-        export_sum += export_change; us_export_sum += us_export_change;
-        terminal_debt.push_back(debt); terminal_inflation.push_back(inf);
-      }
+  for (const auto& draw : monte_result.draws) {
+    for (std::size_t q = 0; q < monte_carlo::kQuarterCount; ++q) {
+      rp[q] += draw.rates[q];
+      ip[q] += draw.inflation[q];
+      gp[q] += draw.growth[q];
+      ugp[q] += draw.us_growth[q];
+      dp[q] += draw.debt[q];
+      cp[q] += draw.cost[q];
+      xp[q] += draw.exports[q];
+      uxp[q] += draw.us_exports[q];
     }
-    if (recession) recessions += 1.0;
+    inf_sum += draw.terminal_inflation;
+    growth_sum += draw.terminal_growth;
+    us_growth_sum += draw.terminal_us_growth;
+    u_sum += draw.terminal_unemployment;
+    debt_sum += draw.terminal_debt;
+    house_sum += draw.terminal_housing;
+    cost_sum += draw.terminal_cost;
+    income_sum += draw.terminal_income;
+    export_sum += draw.terminal_exports;
+    us_export_sum += draw.terminal_us_exports;
+    terminal_debt.push_back(draw.terminal_debt);
+    terminal_inflation.push_back(draw.terminal_inflation);
+    if (draw.recession) recessions += 1.0;
   }
 
   for (int q = 0; q < 12; ++q) {
