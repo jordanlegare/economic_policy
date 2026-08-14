@@ -3,6 +3,7 @@
 #include "interactive_frontier.hpp"
 #include "negotiation_support.hpp"
 #include "robust_recommendation_hot.hpp"
+#include "robust_trade_diplomacy.hpp"
 #include "trade_diplomacy_platform.hpp"
 
 #include <cstdint>
@@ -27,11 +28,13 @@ RobustRecommendationAnalysis profiled_analyze_robust_recommendations(
       economy, result, negotiation, calibration, draws, seed);
 }
 
-TradeDiplomacyPlatform profiled_build_trade_diplomacy_platform(
+PublishedTradeDiplomacyPlatform profiled_build_trade_diplomacy_platform(
     const Economy& economy, const Result& result,
-    const NegotiationAnalysis& negotiation) {
+    const NegotiationAnalysis& negotiation,
+    const RobustRecommendationAnalysis& robustness) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::platform);
-  return ::cad::build_trade_diplomacy_platform(economy, result, negotiation);
+  return ::cad::build_trade_diplomacy_publication(
+      economy, result, negotiation, robustness);
 }
 
 template<class... Args>
@@ -55,21 +58,25 @@ std::string profiled_attach_robustness_json(
       std::move(base_json), analysis);
 }
 
-template<class... Args>
-auto profiled_attach_trade_diplomacy_json(Args&&... args)
-    -> decltype(::cad::attach_trade_diplomacy_json(std::forward<Args>(args)...)) {
+std::string profiled_attach_trade_diplomacy_json(
+    std::string base_json, const PublishedTradeDiplomacyPlatform& publication) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
-  return ::cad::attach_trade_diplomacy_json(std::forward<Args>(args)...);
+  return ::cad::attach_published_trade_diplomacy_json(
+      std::move(base_json), publication);
 }
 
 }  // namespace cad
 
 // Keep the server routing/session implementation unchanged. Interpose only the
 // synchronous phases that execute after PolicyEngine::evaluate() so the existing
-// live profiler remains useful until the HTTP response is actually built.
+// live profiler remains useful until the HTTP response is actually built. The
+// server computes `robustness` immediately before constructing the operations
+// platform; bind that in-scope result explicitly so operations cannot choose a
+// second primary package.
 #define analyze_negotiation profiled_analyze_negotiation
 #define analyze_robust_recommendations profiled_analyze_robust_recommendations
-#define build_trade_diplomacy_platform profiled_build_trade_diplomacy_platform
+#define build_trade_diplomacy_platform(economy, result, negotiation) \
+  profiled_build_trade_diplomacy_platform((economy), (result), (negotiation), robustness)
 #define attach_calibration_json profiled_attach_calibration_json
 #define attach_negotiation_json profiled_attach_negotiation_json
 #define attach_robustness_json profiled_attach_robustness_json

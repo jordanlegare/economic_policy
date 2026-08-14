@@ -1,5 +1,8 @@
-#include "policy_engine.hpp"
+#include "calibration.hpp"
 #include "negotiation_support.hpp"
+#include "policy_engine.hpp"
+#include "robust_recommendation.hpp"
+#include "robust_trade_diplomacy.hpp"
 #include "trade_diplomacy_platform.hpp"
 
 #include <cmath>
@@ -10,15 +13,28 @@
 
 int main() {
   cad::Economy economy;
+  const auto calibration = cad::load_calibration_snapshot("data/calibration/current.snapshot.csv");
+  economy = cad::apply_calibration(economy, calibration);
   cad::PolicyEngine engine;
   const auto result = engine.evaluate(economy);
   const auto negotiation = cad::analyze_negotiation(economy, result);
-  const auto platform = cad::build_trade_diplomacy_platform(economy, result, negotiation);
+  const auto robustness = cad::analyze_robust_recommendations(
+      economy, result, negotiation, calibration, 200, 20260814);
+  const auto publication = cad::build_trade_diplomacy_publication(
+      economy, result, negotiation, robustness);
+  const auto& platform = publication.platform;
 
-  CHECK(!platform.recommended_robust_package_id.empty());
+  CHECK(!robustness.recommended_package_id.empty());
+  CHECK(platform.recommended_robust_package_id == robustness.recommended_package_id);
+  CHECK(publication.has_robust_recommended_package);
+  CHECK(publication.robust_recommended_package.id == robustness.recommended_package_id);
+  CHECK(publication.decision_authority == "second-stage-robustness");
+  CHECK(publication.stress_cases_are_diagnostics);
   CHECK(platform.robust_cases == 6);
   CHECK(platform.robustness_cases.size() == 6);
   CHECK(!platform.robust_packages.empty());
+  CHECK(platform.robust_packages.size() <= 10);
+  CHECK(publication.total_robust_package_count >= platform.robust_packages.size());
   CHECK(platform.robust_packages.front().package_id == platform.recommended_robust_package_id);
   CHECK(std::isfinite(platform.recommended_worst_case_surplus));
   CHECK(platform.operational_readiness >= 0.0 && platform.operational_readiness <= 100.0);
@@ -43,6 +59,8 @@ int main() {
   for (std::size_t i = 0; i < platform.round_plan.size(); ++i) {
     CHECK(platform.round_plan[i].order == static_cast<int>(i + 1));
     CHECK(!platform.round_plan[i].exit_criteria.empty());
+    if (!platform.round_plan[i].package_id.empty())
+      CHECK(platform.round_plan[i].package_id == robustness.recommended_package_id);
   }
 
   CHECK(platform.guardrails.size() >= 4);
@@ -64,8 +82,13 @@ int main() {
   CHECK(platform.evidence_ledger.size() >= 4);
 
   const auto base = cad::attach_negotiation_json(cad::to_json(result), negotiation);
-  const auto json = cad::attach_trade_diplomacy_json(base, platform);
+  const auto json = cad::attach_published_trade_diplomacy_json(base, publication);
   CHECK(json.find("\"tradeDiplomacy\"") != std::string::npos);
+  CHECK(json.find("\"robustRecommendedPackage\"") != std::string::npos);
+  CHECK(json.find("\"id\":\"" + robustness.recommended_package_id + "\"") != std::string::npos);
+  CHECK(json.find("\"totalPackageCount\"") != std::string::npos);
+  CHECK(json.find("\"decisionAuthority\":\"second-stage-robustness\"") != std::string::npos);
+  CHECK(json.find("\"stressCasesAreDiagnostics\":true") != std::string::npos);
   CHECK(json.find("\"issueTracks\"") != std::string::npos);
   CHECK(json.find("\"robustnessCases\"") != std::string::npos);
   CHECK(json.find("\"stakeholderGates\"") != std::string::npos);
@@ -73,6 +96,29 @@ int main() {
 
   // The operational layer must never pretend to estimate political acceptance.
   CHECK(json.find("acceptanceProbability") == std::string::npos);
+
+  // A full robust package is transported independently of any preview limit.
+  // Simulate a winner ranked beyond the first 100 without relying on the UI's
+  // capped frontier response.
+  auto large_negotiation = negotiation;
+  large_negotiation.frontier.clear();
+  for (std::size_t i = 0; i < 101; ++i) {
+    auto package = negotiation.recommended;
+    package.id = "synthetic-package-" + std::to_string(i + 1);
+    package.pareto_rank = i + 1;
+    large_negotiation.frontier.push_back(std::move(package));
+  }
+  large_negotiation.pareto_frontier_size = 101;
+  cad::RobustRecommendationAnalysis large_robustness;
+  large_robustness.recommended_package_id = large_negotiation.frontier.back().id;
+  const auto large_publication = cad::build_trade_diplomacy_publication(
+      economy, result, large_negotiation, large_robustness);
+  CHECK(large_publication.has_robust_recommended_package);
+  CHECK(large_publication.robust_recommended_package.pareto_rank == 101);
+  const auto large_json = cad::attach_published_trade_diplomacy_json(
+      "{\"previewLimit\":100}", large_publication);
+  CHECK(large_json.find("synthetic-package-101") != std::string::npos);
+  CHECK(large_publication.platform.robust_packages.size() <= 10);
 
   std::cout << "trade diplomacy platform tests passed\n";
   return 0;
