@@ -1,8 +1,17 @@
 #pragma once
 
+#include "trade_network.hpp"
+
 #include <cstdint>
 
-namespace cad::search_acceleration {
+namespace cad {
+
+// The policy engine interposes this exact deterministic wrapper around its
+// production-network evaluations. It is declared here so the cache concurrency
+// contract can exercise the same implementation directly under TSan.
+TradeNetworkResult profiled_evaluate_trade_network(const TradeNetworkInput& input);
+
+namespace search_acceleration {
 
 struct Snapshot {
   std::uint64_t trade_network_calls = 0;
@@ -33,4 +42,5 @@ bool trade_cache_enabled();
 // Test-only reset. Call only when no evaluation is running.
 void reset_for_tests();
 
-}  // namespace cad::search_acceleration
+}  // namespace search_acceleration
+}  // namespace cad
