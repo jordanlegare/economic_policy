@@ -253,10 +253,17 @@ inline PackageDrawOutcome evaluate_package_draw(
 
   const auto terms = package_terms(package);
   const auto evaluated = negotiation_detail::evaluate_terms(draw_economy, scenario, terms);
+  // The robust penalty is charged against the same tariff ownership contract as
+  // the bargaining evaluator: first remove relief already embedded in the base
+  // scenario, then apply the candidate's incremental concession to the residual.
+  const double base_residual_fraction = 1.0
+      - clamp(scenario.negotiated_relief / 100.0, 0.0, 1.0);
   const double residual_us_tariff = draw_economy.us_tariff_canada
+      * base_residual_fraction
       * (1.0 - terms.us_tariff_relief)
       * clamp(draw_economy.exports_to_us_share / 100.0, 0.0, 1.0);
   const double residual_ca_tariff = draw_economy.canada_retaliatory_tariff
+      * base_residual_fraction
       * (1.0 - terms.canada_tariff_relief)
       * clamp(draw_economy.imports_from_us_share / 100.0, 0.0, 1.0);
   const double friction_delta = draw.border - reference_border;

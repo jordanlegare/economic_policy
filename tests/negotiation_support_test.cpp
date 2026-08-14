@@ -80,6 +80,46 @@ int main() {
   assert(analysis.mandate_weights_fixed);
   assert(analysis.sector_verification_draws == 2800);
 
+  // BATNA membership follows control ownership, not whether the policy engine
+  // generated a strategy. A generated unilateral policy is eligible, while a
+  // scenario that assumes negotiated tariff relief is not implementable alone.
+  auto custom_unilateral = scenario("custom-99", "Generated unilateral", 94.0, 94.0, 92.0,
+                                    0.0, -1.0, -1.0, 2.0);
+  auto custom_bilateral = custom_unilateral;
+  custom_bilateral.id = "custom-100";
+  custom_bilateral.name = "Generated bilateral";
+  custom_bilateral.negotiated_relief = 25.0;
+  assert(cad::negotiation_detail::outside_option_candidate(custom_unilateral));
+  assert(!cad::negotiation_detail::outside_option_candidate(custom_bilateral));
+  auto batna_result = result;
+  batna_result.scenarios.push_back(custom_unilateral);
+  batna_result.scenarios.push_back(custom_bilateral);
+  const auto batna_analysis = cad::analyze_negotiation(economy, batna_result);
+  assert(batna_analysis.canada_batna_strategy == "Generated unilateral");
+  assert(batna_analysis.us_batna_strategy == "Generated unilateral");
+
+  // Bargaining tariff relief applies only to the residual tariff left by the
+  // upstream scenario. With 75% already negotiated, the same incremental
+  // relief term has one quarter of the headline export-effect capacity.
+  cad::negotiation_detail::Terms tariff_terms;
+  tariff_terms.us_tariff_relief = 0.50;
+  tariff_terms.canada_tariff_relief = 0.50;
+  auto no_upstream_relief = scenario("r0", "No upstream relief", 70.0, 70.0, 70.0,
+                                     0.0, -3.0, -2.0, 2.0);
+  auto mostly_relieved = no_upstream_relief;
+  mostly_relieved.id = "r75";
+  mostly_relieved.negotiated_relief = 75.0;
+  const auto full_increment = cad::negotiation_detail::evaluate_terms(
+      economy, no_upstream_relief, tariff_terms);
+  const auto residual_increment = cad::negotiation_detail::evaluate_terms(
+      economy, mostly_relieved, tariff_terms);
+  const double full_ca_gain = full_increment.canada_export_change - no_upstream_relief.export_change;
+  const double residual_ca_gain = residual_increment.canada_export_change - mostly_relieved.export_change;
+  const double full_us_gain = full_increment.us_export_change - no_upstream_relief.us_export_change;
+  const double residual_us_gain = residual_increment.us_export_change - mostly_relieved.us_export_change;
+  assert(std::abs(residual_ca_gain - 0.25 * full_ca_gain) < 1e-9);
+  assert(std::abs(residual_us_gain - 0.25 * full_us_gain) < 1e-9);
+
   // The recommended diplomatic package carries the exact sector schedule that
   // was re-simulated by the policy engine rather than a disconnected UI hint.
   for (std::size_t i = 0; i < analysis.recommended.us_sector_coverage.size(); ++i) {
@@ -121,17 +161,19 @@ int main() {
   for (const auto& package : canada_weighted.frontier) reweighted_ids.insert(package.id);
   assert(original_ids == reweighted_ids);
 
-  // Current empirical tariff calibration can collapse the exact mathematical
-  // skyline to one point. The diplomatic surface therefore reports an auditable
-  // epsilon-Pareto set. Rank remains presentation metadata; identity is content-derived.
+  // Current empirical tariff calibration can change the retained epsilon-Pareto
+  // cardinality when residual tariff ownership changes. Test the declared
+  // frontier contract rather than a historical count produced by older economics.
   cad::Economy calibrated_like = economy;
   calibrated_like.us_tariff_canada = 5.0;
   calibrated_like.canada_retaliatory_tariff = 1.5;
   const auto calibrated_analysis = cad::analyze_negotiation(calibrated_like, result);
   assert(std::abs(calibrated_analysis.pareto_utility_tolerance - 0.5) < 1e-12);
-  assert(calibrated_analysis.pareto_frontier_size >= 9);
-  assert(calibrated_analysis.frontier.size() >= 9);
-  for (std::size_t i = 0; i < 9; ++i) {
+  assert(calibrated_analysis.frontier_complete);
+  assert(calibrated_analysis.pareto_frontier_size > 0);
+  assert(static_cast<std::size_t>(calibrated_analysis.pareto_frontier_size)
+      == calibrated_analysis.frontier.size());
+  for (std::size_t i = 0; i < calibrated_analysis.frontier.size(); ++i) {
     assert(calibrated_analysis.frontier[i].pareto_rank == i + 1);
     assert(calibrated_analysis.frontier[i].id.rfind("pkg-", 0) == 0);
     assert(calibrated_analysis.frontier[i].pareto_efficient);

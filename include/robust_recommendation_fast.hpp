@@ -68,6 +68,7 @@ struct PreparedPackage {
   bool valid = false;
   double export_change = 0.0;
   double us_export_change = 0.0;
+  double residual_tariff_fraction = 1.0;
   negotiation_detail::Terms terms{};
   double linkage_bonus = 0.0;
   double canada_relief_cost = 0.0;
@@ -164,8 +165,11 @@ inline std::vector<PreparedPackage> prepare_packages(
     if (found != scenario_slots.end()) {
       out.scenario_slot = found->second;
       out.valid = true;
-      out.export_change = result.scenarios[out.scenario_slot].export_change;
-      out.us_export_change = result.scenarios[out.scenario_slot].us_export_change;
+      const auto& scenario = result.scenarios[out.scenario_slot];
+      out.export_change = scenario.export_change;
+      out.us_export_change = scenario.us_export_change;
+      out.residual_tariff_fraction = 1.0 - robust_detail::clamp(
+          scenario.negotiated_relief / 100.0, 0.0, 1.0);
     }
     out.terms = robust_detail::package_terms(package);
 
@@ -179,8 +183,10 @@ inline std::vector<PreparedPackage> prepare_packages(
     out.linkage_bonus = 1.25 * tariff_link + 0.85 * implementation_link
         + 0.70 * resilience_link;
     out.canada_relief_cost = out.terms.canada_tariff_relief
+        * out.residual_tariff_fraction
         * (0.35 + 0.11 * economy.canada_retaliatory_tariff);
     out.us_relief_cost = out.terms.us_tariff_relief
+        * out.residual_tariff_fraction
         * (0.45 + 0.075 * economy.us_tariff_canada);
     out.supply_fiscal_cost = out.terms.supply_chain_commitment
         * (0.45 + 0.10 * std::max(0.0, -economy.fiscal_balance_gdp));
@@ -196,12 +202,14 @@ inline robust_detail::PackageDrawOutcome evaluate_prepared_package_draw(
   const auto& terms = prepared.terms;
 
   const double canada_export_change = prepared.export_change
-      + 0.55 * draw.canada_relief_capacity * terms.us_tariff_relief
+      + 0.55 * draw.canada_relief_capacity * prepared.residual_tariff_fraction
+          * terms.us_tariff_relief
       + 1.10 * terms.border_facilitation
       + 0.70 * terms.procurement_reciprocity
       + 0.45 * terms.supply_chain_commitment;
   const double us_export_change = prepared.us_export_change
-      + 0.55 * draw.us_relief_capacity * terms.canada_tariff_relief
+      + 0.55 * draw.us_relief_capacity * prepared.residual_tariff_fraction
+          * terms.canada_tariff_relief
       + 0.95 * terms.border_facilitation
       + 0.95 * terms.procurement_reciprocity
       + 0.35 * terms.supply_chain_commitment;
@@ -225,8 +233,10 @@ inline robust_detail::PackageDrawOutcome evaluate_prepared_package_draw(
       - prepared.us_relief_cost, 0.0, 100.0);
 
   const double residual_us_tariff = context.us_tariff_canada
+      * prepared.residual_tariff_fraction
       * (1.0 - terms.us_tariff_relief) * context.export_share;
   const double residual_ca_tariff = context.canada_retaliatory_tariff
+      * prepared.residual_tariff_fraction
       * (1.0 - terms.canada_tariff_relief) * context.import_share;
   const double adjusted_canada_utility = robust_detail::clamp(canada_utility
       - 0.025 * draw.pass_through * residual_us_tariff
