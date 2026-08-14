@@ -196,6 +196,8 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
   const double canada_pass = sector_parameter(
       input.canada_price_pass_through[source], input.price_pass_through, 0.0, 1.0);
   const double diversification = clamp(input.diversification, 0.0, .75);
+  const double network_remaining = 1.0
+      - clamp(input.tuning.supply_chain_mitigation, 0.0, 1.0);
 
   out.us_tariff = incidence(input.us_headline_tariff, us_coverage,
       input.negotiated_relief, us_pass, us_elasticity);
@@ -230,15 +232,19 @@ TradeSourceContribution evaluate_trade_source(const TradeNetworkInput& input,
   const double jobs_exposure = clamp(input.tuning.jobs_output_exposure, 0.0, 1.5);
   for (std::size_t sector = 0; sector < kTradeSectorCount; ++sector) {
     const auto& dst = kProfiles[sector];
-    out.canada_output[sector] += canada_supplier[sector];
-    out.us_output[sector] += us_supplier[sector];
-    out.us_upstream_cost[sector] += us_costs[sector];
-    out.canada_upstream_cost[sector] += canada_costs[sector];
-    out.us_prices[sector] += price_pass * us_costs[sector];
-    out.canada_prices[sector] += price_pass * canada_costs[sector];
-    out.us_output[sector] -= us_costs[sector]
+    const double canada_supplier_effect = network_remaining * canada_supplier[sector];
+    const double us_supplier_effect = network_remaining * us_supplier[sector];
+    const double us_cost_effect = network_remaining * us_costs[sector];
+    const double canada_cost_effect = network_remaining * canada_costs[sector];
+    out.canada_output[sector] += canada_supplier_effect;
+    out.us_output[sector] += us_supplier_effect;
+    out.us_upstream_cost[sector] += us_cost_effect;
+    out.canada_upstream_cost[sector] += canada_cost_effect;
+    out.us_prices[sector] += price_pass * us_cost_effect;
+    out.canada_prices[sector] += price_pass * canada_cost_effect;
+    out.us_output[sector] -= us_cost_effect
         * (output_base + output_cyclical * dst.cyclical);
-    out.canada_output[sector] -= canada_costs[sector]
+    out.canada_output[sector] -= canada_cost_effect
         * (output_base + output_cyclical * dst.cyclical);
     out.canada_jobs[sector] = out.canada_output[sector]
         * (jobs_base + jobs_exposure * dst.jobs);
@@ -302,9 +308,9 @@ double maximum_us_trade_input_share() {
 
 std::string trade_network_methodology() {
 #if CAD_HAS_CERTIFIED_BEA_US_IO
-  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network uses the separately generated and certified BEA Input-Output domestic direct-requirements artifact. Tariff quantity responses are bounded constant-elasticity responses shared with direct sector impacts. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations whose transmission coefficients are explicit structural-registry inputs rather than hidden constants. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. The U.S. network uses the separately generated and certified BEA Input-Output domestic direct-requirements artifact. Tariff quantity responses are bounded constant-elasticity responses shared with direct sector impacts. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations whose transmission coefficients are explicit structural-registry inputs rather than hidden constants. A bargaining-owned supply-chain mitigation fraction may attenuate only these indirect propagated supplier-demand and input-cost effects; direct tariff incidence and bilateral quantity responses remain unchanged. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
 #else
-  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. Pending a current-vintage certified BEA artifact, the U.S. network uses a distinct provisional U.S.-specific structural proxy from EPA USEEIO v2.5 model USEEIOv2.5-catbird-22. The selected A_d matrix contains domestic direct requirements, and EPA documents that the detailed v2.5 model uses underlying U.S. input-output data for 2017. Four accounting/adjustment commodities are excluded, leaving 398 of 402 commodities mapped into the simulator's 20 sectors using commodity-output weights. A generated BEA header activates only with a separately committed certification marker, preventing an unreviewed local artifact from silently changing production. This proxy must not be described as current-vintage empirical U.S. IO calibration. Tariff quantity responses are bounded constant-elasticity responses shared with direct sector impacts. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations whose transmission coefficients are explicit structural-registry inputs rather than hidden constants. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
+  return "Two-country production-network architecture. Canada uses the empirically aggregated 20-sector direct-requirements matrix from Statistics Canada Table 36-10-0001-01 (2024, Canada, basic prices): 40,364 detailed inter-industry transaction cells and 213 gross-output rows aggregated as A[j][i]=Z_ij/X_j. Pending a current-vintage certified BEA artifact, the U.S. network uses a distinct provisional U.S.-specific structural proxy from EPA USEEIO v2.5 model USEEIOv2.5-catbird-22. The selected A_d matrix contains domestic direct requirements, and EPA documents that the detailed v2.5 model uses underlying U.S. input-output data for 2017. Four accounting/adjustment commodities are excluded, leaving 398 of 402 commodities mapped into the simulator's 20 sectors using commodity-output weights. A generated BEA header activates only with a separately committed certification marker, preventing an unreviewed local artifact from silently changing production. This proxy must not be described as current-vintage empirical U.S. IO calibration. Tariff quantity responses are bounded constant-elasticity responses shared with direct sector impacts. Supplier-demand losses are propagated upstream and imported-input price shocks downstream with convergent multi-round damped total-requirements iterations whose transmission coefficients are explicit structural-registry inputs rather than hidden constants. A bargaining-owned supply-chain mitigation fraction may attenuate only these indirect propagated supplier-demand and input-cost effects; direct tariff incidence and bilateral quantity responses remain unchanged. Directional sector-specific trade elasticity and price-pass-through overrides are supported and fall back to declared aggregate anchors when no production-compatible sector estimate is supplied. Imports, taxes, value added and final demand remain outside each domestic direct-requirements matrix.";
 #endif
 }
 
