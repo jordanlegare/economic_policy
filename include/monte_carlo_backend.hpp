@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace cad::monte_carlo {
@@ -13,10 +14,6 @@ namespace cad::monte_carlo {
 inline constexpr std::size_t kQuarterCount = 12;
 inline constexpr std::size_t kInnovationsPerQuarter = 8;
 inline constexpr double kGpuEquivalenceTolerance = 1e-10;
-// The production policy search starts at 700 draws. Automatic GPU promotion
-// is still gated by measured concurrent throughput, but batching lets the
-// accelerator compete on the actual first-stage workload rather than only on
-// isolated 2,048+ draw calls.
 inline constexpr int kAutoGpuMinimumDraws = 700;
 inline constexpr double kAutoGpuMinimumConcurrentSpeedup = 1.10;
 inline constexpr int kSharedInnovationBankMinimumDraws = 700;
@@ -167,10 +164,6 @@ struct DrawResult {
   bool recession = false;
 };
 
-// Compact production transport shared by the fused CPU and reduced OpenCL
-// paths. It carries only the sufficient statistics consumed by PolicyEngine:
-// quarterly sums, non-tail terminal sums, a recession count, and the two exact
-// terminal sample vectors required by the existing P90 nth_element contract.
 struct AggregateResult {
   std::size_t sample_count = 0;
   std::array<double, kQuarterCount> rates{};
@@ -194,18 +187,164 @@ struct AggregateResult {
   std::vector<double> terminal_debt;
 };
 
+// Vector-compatible detailed storage plus an allocation-light compact mode.
+// In compact mode iteration synthesizes lightweight views so the unchanged
+// PolicyEngine aggregation loop sees the same values without a DrawResult per
+// draw. Detailed CPU/OpenCL equivalence paths keep ordinary mutable storage.
+class DrawResults {
+ public:
+  struct QuarterView {
+    const std::array<double, kQuarterCount>* values = nullptr;
+
+    double operator[](std::size_t index) const {
+      return values ? (*values)[index] : 0.0;
+    }
+
+    struct iterator {
+      const QuarterView* owner = nullptr;
+      std::size_t index = 0;
+      double operator*() const { return (*owner)[index]; }
+      iterator& operator++() { ++index; return *this; }
+      bool operator!=(const iterator& other) const { return index != other.index; }
+    };
+
+    iterator begin() const { return iterator{this, 0}; }
+    iterator end() const { return iterator{this, kQuarterCount}; }
+  };
+
+  struct DrawView {
+    QuarterView rates;
+    QuarterView inflation;
+    QuarterView growth;
+    QuarterView us_growth;
+    QuarterView debt;
+    QuarterView cost;
+    QuarterView exports;
+    QuarterView us_exports;
+    double terminal_inflation = 0.0;
+    double terminal_growth = 0.0;
+    double terminal_us_growth = 0.0;
+    double terminal_unemployment = 0.0;
+    double terminal_debt = 0.0;
+    double terminal_housing = 0.0;
+    double terminal_cost = 0.0;
+    double terminal_income = 0.0;
+    double terminal_exports = 0.0;
+    double terminal_us_exports = 0.0;
+    bool recession = false;
+  };
+
+  class const_iterator {
+   public:
+    const_iterator() = default;
+    const_iterator(const DrawResults* owner, std::size_t index)
+        : owner_(owner), index_(index) {}
+    DrawView operator*() const { return owner_->view(index_); }
+    const_iterator& operator++() { ++index_; return *this; }
+    bool operator!=(const const_iterator& other) const {
+      return owner_ != other.owner_ || index_ != other.index_;
+    }
+
+   private:
+    const DrawResults* owner_ = nullptr;
+    std::size_t index_ = 0;
+  };
+
+  std::size_t size() const {
+    return compact_ ? aggregate_.sample_count : detailed_.size();
+  }
+  bool empty() const { return size() == 0; }
+
+  void resize(std::size_t count) {
+    compact_ = false;
+    aggregate_ = {};
+    detailed_.resize(count);
+  }
+  void assign(std::size_t count, const DrawResult& value) {
+    compact_ = false;
+    aggregate_ = {};
+    detailed_.assign(count, value);
+  }
+  void clear() {
+    compact_ = false;
+    aggregate_ = {};
+    detailed_.clear();
+  }
+  void reserve(std::size_t count) { detailed_.reserve(count); }
+
+  DrawResult& operator[](std::size_t index) { return detailed_[index]; }
+  const DrawResult& operator[](std::size_t index) const { return detailed_[index]; }
+  DrawResult& front() { return detailed_.front(); }
+  const DrawResult& front() const { return detailed_.front(); }
+  DrawResult& back() { return detailed_.back(); }
+  const DrawResult& back() const { return detailed_.back(); }
+
+  const_iterator begin() const { return const_iterator(this, 0); }
+  const_iterator end() const { return const_iterator(this, size()); }
+  const_iterator begin() { return const_iterator(this, 0); }
+  const_iterator end() { return const_iterator(this, size()); }
+
+  void set_compact(AggregateResult aggregate) {
+    detailed_.clear();
+    aggregate_ = std::move(aggregate);
+    compact_ = true;
+  }
+  bool compact() const { return compact_; }
+  AggregateResult& aggregate() { return aggregate_; }
+  const AggregateResult& aggregate() const { return aggregate_; }
+
+ private:
+  DrawView view(std::size_t index) const {
+    if (!compact_) {
+      const auto& draw = detailed_[index];
+      return DrawView{
+          QuarterView{&draw.rates}, QuarterView{&draw.inflation},
+          QuarterView{&draw.growth}, QuarterView{&draw.us_growth},
+          QuarterView{&draw.debt}, QuarterView{&draw.cost},
+          QuarterView{&draw.exports}, QuarterView{&draw.us_exports},
+          draw.terminal_inflation, draw.terminal_growth,
+          draw.terminal_us_growth, draw.terminal_unemployment,
+          draw.terminal_debt, draw.terminal_housing, draw.terminal_cost,
+          draw.terminal_income, draw.terminal_exports,
+          draw.terminal_us_exports, draw.recession};
+    }
+
+    const bool final = index + 1 == aggregate_.sample_count;
+    const std::size_t recession_count = aggregate_.recessions <= 0.0 ? 0
+        : static_cast<std::size_t>(aggregate_.recessions);
+    return DrawView{
+        QuarterView{final ? &aggregate_.rates : nullptr},
+        QuarterView{final ? &aggregate_.inflation : nullptr},
+        QuarterView{final ? &aggregate_.growth : nullptr},
+        QuarterView{final ? &aggregate_.us_growth : nullptr},
+        QuarterView{final ? &aggregate_.debt : nullptr},
+        QuarterView{final ? &aggregate_.cost : nullptr},
+        QuarterView{final ? &aggregate_.exports : nullptr},
+        QuarterView{final ? &aggregate_.us_exports : nullptr},
+        aggregate_.terminal_inflation[index],
+        final ? aggregate_.terminal_growth : 0.0,
+        final ? aggregate_.terminal_us_growth : 0.0,
+        final ? aggregate_.terminal_unemployment : 0.0,
+        aggregate_.terminal_debt[index],
+        final ? aggregate_.terminal_housing : 0.0,
+        final ? aggregate_.terminal_cost : 0.0,
+        final ? aggregate_.terminal_income : 0.0,
+        final ? aggregate_.terminal_exports : 0.0,
+        final ? aggregate_.terminal_us_exports : 0.0,
+        index < recession_count};
+  }
+
+  std::vector<DrawResult> detailed_;
+  AggregateResult aggregate_;
+  bool compact_ = false;
+};
+
 struct BatchResult {
-  // Detailed draw trajectories are retained only for the scalar numerical
-  // reference/equivalence path. Production CPU and reduced-GPU results use
-  // `aggregate` and leave this vector empty.
-  std::vector<DrawResult> draws;
+  DrawResults draws;
   std::string backend = "cpu";
   bool aggregate_encoded = false;
-  AggregateResult aggregate;
 
-  std::size_t sample_count() const {
-    return aggregate_encoded ? aggregate.sample_count : draws.size();
-  }
+  std::size_t sample_count() const { return draws.size(); }
 };
 
 struct BackendStatus {
