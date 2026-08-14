@@ -1,4 +1,4 @@
-name: Decision overview UI
+name: Dashboard surface UI
 
 on:
   pull_request:
@@ -10,13 +10,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  decision-overview-contract:
+  dashboard-surface-contract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check negotiation dashboard syntax
-        run: node --check web/negotiation-model.js
+      - name: Check retained browser modules
+        run: |
+          node --check web/negotiation-model.js
+          node --check web/diplomat.js
+          node --check web/calibration.js
+          node --check web/robust-room.js
+          node --check web/trade-diplomacy.js
+      - name: Verify retired process surfaces stay gone
+        run: node tests/dashboard_surface_test.js
       - name: Verify deal-focused decision overview
         run: node tests/decision_overview_ui_test.js
-      - name: Preserve frontier dedup contract
-        run: node tests/negotiation_frontier_ui_test.js
+      - name: Verify collapse and expand cover every remaining panel
+        run: node tests/dashboard_panels_test.js
+      - name: Preserve Principal Brief contract
+        run: node tests/principal_briefing_test.js
