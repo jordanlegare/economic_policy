@@ -46,12 +46,21 @@ inline NegotiationPackage consume_border_term(const NegotiationPackage& package)
 inline RobustRecommendationAnalysis isolate_robustness(
     const RobustRecommendationAnalysis& robustness, const std::string& package_id) {
   RobustRecommendationAnalysis isolated;
-  isolated.recommended_package_id = package_id;
-  isolated.required_joint_clear_probability = robustness.required_joint_clear_probability;
   isolated.second_stage_monte_carlo_draws = robustness.second_stage_monte_carlo_draws;
+  isolated.seed = robustness.seed;
+  isolated.cvar_tail_probability = robustness.cvar_tail_probability;
+  isolated.required_joint_clear_probability = robustness.required_joint_clear_probability;
+  isolated.common_random_numbers = robustness.common_random_numbers;
+  isolated.parameter_uncertainty_included = robustness.parameter_uncertainty_included;
+  isolated.political_acceptance_probability_estimated =
+      robustness.political_acceptance_probability_estimated;
   isolated.empirically_calibrated = robustness.empirically_calibrated;
-  isolated.complete_frontier_evaluated = robustness.complete_frontier_evaluated;
-  isolated.parameter_distributions = robustness.parameter_distributions;
+  isolated.bounded_memory_two_pass = robustness.bounded_memory_two_pass;
+  isolated.candidate_set_complete = robustness.candidate_set_complete;
+  isolated.uncertainty_grade = robustness.uncertainty_grade;
+  isolated.selection_rule = robustness.selection_rule;
+  isolated.distributions = robustness.distributions;
+  isolated.recommended_package_id = package_id;
   for (const auto& metrics : robustness.packages) {
     if (metrics.package_id == package_id) {
       isolated.packages.push_back(metrics);
