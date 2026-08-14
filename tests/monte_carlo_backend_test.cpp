@@ -1,0 +1,103 @@
+#include "monte_carlo_backend.hpp"
+
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+
+namespace {
+
+cad::monte_carlo::Input fixture(int draws) {
+  cad::monte_carlo::Input in;
+  in.draws = draws;
+  in.move_bp = -25.0;
+  in.productive_share = 0.65;
+  in.policy_rate = 2.75;
+  in.core_inflation = 2.6;
+  in.output_gap = -0.4;
+  in.unemployment = 6.4;
+  in.federal_debt_gdp = 42.0;
+  in.housing_gap = 7.0;
+  in.us_growth = 2.0;
+  in.gdp_growth = 1.6;
+  in.population_growth = 2.1;
+  in.credit_spread = 1.35;
+  in.fiscal_balance_gdp = -1.2;
+  in.wage_growth = 3.5;
+  in.headline_inflation = 2.4;
+  in.global_growth = 2.8;
+  in.inflation_expectations = 2.2;
+  in.oil_price = 74.0;
+  in.border_friction = 2.0;
+  in.fx_pressure = (1.38 - 1.34) * .35;
+  in.parameters.global_growth_sensitivity = .08;
+
+  for (std::size_t q = 0; q < cad::monte_carlo::kQuarterCount; ++q) {
+    const double t = static_cast<double>(q) / 11.0;
+    in.fiscal[q] = .30 * (1.0 - .6 * t);
+    in.productive_investment[q] = .16 + .12 * t;
+    in.targeted_relief[q] = .20 * (1.0 - .8 * t);
+    in.diversification[q] = .04 + .16 * t;
+    in.deescalation[q] = .15 + .35 * t;
+    in.us_tariff[q] = 35.0 - 12.0 * t;
+    in.canada_tariff[q] = 5.0 - 2.0 * t;
+    in.trade_drag[q] = .42 - .12 * t;
+    in.us_supply_chain_drag[q] = .08 - .02 * t;
+    in.import_price[q] = .45 - .10 * t;
+    in.supply[q] = .03 + .04 * t;
+    in.relief_cost[q] = .16 * (1.0 - .5 * t);
+    in.canada_export_quantity_ratio[q] = .95 + .02 * t;
+    in.us_export_quantity_ratio[q] = .98 + .01 * t;
+  }
+  return in;
+}
+
+bool same_innovation(const cad::monte_carlo::Innovation& a,
+                     const cad::monte_carlo::Innovation& b) {
+  return a.export_z == b.export_z
+      && a.us_export_z == b.us_export_z
+      && a.output_z == b.output_z
+      && a.inflation_z == b.inflation_z
+      && a.growth_z == b.growth_z
+      && a.us_growth_z == b.us_growth_z
+      && a.unemployment_z == b.unemployment_z
+      && a.housing_z == b.housing_z;
+}
+
+}  // namespace
+
+int main() {
+  constexpr std::uint64_t seed = 20260810;
+  auto input = fixture(8);
+  const auto innovations = cad::monte_carlo::generate_innovations(
+      seed, input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
+  const auto repeated = cad::monte_carlo::generate_innovations(
+      seed, input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
+  assert(innovations.size() == static_cast<std::size_t>(input.draws) * 12);
+  assert(innovations.size() == repeated.size());
+  for (std::size_t i = 0; i < innovations.size(); ++i)
+    assert(same_innovation(innovations[i], repeated[i]));
+
+  const auto first = cad::monte_carlo::run_cpu(input, innovations);
+  const auto second = cad::monte_carlo::run_cpu(input, innovations);
+  assert(first.backend == "cpu");
+  assert(first.draws.size() == static_cast<std::size_t>(input.draws));
+  assert(cad::monte_carlo::maximum_difference(first, second) == 0.0);
+
+  for (const auto& draw : first.draws) {
+    assert(std::isfinite(draw.terminal_inflation));
+    assert(std::isfinite(draw.terminal_growth));
+    assert(std::isfinite(draw.terminal_debt));
+    assert(draw.terminal_unemployment >= 3.5 && draw.terminal_unemployment <= 11.0);
+    assert(draw.terminal_housing >= -15.0 && draw.terminal_housing <= 30.0);
+    for (double rate : draw.rates) assert(rate >= 0.0 && rate <= 8.0);
+  }
+
+  auto changed = input;
+  changed.move_bp = 25.0;
+  const auto changed_result = cad::monte_carlo::run_cpu(changed, innovations);
+  assert(cad::monte_carlo::maximum_difference(first, changed_result) > 0.0);
+
+  std::cout << "Monte Carlo backend contract tests passed\n";
+  return 0;
+}
