@@ -247,15 +247,25 @@ class NegotiationState {
 
   bool update_in_place(const request_json::Object& object, std::string& error) {
     const auto actor = object.string("actor");
-    if (!actor || (*actor != "canada" && *actor != "us" && *actor != "automatic")) {
-      error = "actor must be canada, us, or automatic";
+    if (!actor || (*actor != "canada" && *actor != "us"
+        && *actor != "automatic" && *actor != "exchange")) {
+      error = "actor must be canada, us, automatic, or exchange";
       return false;
     }
     const bool canada = *actor == "canada";
     const bool us = *actor == "us";
     const bool automatic = *actor == "automatic";
+    const bool exchange = *actor == "exchange";
     auto bounded = [&](const std::string& key, double lo, double hi, double& target) {
       return request_json::number_in_range(object, key, lo, hi, target, error);
+    };
+    auto required_bounded = [&](const std::string& key, double lo, double hi,
+                                double& target) {
+      if (!object.find(key)) {
+        error = key + " is required for delegation settings exchange";
+        return false;
+      }
+      return bounded(key, lo, hi, target);
     };
     if (!bounded("riskAversion", 0.0, 100.0, risk_aversion_)
         || !bounded("cooperationCeiling", 0.0, 100.0, cooperation_ceiling_)) return false;
@@ -276,15 +286,44 @@ class NegotiationState {
           || !bounded("retaliatoryTariff", 0.0, 60.0, retaliatory_tariff_)) return false;
       updated_by_ = "automatic win-win search";
     }
-    if (canada || automatic) {
-      for (std::size_t i = 0; i < canada_sectors_.size(); ++i)
-        if (!bounded("canadaSector" + std::to_string(i), 0.0, 100.0,
-                     canada_sectors_[i])) return false;
+    if (exchange) {
+      double imported_canada_priority = canada_priority_;
+      double imported_us_priority = us_priority_;
+      if (!required_bounded("usTariff", 0.0, kMaximumUsTariffPercent, us_tariff_)
+          || !required_bounded("retaliatoryTariff", 0.0, 60.0, retaliatory_tariff_)
+          || !required_bounded("canadaPriority", 0.0, 100.0, imported_canada_priority)
+          || !required_bounded("usPriority", 0.0, 100.0, imported_us_priority)
+          || !required_bounded("riskAversion", 0.0, 100.0, risk_aversion_)
+          || !required_bounded("cooperationCeiling", 0.0, 100.0, cooperation_ceiling_)) {
+        return false;
+      }
+      if (std::abs(imported_canada_priority + imported_us_priority - 100.0) > 1e-6) {
+        error = "imported delegation priorities must sum to 100";
+        return false;
+      }
+      canada_priority_ = imported_canada_priority;
+      us_priority_ = imported_us_priority;
+      updated_by_ = "imported delegation settings";
     }
-    if (us || automatic) {
-      for (std::size_t i = 0; i < us_sectors_.size(); ++i)
-        if (!bounded("usSector" + std::to_string(i), 0.0, 100.0,
-                     us_sectors_[i])) return false;
+    if (canada || automatic || exchange) {
+      for (std::size_t i = 0; i < canada_sectors_.size(); ++i) {
+        const std::string key = "canadaSector" + std::to_string(i);
+        if (exchange && !object.find(key)) {
+          error = key + " is required for delegation settings exchange";
+          return false;
+        }
+        if (!bounded(key, 0.0, 100.0, canada_sectors_[i])) return false;
+      }
+    }
+    if (us || automatic || exchange) {
+      for (std::size_t i = 0; i < us_sectors_.size(); ++i) {
+        const std::string key = "usSector" + std::to_string(i);
+        if (exchange && !object.find(key)) {
+          error = key + " is required for delegation settings exchange";
+          return false;
+        }
+        if (!bounded(key, 0.0, 100.0, us_sectors_[i])) return false;
+      }
     }
     ++revision_;
     return true;

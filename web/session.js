@@ -5,14 +5,17 @@
   const tokenKey = 'cad-policy-studio.api-token';
   const lastRunKey = 'cad-policy-studio.last-run-settings.v1';
   const replaySafeMutationPaths = new Set(['/api/room', '/api/negotiation']);
-  const scalarRunFields = {
-    usTariff: [0, 60],
+  const delegationSchema = 'cad-policy-studio/delegation-settings';
+  const delegationVersion = 1;
+  const delegationScalarFields = Object.freeze({
+    usTariff: [0, 200],
     retaliatoryTariff: [0, 60],
     canadaPriority: [0, 100],
     usPriority: [0, 100],
     riskAversion: [0, 100],
     cooperationCeiling: [0, 100]
-  };
+  });
+  const scalarRunFields = delegationScalarFields;
 
   function randomId() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -40,6 +43,94 @@
     const number = Number(value);
     if (!Number.isFinite(number)) return null;
     return Math.max(minimum, Math.min(maximum, number));
+  }
+
+  function strictNumber(value, minimum, maximum, label) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new Error(`${label} must be numeric`);
+    if (number < minimum || number > maximum)
+      throw new Error(`${label} must be between ${minimum} and ${maximum}`);
+    return number;
+  }
+
+  function normalizeDelegationSettings(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+      throw new Error('delegation settings must be an object');
+    const settings = {};
+    for (const [field, bounds] of Object.entries(delegationScalarFields)) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field))
+        throw new Error(`${field} is required`);
+      settings[field] = strictNumber(payload[field], bounds[0], bounds[1], field);
+    }
+    if (Math.abs(settings.canadaPriority + settings.usPriority - 100) > 1e-6)
+      throw new Error('Canada and U.S. outcome weights must sum to 100');
+    for (const party of ['us', 'canada']) {
+      const key = `${party}SectorCoverage`;
+      const values = payload[key];
+      if (!Array.isArray(values) || values.length !== 20)
+        throw new Error(`${key} must contain exactly 20 sector values`);
+      settings[key] = values.map((value, index) =>
+        strictNumber(value, 0, 100, `${key}[${index}]`));
+    }
+    return settings;
+  }
+
+  function cleanMetadata(value, fallback = '') {
+    if (typeof value !== 'string') return fallback;
+    return value.trim().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120) || fallback;
+  }
+
+  function buildDelegationPackage(settings, metadata = {}) {
+    const normalized = normalizeDelegationSettings(settings);
+    const exportedAt = typeof metadata.exportedAt === 'string'
+      && !Number.isNaN(Date.parse(metadata.exportedAt))
+      ? new Date(metadata.exportedAt).toISOString()
+      : new Date().toISOString();
+    return {
+      schema: delegationSchema,
+      version: delegationVersion,
+      application: 'Canada Tariff Observatory',
+      exportedAt,
+      exportedBy: cleanMetadata(metadata.exportedBy, 'Joint dashboard'),
+      settings: normalized
+    };
+  }
+
+  function validateDelegationPackage(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+      throw new Error('delegation package must be a JSON object');
+    if (payload.schema !== delegationSchema)
+      throw new Error(`unsupported delegation package schema; expected ${delegationSchema}`);
+    if (Number(payload.version) !== delegationVersion)
+      throw new Error(`unsupported delegation package version; expected ${delegationVersion}`);
+    return {
+      schema: delegationSchema,
+      version: delegationVersion,
+      application: cleanMetadata(payload.application, 'Foreign delegation package'),
+      exportedAt: typeof payload.exportedAt === 'string' && !Number.isNaN(Date.parse(payload.exportedAt))
+        ? new Date(payload.exportedAt).toISOString() : '',
+      exportedBy: cleanMetadata(payload.exportedBy, 'Foreign delegation'),
+      settings: normalizeDelegationSettings(payload.settings)
+    };
+  }
+
+  function negotiationExchangePayload(settings) {
+    const normalized = normalizeDelegationSettings(settings);
+    const payload = {
+      actor: 'exchange',
+      usTariff: normalized.usTariff,
+      retaliatoryTariff: normalized.retaliatoryTariff,
+      canadaPriority: normalized.canadaPriority,
+      usPriority: normalized.usPriority,
+      riskAversion: normalized.riskAversion,
+      cooperationCeiling: normalized.cooperationCeiling
+    };
+    ['us', 'canada'].forEach(party => {
+      normalized[`${party}SectorCoverage`].forEach((value, index) => {
+        payload[`${party}Sector${index}`] = value;
+      });
+    });
+    return payload;
   }
 
   function sanitizeRunSettings(payload, preserveSavedAt = false) {
@@ -200,6 +291,160 @@
     globalThis.evaluate = wrappedEvaluate;
   }
 
+  function currentDelegationLabel() {
+    const view = globalThis.document?.querySelector?.('.header-tabs button.active')?.dataset?.view;
+    if (view === 'canada') return 'Canada delegation';
+    if (view === 'us') return 'U.S. delegation';
+    return 'Joint dashboard';
+  }
+
+  function captureCurrentDelegationSettings() {
+    const saved = readLastRunSettings() || {};
+    const controlValue = (id, fallback) => {
+      const raw = globalThis.document?.getElementById?.(id)?.value;
+      return raw === undefined || raw === '' ? fallback : raw;
+    };
+    let usCoverage = saved.usSectorCoverage;
+    let canadaCoverage = saved.canadaSectorCoverage;
+    try {
+      if (typeof positions !== 'undefined') {
+        usCoverage = Array.from(positions.us || []);
+        canadaCoverage = Array.from(positions.canada || []);
+      }
+    } catch (_) {}
+    return normalizeDelegationSettings({
+      usTariff: controlValue('usTariff', saved.usTariff),
+      retaliatoryTariff: controlValue('retaliatoryTariff', saved.retaliatoryTariff),
+      canadaPriority: controlValue('canadaPriority', saved.canadaPriority),
+      usPriority: controlValue('usPriority', saved.usPriority),
+      riskAversion: controlValue('riskAversion', saved.riskAversion),
+      cooperationCeiling: controlValue('cooperationCeiling', saved.cooperationCeiling),
+      usSectorCoverage: usCoverage,
+      canadaSectorCoverage: canadaCoverage
+    });
+  }
+
+  function setDelegationExchangeStatus(message, state = 'ready', detail = '') {
+    const node = globalThis.document?.getElementById?.('delegationExchangeStatus');
+    if (!node) return;
+    node.textContent = message;
+    node.dataset.state = state;
+    node.title = detail || message;
+  }
+
+  function exportDelegationSettings() {
+    const settings = captureCurrentDelegationSettings();
+    const packageData = buildDelegationPackage(settings, {exportedBy: currentDelegationLabel()});
+    const BlobCtor = globalThis.Blob;
+    if (!BlobCtor || typeof globalThis.URL?.createObjectURL !== 'function')
+      throw new Error('this browser cannot create an export file');
+    const blob = new BlobCtor([`${JSON.stringify(packageData, null, 2)}\n`], {
+      type: 'application/json;charset=utf-8'
+    });
+    const href = globalThis.URL.createObjectURL(blob);
+    const anchor = globalThis.document.createElement('a');
+    anchor.href = href;
+    anchor.download = `delegation-settings-${packageData.exportedAt.replace(/[:.]/g, '-')}.json`;
+    anchor.hidden = true;
+    globalThis.document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    globalThis.setTimeout?.(() => globalThis.URL.revokeObjectURL(href), 0);
+    setDelegationExchangeStatus('Exported', 'success', `${packageData.exportedBy} settings package exported`);
+    return packageData;
+  }
+
+  async function importDelegationSettingsPackage(payload) {
+    const validated = validateDelegationPackage(payload);
+    setDelegationExchangeStatus('Importing…', 'busy', `Valid package from ${validated.exportedBy}`);
+    const response = await globalThis.fetch('/api/negotiation', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(negotiationExchangePayload(validated.settings))
+    });
+    let state = {};
+    try { state = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(state?.error || `server rejected import (${response.status})`);
+
+    writeLastRunSettings(validated.settings);
+    try {
+      if (typeof applyNegotiation === 'function') applyNegotiation(state, false);
+      else restoreLastRunSettings({...validated.settings, version: 1, savedAt: new Date().toISOString()});
+    } catch (_) {
+      restoreLastRunSettings({...validated.settings, version: 1, savedAt: new Date().toISOString()});
+    }
+    setDelegationExchangeStatus('Imported', 'success', `Imported from ${validated.exportedBy}`);
+
+    try {
+      if (typeof evaluate === 'function') await evaluate();
+      else globalThis.document?.getElementById?.('run')?.click?.();
+    } catch (error) {
+      setDelegationExchangeStatus('Imported · rerun needed', 'warning', String(error?.message || error));
+    }
+    return {package: validated, state};
+  }
+
+  async function importDelegationSettingsFile(file) {
+    if (!file) return null;
+    if (Number(file.size || 0) > 262144) throw new Error('delegation package is larger than 256 KB');
+    const text = await file.text();
+    let payload;
+    try { payload = JSON.parse(text); }
+    catch (_) { throw new Error('delegation package is not valid JSON'); }
+    return importDelegationSettingsPackage(payload);
+  }
+
+  function installDelegationExchange() {
+    const document = globalThis.document;
+    const host = document?.querySelector?.('header .status') || document?.querySelector?.('.status');
+    if (!host || host.dataset?.delegationExchangeInstalled === 'true') return false;
+
+    if (!document.getElementById('delegationExchangeStyles') && document.head?.appendChild) {
+      const style = document.createElement('style');
+      style.id = 'delegationExchangeStyles';
+      style.textContent = `
+        .status.delegation-exchange{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;font-size:9px}
+        .delegation-exchange-label{display:inline-flex;align-items:center;gap:6px;color:#65736e;white-space:nowrap}
+        .delegation-exchange-label:before{content:'⇄';display:grid;place-items:center;width:20px;height:20px;border:1px solid #d9d6ce;border-radius:50%;color:#27745e;background:#fff}
+        .delegation-exchange-actions{display:flex;gap:5px}
+        .delegation-exchange button{border:1px solid #d9d6ce;border-radius:999px;background:#fff;color:#33443e;padding:7px 10px;font:600 9px/1 'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(25,35,41,.04)}
+        .delegation-exchange button:hover,.delegation-exchange button:focus-visible{border-color:#27745e;color:#1f6752;outline:none;box-shadow:0 4px 14px rgba(39,116,94,.12)}
+        #delegationExchangeStatus[data-state="success"]{color:#27745e}#delegationExchangeStatus[data-state="warning"]{color:#9b6416}#delegationExchangeStatus[data-state="error"]{color:#b52b3a}#delegationExchangeStatus[data-state="busy"]{color:#2d668c}
+        @media(max-width:980px){.delegation-exchange-label{display:none}}
+        @media(max-width:720px){header{gap:8px}.status.delegation-exchange{display:flex}.delegation-exchange button{padding:7px 8px;font-size:8px}}
+      `;
+      document.head.appendChild(style);
+    }
+
+    host.dataset.delegationExchangeInstalled = 'true';
+    host.classList?.add?.('delegation-exchange');
+    host.innerHTML = `<span class="delegation-exchange-label" id="delegationExchangeStatus" data-state="ready">Delegation exchange</span><span class="delegation-exchange-actions"><button id="exportDelegationSettings" type="button" title="Export all current bilateral delegation settings to JSON">Export settings</button><button id="importDelegationSettings" type="button" title="Import a foreign delegation settings package">Import foreign</button></span><input id="delegationSettingsFile" type="file" accept="application/json,.json" hidden><span id="sync" hidden aria-hidden="true"></span>`;
+
+    const exportButton = document.getElementById('exportDelegationSettings');
+    const importButton = document.getElementById('importDelegationSettings');
+    const fileInput = document.getElementById('delegationSettingsFile');
+    exportButton?.addEventListener?.('click', () => {
+      try { exportDelegationSettings(); }
+      catch (error) {
+        setDelegationExchangeStatus('Export failed', 'error', String(error?.message || error));
+        globalThis.alert?.(`Could not export delegation settings: ${error?.message || error}`);
+      }
+    });
+    importButton?.addEventListener?.('click', () => fileInput?.click?.());
+    fileInput?.addEventListener?.('change', async () => {
+      const file = fileInput.files?.[0];
+      try {
+        await importDelegationSettingsFile(file);
+      } catch (error) {
+        setDelegationExchangeStatus('Import rejected', 'error', String(error?.message || error));
+        globalThis.alert?.(`Could not import delegation settings: ${error?.message || error}`);
+      } finally {
+        fileInput.value = '';
+      }
+    });
+    return true;
+  }
+
   // Session identity is not secret and should survive a browser restart so the
   // server-side room/event history can be reopened. Keep the bearer token in
   // sessionStorage; only the non-sensitive session id is durable.
@@ -278,10 +523,14 @@
     }, () => send());
   };
 
-  if (globalThis.document?.readyState === 'loading') {
-    globalThis.document.addEventListener('DOMContentLoaded', armInitialRestore, {once: true});
-  } else {
+  function startBrowserSession() {
     armInitialRestore();
+    installDelegationExchange();
+  }
+  if (globalThis.document?.readyState === 'loading') {
+    globalThis.document.addEventListener('DOMContentLoaded', startBrowserSession, {once: true});
+  } else {
+    startBrowserSession();
   }
 
   globalThis.CAD_SESSION_ID = sessionId;
@@ -294,5 +543,17 @@
     read: readLastRunSettings,
     write: writeLastRunSettings,
     restore: restoreLastRunSettings
+  };
+  globalThis.CADDelegationExchange = {
+    schema: delegationSchema,
+    version: delegationVersion,
+    normalizeSettings: normalizeDelegationSettings,
+    buildPackage: buildDelegationPackage,
+    validatePackage: validateDelegationPackage,
+    negotiationPayload: negotiationExchangePayload,
+    capture: captureCurrentDelegationSettings,
+    exportPackage: exportDelegationSettings,
+    importPackage: importDelegationSettingsPackage,
+    install: installDelegationExchange
   };
 })();

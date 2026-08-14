@@ -85,6 +85,10 @@ function storage(initial = {}) {
 
   assert.strictEqual(localStorage.getItem('cad-policy-studio.session-id'), 'persistent-session-id',
     'session identity must survive browser restarts');
+  assert(context.CADDelegationExchange, 'delegation exchange API must be exposed');
+  assert.strictEqual(context.CADDelegationExchange.schema,
+    'cad-policy-studio/delegation-settings');
+  assert.strictEqual(context.CADDelegationExchange.version, 1);
 
   const primary = {
     usTariff:37,
@@ -149,6 +153,80 @@ function storage(initial = {}) {
   assert.strictEqual(context.InitialOpeningScenario.opening.usTariff, 37);
   assert.strictEqual(context.InitialOpeningScenario.opening.retaliatoryTariff, 11);
 
+  // A portable foreign delegation package is strict and includes the complete
+  // bilateral negotiation state. The 200% U.S. ceiling must round-trip exactly.
+  const foreignSettings = {
+    usTariff:200,
+    retaliatoryTariff:60,
+    canadaPriority:55,
+    usPriority:45,
+    riskAversion:66,
+    cooperationCeiling:42,
+    usSectorCoverage:Array.from({length:20}, (_, i) => 20 + i),
+    canadaSectorCoverage:Array.from({length:20}, (_, i) => 80 - i)
+  };
+  const foreignPackage = context.CADDelegationExchange.buildPackage(foreignSettings, {
+    exportedAt:'2026-08-14T22:00:00.000Z',
+    exportedBy:'U.S. delegation'
+  });
+  assert.strictEqual(foreignPackage.schema, 'cad-policy-studio/delegation-settings');
+  assert.strictEqual(foreignPackage.version, 1);
+  assert.strictEqual(foreignPackage.exportedBy, 'U.S. delegation');
+  assert.strictEqual(foreignPackage.settings.usTariff, 200);
+  assert.strictEqual(foreignPackage.settings.usSectorCoverage.length, 20);
+  assert.strictEqual(foreignPackage.settings.canadaSectorCoverage.length, 20);
+
+  const validated = context.CADDelegationExchange.validatePackage(foreignPackage);
+  assert.strictEqual(validated.settings.usTariff, 200);
+  assert.deepStrictEqual(Array.from(validated.settings.usSectorCoverage),
+    Array.from(foreignSettings.usSectorCoverage));
+  const exchangePayload = context.CADDelegationExchange.negotiationPayload(validated.settings);
+  assert.strictEqual(exchangePayload.actor, 'exchange');
+  assert.strictEqual(exchangePayload.usTariff, 200);
+  assert.strictEqual(exchangePayload.retaliatoryTariff, 60);
+  assert.strictEqual(exchangePayload.usSector0, 20);
+  assert.strictEqual(exchangePayload.usSector19, 39);
+  assert.strictEqual(exchangePayload.canadaSector0, 80);
+  assert.strictEqual(exchangePayload.canadaSector19, 61);
+  assert.strictEqual(Object.keys(exchangePayload).filter(key => /^usSector\d+$/.test(key)).length, 20);
+  assert.strictEqual(Object.keys(exchangePayload).filter(key => /^canadaSector\d+$/.test(key)).length, 20);
+
+  assert.throws(() => context.CADDelegationExchange.validatePackage({...foreignPackage, version:2}),
+    /version/);
+  assert.throws(() => context.CADDelegationExchange.validatePackage({
+    ...foreignPackage,
+    settings:{...foreignSettings, usTariff:201}
+  }), /usTariff/);
+  assert.throws(() => context.CADDelegationExchange.validatePackage({
+    ...foreignPackage,
+    settings:{...foreignSettings, canadaPriority:60, usPriority:30}
+  }), /sum to 100/);
+  assert.throws(() => context.CADDelegationExchange.validatePackage({
+    ...foreignPackage,
+    settings:{...foreignSettings, usSectorCoverage:foreignSettings.usSectorCoverage.slice(0,19)}
+  }), /exactly 20/);
+
+  // Import uses one replay-safe bilateral mutation and then restores the exact
+  // imported controls locally. No session credential is part of the package.
+  requests.length = 0;
+  await context.CADDelegationExchange.importPackage(foreignPackage);
+  assert.strictEqual(requests.length, 1);
+  const importedMutation = JSON.parse(requests[0].init.body);
+  assert.strictEqual(importedMutation.actor, 'exchange');
+  assert(importedMutation.operationId, 'exchange import must carry a replay-safe operation id');
+  assert.strictEqual(importedMutation.usTariff, 200);
+  assert.strictEqual(controls.usTariff.value, '200');
+  assert.strictEqual(controls.retaliatoryTariff.value, '60');
+  assert.strictEqual(controls.canadaPriority.value, '55');
+  assert.strictEqual(controls.usPriority.value, '45');
+  assert.strictEqual(context.CADLastRunSettings.read().usTariff, 200,
+    'high-tariff settings must not be truncated by restart persistence');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(foreignPackage, 'sessionId'), false);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(foreignPackage, 'token'), false);
+
+  for (const token of ['Export settings', 'Import foreign', 'id="sync" hidden', "actor: 'exchange'"])
+    assert(source.includes(token), `missing delegation exchange UI/source contract: ${token}`);
+
   // A transient mutation failure gets exactly one replay-safe retry with the same
   // operation id/body. This covers the lost-response case without retrying models.
   requests.length = 0;
@@ -172,5 +250,5 @@ function storage(initial = {}) {
   assert.deepStrictEqual(secondMutation, firstMutation,
     'retry must preserve the exact canonical mutation body');
 
-  console.log('session persistence and replay-safe mutation recovery test passed');
+  console.log('session persistence, delegation exchange, and replay-safe mutation tests passed');
 })().catch(error => { console.error(error); process.exit(1); });
