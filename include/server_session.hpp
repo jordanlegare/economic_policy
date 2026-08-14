@@ -46,6 +46,8 @@ struct SessionState {
       : id(std::move(session_id)),
         negotiation((event_log_path.parent_path() / "negotiation.events").string()),
         room(event_log_path.string()),
+        evaluation_submission_log(
+            (event_log_path.parent_path() / "evaluation-submissions.events").string()),
         last_economy(std::move(baseline)) {}
 
   std::string room_json() const {
@@ -64,9 +66,12 @@ struct SessionState {
   mutable std::mutex mutex;
   NegotiationState negotiation;
   NegotiationRoom room;
+  std::string evaluation_submission_log;
   NegotiationAnalysis last_bargaining;
   RobustRecommendationAnalysis last_robustness;
   Economy last_economy;
+  std::string last_input_fingerprint;
+  unsigned long last_evaluation_negotiation_revision = 0;
   bool has_evaluation = false;
 };
 
