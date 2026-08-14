@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -58,8 +59,8 @@ class Executor {
 
   template<class Function>
   auto submit(Function&& function)
-      -> std::future<typename std::invoke_result_t<std::decay_t<Function>>> {
-    using Result = typename std::invoke_result_t<std::decay_t<Function>>;
+      -> std::future<std::invoke_result_t<std::decay_t<Function>>> {
+    using Result = std::invoke_result_t<std::decay_t<Function>>;
     auto task = std::make_shared<std::packaged_task<Result()>>(
         std::forward<Function>(function));
     auto future = task->get_future();
@@ -87,23 +88,34 @@ inline Executor& global_executor() {
   return executor;
 }
 
+inline std::atomic<std::size_t>& worker_limit_storage() {
+  static std::atomic<std::size_t> limit{0};
+  return limit;
+}
+
+inline void set_worker_limit(std::size_t workers) {
+  worker_limit_storage().store(workers, std::memory_order_relaxed);
+}
+
 inline std::size_t worker_capacity() {
   return global_executor().worker_count();
 }
 
-inline std::size_t resolve_parallelism(std::size_t requested_workers,
-                                       std::size_t task_count) {
-  if (task_count == 0) return 0;
+inline std::size_t configured_worker_count() {
+  const std::size_t limit = worker_limit_storage().load(std::memory_order_relaxed);
   const std::size_t capacity = worker_capacity();
-  const std::size_t requested = requested_workers == 0
-      ? capacity : std::min(requested_workers, capacity);
-  return std::max<std::size_t>(1, std::min(requested, task_count));
+  return limit == 0 ? capacity : std::max<std::size_t>(1, std::min(limit, capacity));
+}
+
+inline std::size_t resolve_parallelism(std::size_t task_count) {
+  if (task_count == 0) return 0;
+  return std::max<std::size_t>(1,
+      std::min(configured_worker_count(), task_count));
 }
 
 template<class Function>
-void parallel_for(std::size_t task_count, std::size_t requested_workers,
-                  Function&& function) {
-  const std::size_t lanes = resolve_parallelism(requested_workers, task_count);
+void parallel_for(std::size_t task_count, Function&& function) {
+  const std::size_t lanes = resolve_parallelism(task_count);
   if (lanes == 0) return;
   if (lanes == 1) {
     for (std::size_t i = 0; i < task_count; ++i) function(i);
