@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace cad::monte_carlo {
@@ -39,7 +40,10 @@ struct StructuralInputs {
 
 struct Input {
   int draws = 0;
-  std::size_t expected_cpu_parallelism = 1;
+  std::size_t expected_cpu_parallelism = [] {
+    const unsigned detected = std::thread::hardware_concurrency();
+    return detected == 0 ? std::size_t{4} : static_cast<std::size_t>(detected);
+  }();
   double move_bp = 0.0;
   double productive_share = 0.0;
 
