@@ -12,6 +12,7 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(Threads REQUIRED)
 find_package(Git QUIET)
+include(CheckCXXCompilerFlag)
 
 set(CAD_SOURCE_REVISION "unknown")
 if(GIT_FOUND)
@@ -46,7 +47,9 @@ add_library(policy_engine
   src/decision_robustness.cpp
   src/welfare_sensitivity.cpp
   src/model_evidence.cpp
-  src/monte_carlo_backend.cpp
+  src/monte_carlo_backend_fast_dispatch.cpp
+  src/monte_carlo_cpu_fast.cpp
+  src/monte_carlo_cpu_avx2.cpp
   src/monte_carlo_opencl.cpp
   src/monte_carlo_opencl_reduced.cpp)
 target_include_directories(policy_engine PUBLIC include)
@@ -55,6 +58,22 @@ if(CMAKE_DL_LIBS)
   target_link_libraries(policy_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 cad_enable_warnings(policy_engine)
+
+if(MSVC)
+  check_cxx_compiler_flag("/arch:AVX2" CAD_CAN_BUILD_AVX2)
+  if(CAD_CAN_BUILD_AVX2)
+    set_source_files_properties(src/monte_carlo_cpu_avx2.cpp PROPERTIES
+      COMPILE_OPTIONS "/arch:AVX2;/fp:strict"
+      COMPILE_DEFINITIONS "CAD_AVX2_COMPILED=1")
+  endif()
+else()
+  check_cxx_compiler_flag("-mavx2" CAD_CAN_BUILD_AVX2)
+  if(CAD_CAN_BUILD_AVX2)
+    set_source_files_properties(src/monte_carlo_cpu_avx2.cpp PROPERTIES
+      COMPILE_OPTIONS "-mavx2;-ffp-contract=off"
+      COMPILE_DEFINITIONS "CAD_AVX2_COMPILED=1")
+  endif()
+endif()
 
 add_executable(cad-policy-studio
   src/main.cpp
@@ -161,6 +180,7 @@ cad_add_test(negotiation_atomicity_tests tests/negotiation_atomicity_test.cpp ne
 cad_add_test(evaluation_provenance_tests tests/evaluation_provenance_test.cpp evaluation_provenance)
 cad_add_test(evaluation_result_cache_tests tests/evaluation_result_cache_test.cpp evaluation_result_cache)
 cad_add_test(monte_carlo_backend_tests tests/monte_carlo_backend_test.cpp monte_carlo_backend)
+cad_add_test(monte_carlo_cpu_fast_tests tests/monte_carlo_cpu_fast_test.cpp monte_carlo_cpu_fast)
 cad_add_test(monte_carlo_opencl_tests tests/monte_carlo_opencl_test.cpp monte_carlo_opencl_equivalence)
 cad_add_test(search_acceleration_tests tests/search_acceleration_test.cpp search_acceleration)
 cad_add_test(compute_executor_tests tests/compute_executor_test.cpp compute_executor_concurrency)
@@ -180,7 +200,6 @@ set_tests_properties(model_evidence PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_
 cad_add_test(state_measurement_tests tests/state_measurement_test.cpp state_measurement_contract)
 set_tests_properties(state_measurement_contract PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(empirical_calibration_tests tests/empirical_calibration_test.cpp empirical_structural_calibration)
-set_tests_properties(empirical_structural_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 cad_add_test(quarterly_empirical_calibration_tests tests/quarterly_empirical_calibration_test.cpp quarterly_empirical_calibration)
 set_tests_properties(quarterly_empirical_calibration PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
