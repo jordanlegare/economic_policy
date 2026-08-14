@@ -38,37 +38,41 @@ inline double lower_cvar_sorted(const std::vector<double>& values, double alpha)
   return sum / static_cast<double>(count);
 }
 
-struct PreparedDraw {
-  double trade_elasticity = 0.0;
-  double pass_through = 0.0;
-  double friction_delta = 0.0;
-  double canada_growth_14 = 0.0;
-  double canada_inflation_115 = 0.0;
-  double canada_growth_18 = 0.0;
-  double canada_inflation_085 = 0.0;
-  double us_growth_16 = 0.0;
-  double us_inflation_090 = 0.0;
-  double canada_reservation = 0.0;
-  double us_reservation = 0.0;
-};
-
-struct PreparedPackage {
-  const NegotiationPackage* package = nullptr;
-  const Scenario* scenario = nullptr;
-  negotiation_detail::Terms terms{};
-  double linkage_bonus = 0.0;
-  double canada_relief_cost = 0.0;
-  double us_relief_cost = 0.0;
-  double supply_fiscal_cost = 0.0;
-};
-
 struct PreparedContext {
   double export_share = 0.0;
   double import_share = 0.0;
   double us_tariff_canada = 0.0;
   double canada_retaliatory_tariff = 0.0;
-  double canada_priority = 0.0;
-  double us_priority = 0.0;
+  double canada_weight = 0.0;
+  double us_weight = 0.0;
+  double weight_total = 1.0;
+};
+
+struct PreparedDraw {
+  double canada_relief_capacity = 0.0;
+  double us_relief_capacity = 0.0;
+  double pass_through = 0.0;
+  double friction_delta = 0.0;
+  double canada_reservation = 0.0;
+  double us_reservation = 0.0;
+};
+
+struct ScenarioDrawState {
+  double canada_base = 0.01;
+  double us_score = 0.01;
+};
+
+struct PreparedPackage {
+  const NegotiationPackage* package = nullptr;
+  std::size_t scenario_slot = std::numeric_limits<std::size_t>::max();
+  bool valid = false;
+  double export_change = 0.0;
+  double us_export_change = 0.0;
+  negotiation_detail::Terms terms{};
+  double linkage_bonus = 0.0;
+  double canada_relief_cost = 0.0;
+  double us_relief_cost = 0.0;
+  double supply_fiscal_cost = 0.0;
 };
 
 inline PreparedContext prepare_context(const Economy& economy) {
@@ -79,28 +83,26 @@ inline PreparedContext prepare_context(const Economy& economy) {
       economy.imports_from_us_share / 100.0, 0.0, 1.0);
   out.us_tariff_canada = economy.us_tariff_canada;
   out.canada_retaliatory_tariff = economy.canada_retaliatory_tariff;
-  out.canada_priority = economy.canada_priority;
-  out.us_priority = economy.us_priority;
+  out.canada_weight = robust_detail::clamp(economy.canada_priority, 1.0, 100.0);
+  out.us_weight = robust_detail::clamp(economy.us_priority, 1.0, 100.0);
+  out.weight_total = out.canada_weight + out.us_weight;
   return out;
 }
 
 inline std::vector<PreparedDraw> prepare_draws(
     const std::vector<robust_detail::RobustDraw>& draws,
-    const NegotiationAnalysis& negotiation, double reference_border) {
-  std::vector<PreparedDraw> prepared;
-  prepared.resize(draws.size());
+    const NegotiationAnalysis& negotiation, double reference_border,
+    const PreparedContext& context) {
+  std::vector<PreparedDraw> prepared(draws.size());
   for (std::size_t i = 0; i < draws.size(); ++i) {
     const auto& draw = draws[i];
     auto& out = prepared[i];
-    out.trade_elasticity = draw.trade_elasticity;
+    out.canada_relief_capacity = draw.trade_elasticity
+        * context.us_tariff_canada * context.export_share;
+    out.us_relief_capacity = draw.trade_elasticity
+        * context.canada_retaliatory_tariff * context.import_share;
     out.pass_through = draw.pass_through;
     out.friction_delta = draw.border - reference_border;
-    out.canada_growth_14 = 1.4 * draw.canada_growth;
-    out.canada_inflation_115 = 1.15 * draw.canada_inflation;
-    out.canada_growth_18 = 1.8 * draw.canada_growth;
-    out.canada_inflation_085 = 0.85 * draw.canada_inflation;
-    out.us_growth_16 = 1.6 * draw.us_growth;
-    out.us_inflation_090 = 0.90 * draw.us_inflation;
     out.canada_reservation = robust_detail::clamp(
         negotiation.canada_reservation
             + 0.28 * draw.canada_growth - 0.20 * draw.canada_inflation
@@ -115,22 +117,56 @@ inline std::vector<PreparedDraw> prepare_draws(
   return prepared;
 }
 
+// Scenario shocks are identical for every bargaining package that references the
+// same verified policy scenario. Store scenario-major so pass 2 reads contiguous
+// state while pass 1 reuses a small working set for each draw.
+inline std::vector<ScenarioDrawState> prepare_scenario_draw_states(
+    const Result& result, const std::vector<robust_detail::RobustDraw>& draws) {
+  const std::size_t samples = draws.size();
+  std::vector<ScenarioDrawState> states(result.scenarios.size() * samples);
+  compute::parallel_for(result.scenarios.size(), [&](std::size_t scenario_index) {
+    const auto& scenario = result.scenarios[scenario_index];
+    auto* destination = states.data() + scenario_index * samples;
+    for (std::size_t draw_index = 0; draw_index < samples; ++draw_index) {
+      const auto& draw = draws[draw_index];
+      const double boc_score = robust_detail::clamp(
+          scenario.boc_score + 1.4 * draw.canada_growth
+              - 1.15 * draw.canada_inflation,
+          0.01, 100.0);
+      const double federal_score = robust_detail::clamp(
+          scenario.federal_score + 1.8 * draw.canada_growth
+              - 0.85 * draw.canada_inflation,
+          0.01, 100.0);
+      destination[draw_index].canada_base = std::sqrt(
+          std::max(0.01, boc_score) * std::max(0.01, federal_score));
+      destination[draw_index].us_score = robust_detail::clamp(
+          scenario.us_score + 1.6 * draw.us_growth - 0.90 * draw.us_inflation,
+          0.01, 100.0);
+    }
+  });
+  return states;
+}
+
 inline std::vector<PreparedPackage> prepare_packages(
     const Economy& economy, const Result& result,
     const NegotiationAnalysis& negotiation) {
-  std::unordered_map<std::string_view, const Scenario*> scenarios;
-  scenarios.reserve(result.scenarios.size());
-  for (const auto& scenario : result.scenarios)
-    scenarios.emplace(std::string_view(scenario.id), &scenario);
+  std::unordered_map<std::string_view, std::size_t> scenario_slots;
+  scenario_slots.reserve(result.scenarios.size());
+  for (std::size_t i = 0; i < result.scenarios.size(); ++i)
+    scenario_slots.emplace(std::string_view(result.scenarios[i].id), i);
 
-  std::vector<PreparedPackage> prepared;
-  prepared.resize(negotiation.frontier.size());
+  std::vector<PreparedPackage> prepared(negotiation.frontier.size());
   for (std::size_t i = 0; i < negotiation.frontier.size(); ++i) {
     const auto& package = negotiation.frontier[i];
     auto& out = prepared[i];
     out.package = &package;
-    const auto found = scenarios.find(std::string_view(package.strategy_id));
-    if (found != scenarios.end()) out.scenario = found->second;
+    const auto found = scenario_slots.find(std::string_view(package.strategy_id));
+    if (found != scenario_slots.end()) {
+      out.scenario_slot = found->second;
+      out.valid = true;
+      out.export_change = result.scenarios[out.scenario_slot].export_change;
+      out.us_export_change = result.scenarios[out.scenario_slot].us_export_change;
+    }
     out.terms = robust_detail::package_terms(package);
 
     const double tariff_link = out.terms.us_tariff_relief
@@ -154,44 +190,25 @@ inline std::vector<PreparedPackage> prepare_packages(
 
 inline robust_detail::PackageDrawOutcome evaluate_prepared_package_draw(
     const PreparedContext& context, const PreparedPackage& prepared,
-    const PreparedDraw& draw) {
+    const PreparedDraw& draw, const ScenarioDrawState& scenario) {
   robust_detail::PackageDrawOutcome out;
-  if (!prepared.scenario) return out;
-
-  const auto& scenario = *prepared.scenario;
+  if (!prepared.valid) return out;
   const auto& terms = prepared.terms;
 
-  const double boc_score = robust_detail::clamp(
-      scenario.boc_score + draw.canada_growth_14 - draw.canada_inflation_115,
-      0.01, 100.0);
-  const double federal_score = robust_detail::clamp(
-      scenario.federal_score + draw.canada_growth_18 - draw.canada_inflation_085,
-      0.01, 100.0);
-  const double us_score = robust_detail::clamp(
-      scenario.us_score + draw.us_growth_16 - draw.us_inflation_090,
-      0.01, 100.0);
-  const double canada_base = std::sqrt(
-      std::max(0.01, boc_score) * std::max(0.01, federal_score));
-
-  const double canada_relief_capacity = draw.trade_elasticity
-      * context.us_tariff_canada * context.export_share;
-  const double us_relief_capacity = draw.trade_elasticity
-      * context.canada_retaliatory_tariff * context.import_share;
-
-  const double canada_export_change = scenario.export_change
-      + 0.55 * canada_relief_capacity * terms.us_tariff_relief
+  const double canada_export_change = prepared.export_change
+      + 0.55 * draw.canada_relief_capacity * terms.us_tariff_relief
       + 1.10 * terms.border_facilitation
       + 0.70 * terms.procurement_reciprocity
       + 0.45 * terms.supply_chain_commitment;
-  const double us_export_change = scenario.us_export_change
-      + 0.55 * us_relief_capacity * terms.canada_tariff_relief
+  const double us_export_change = prepared.us_export_change
+      + 0.55 * draw.us_relief_capacity * terms.canada_tariff_relief
       + 0.95 * terms.border_facilitation
       + 0.95 * terms.procurement_reciprocity
       + 0.35 * terms.supply_chain_commitment;
-  const double canada_trade_gain = canada_export_change - scenario.export_change;
-  const double us_trade_gain = us_export_change - scenario.us_export_change;
+  const double canada_trade_gain = canada_export_change - prepared.export_change;
+  const double us_trade_gain = us_export_change - prepared.us_export_change;
 
-  const double canada_utility = robust_detail::clamp(canada_base
+  const double canada_utility = robust_detail::clamp(scenario.canada_base
       + 0.78 * canada_trade_gain
       + 1.35 * terms.border_facilitation
       + 0.75 * terms.procurement_reciprocity
@@ -199,7 +216,7 @@ inline robust_detail::PackageDrawOutcome evaluate_prepared_package_draw(
       + prepared.linkage_bonus
       - prepared.canada_relief_cost
       - prepared.supply_fiscal_cost, 0.0, 100.0);
-  const double us_utility = robust_detail::clamp(us_score
+  const double us_utility = robust_detail::clamp(scenario.us_score
       + 0.82 * us_trade_gain
       + 1.20 * terms.border_facilitation
       + 1.10 * terms.procurement_reciprocity
@@ -220,9 +237,17 @@ inline robust_detail::PackageDrawOutcome evaluate_prepared_package_draw(
 
   out.canada_surplus = adjusted_canada_utility - draw.canada_reservation;
   out.us_surplus = adjusted_us_utility - draw.us_reservation;
-  out.value = robust_detail::decision_value(
-      out.canada_surplus, out.us_surplus,
-      context.canada_priority, context.us_priority);
+  if (out.canada_surplus < 0.0 || out.us_surplus < 0.0) {
+    out.value = -25.0 + std::min(out.canada_surplus, out.us_surplus);
+  } else {
+    double nash = 0.0;
+    if (out.canada_surplus > 0.0 && out.us_surplus > 0.0) {
+      nash = std::exp((context.canada_weight * std::log(out.canada_surplus)
+                      + context.us_weight * std::log(out.us_surplus))
+                     / context.weight_total);
+    }
+    out.value = nash + 0.08 * std::min(out.canada_surplus, out.us_surplus);
+  }
   return out;
 }
 
@@ -231,8 +256,8 @@ inline robust_detail::PackageDrawOutcome evaluate_prepared_package_draw(
 // Production end-to-end robustness evaluator. Numerical semantics intentionally
 // match analyze_robust_recommendations(): every draw visits packages in the same
 // order, means are accumulated before sorting, and package output order remains
-// unchanged. Expensive object/string plumbing is prepared once outside the two
-// package/draw passes; the hot loop is scalar arithmetic only.
+// unchanged. Package strings/objects and scenario/draw invariants are prepared
+// once; the O(draws*packages) hot loop performs only required scalar arithmetic.
 inline RobustRecommendationAnalysis analyze_robust_recommendations_fast(
     const Economy& economy, const Result& result,
     const NegotiationAnalysis& negotiation,
@@ -244,6 +269,7 @@ inline RobustRecommendationAnalysis analyze_robust_recommendations_fast(
   using robust_fast_detail::prepare_context;
   using robust_fast_detail::prepare_draws;
   using robust_fast_detail::prepare_packages;
+  using robust_fast_detail::prepare_scenario_draw_states;
   using robust_fast_detail::quantile_sorted;
 
   RobustRecommendationAnalysis analysis;
@@ -295,8 +321,10 @@ inline RobustRecommendationAnalysis analyze_robust_recommendations_fast(
       border_friction, pass_through, canada_growth, us_growth,
       canada_inflation, us_inflation, reservation_noise);
   const auto context = prepare_context(economy);
-  const auto prepared_draws = prepare_draws(sampled, negotiation, border_friction.mean);
+  const auto prepared_draws = prepare_draws(
+      sampled, negotiation, border_friction.mean, context);
   const auto prepared_packages = prepare_packages(economy, result, negotiation);
+  const auto scenario_states = prepare_scenario_draw_states(result, sampled);
 
   std::vector<double> best_by_draw(
       sample_count, -std::numeric_limits<double>::infinity());
@@ -305,8 +333,11 @@ inline RobustRecommendationAnalysis analyze_robust_recommendations_fast(
     std::size_t best_package = 0;
     double best_value = -std::numeric_limits<double>::infinity();
     for (std::size_t p = 0; p < package_count; ++p) {
+      const auto& package = prepared_packages[p];
+      const auto& scenario = scenario_states[
+          package.scenario_slot * sample_count + draw];
       const auto outcome = evaluate_prepared_package_draw(
-          context, prepared_packages[p], prepared_draws[draw]);
+          context, package, prepared_draws[draw], scenario);
       if (outcome.value > best_value) {
         best_value = outcome.value;
         best_package = p;
@@ -332,9 +363,12 @@ inline RobustRecommendationAnalysis analyze_robust_recommendations_fast(
     std::size_t us_clear = 0;
     std::size_t joint_clear = 0;
 
+    const auto& package = prepared_packages[p];
+    const auto* scenario_series = scenario_states.data()
+        + package.scenario_slot * sample_count;
     for (std::size_t draw = 0; draw < sample_count; ++draw) {
       const auto outcome = evaluate_prepared_package_draw(
-          context, prepared_packages[p], prepared_draws[draw]);
+          context, package, prepared_draws[draw], scenario_series[draw]);
       ca_surplus.push_back(outcome.canada_surplus);
       us_surplus.push_back(outcome.us_surplus);
       if (outcome.canada_surplus >= 0.0) ++ca_clear;
@@ -345,8 +379,8 @@ inline RobustRecommendationAnalysis analyze_robust_recommendations_fast(
     }
 
     RobustPackageMetrics metrics;
-    metrics.package_id = negotiation.frontier[p].id;
-    metrics.strategy_id = negotiation.frontier[p].strategy_id;
+    metrics.package_id = package.package->id;
+    metrics.strategy_id = package.package->strategy_id;
     metrics.samples = analysis.second_stage_monte_carlo_draws;
     metrics.canada_mean_surplus = mean(ca_surplus);
     metrics.us_mean_surplus = mean(us_surplus);
