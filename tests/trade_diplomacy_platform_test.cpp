@@ -1,4 +1,5 @@
 #include "calibration.hpp"
+#include "interactive_frontier.hpp"
 #include "negotiation_support.hpp"
 #include "policy_engine.hpp"
 #include "robust_recommendation.hpp"
@@ -97,9 +98,9 @@ int main() {
   // The operational layer must never pretend to estimate political acceptance.
   CHECK(json.find("acceptanceProbability") == std::string::npos);
 
-  // A full robust package is transported independently of any preview limit.
-  // Simulate a winner ranked beyond the first 100 without relying on the UI's
-  // capped frontier response.
+  // Simulate a robust winner ranked beyond the first 100. The bounded
+  // negotiation serializer must still carry the full package, and the top-level
+  // publication remains an independent transport path for the same identity.
   auto large_negotiation = negotiation;
   large_negotiation.frontier.clear();
   for (std::size_t i = 0; i < 101; ++i) {
@@ -111,6 +112,19 @@ int main() {
   large_negotiation.pareto_frontier_size = 101;
   cad::RobustRecommendationAnalysis large_robustness;
   large_robustness.recommended_package_id = large_negotiation.frontier.back().id;
+
+  cad::ensure_robust_package_in_interactive_preview(
+      large_negotiation, large_robustness.recommended_package_id);
+  bool preview_found = false;
+  for (std::size_t i = 0; i < 100; ++i)
+    preview_found = preview_found
+        || large_negotiation.frontier[i].id == large_robustness.recommended_package_id;
+  CHECK(preview_found);
+  CHECK(large_negotiation.frontier[99].id == "synthetic-package-101");
+  CHECK(large_negotiation.frontier[99].pareto_rank == 101);
+  const auto preview_json = cad::interactive_frontier::negotiation_to_json(large_negotiation);
+  CHECK(preview_json.find("synthetic-package-101") != std::string::npos);
+
   const auto large_publication = cad::build_trade_diplomacy_publication(
       economy, result, large_negotiation, large_robustness);
   CHECK(large_publication.has_robust_recommended_package);
