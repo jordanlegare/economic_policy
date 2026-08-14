@@ -54,7 +54,7 @@ cad::NegotiationPackage linked_package() {
   package.us_sector_coverage.fill(100.0);
   package.canada_sector_coverage.fill(100.0);
   package.issues = {
-      {"us-tariff-relief", "U.S. tariff relief", 25.0, 0.0},
+      {"us-tariff-relief", "U.S. tariff relief", 0.0, 25.0},
       {"canada-tariff-relief", "Canadian tariff relief", 25.0, 0.0},
       {"border-facilitation", "Border facilitation", 50.0, 50.0},
       {"procurement", "Procurement", 100.0, 100.0},
@@ -219,10 +219,18 @@ int main() {
   assert(cad::linked_bargaining_cache_namespace("snapshot", cache_a)
       != cad::linked_bargaining_cache_namespace("snapshot", cache_b));
 
-  // All five linked bargaining terms are now production-owned. The wrapper
-  // materializes border, procurement and supply-chain state, consumes those
-  // reduced-form issue amplitudes, then lets the generic verifier materialize
-  // tariff relief and run the immutable source strategy through the final gate.
+  // All five linked bargaining terms are now nonzero and production-owned. The
+  // wrapper materializes border, procurement and supply-chain state, consumes
+  // those reduced-form issue amplitudes, then lets the generic verifier
+  // materialize both tariff-relief directions and run the immutable source
+  // strategy through the final gate.
+  const auto package_terms = cad::robust_detail::package_terms(linked_package());
+  assert(package_terms.us_tariff_relief > 0.0);
+  assert(package_terms.canada_tariff_relief > 0.0);
+  assert(package_terms.border_facilitation > 0.0);
+  assert(package_terms.procurement_reciprocity > 0.0);
+  assert(package_terms.supply_chain_commitment > 0.0);
+
   cad::Economy linked_economy;
   linked_economy.border_friction = 2.0;
   linked_economy.minimum_bilateral_growth = 0.0;
