@@ -25,9 +25,23 @@ int main() {
   assert(!negotiation.frontier.empty());
   assert(!robust.recommended_package_id.empty());
 
+  const std::string round_event =
+      "{\"action\":\"set-round\",\"operationId\":\"room-op-round-3\","
+      "\"round\":3,\"phase\":\"package round\"}";
+
   {
     cad::NegotiationRoom room(path);
-    assert(room.apply_event("{\"action\":\"set-round\",\"round\":3,\"phase\":\"package round\"}"));
+    assert(room.apply_event(round_event));
+    const std::string after_round = room.json(&negotiation, &robust);
+    assert(room.apply_event(round_event));
+    assert(room.last_apply_replayed());
+    assert(room.json(&negotiation, &robust) == after_round);
+    assert(!room.apply_event(
+        "{\"action\":\"set-round\",\"operationId\":\"room-op-round-3\","
+        "\"round\":4,\"phase\":\"conflicting retry\"}"));
+    assert(!room.last_error().empty());
+    assert(room.json(&negotiation, &robust) == after_round);
+
     assert(room.apply_event("{\"action\":\"set-mandate\",\"issueId\":\"procurement\",\"maxCanadaMove\":60,\"minUsMove\":40,\"authority\":\"senior_approval_required\",\"note\":\"No unilateral procurement opening\"}"));
     assert(room.apply_event("{\"action\":\"red-line\",\"issueId\":\"canada-tariff-relief\",\"maxCanadaMove\":75,\"minUsMove\":0,\"authority\":\"ministerial\",\"hardRedLine\":true,\"note\":\"Do not exceed without new mandate\"}"));
     assert(room.apply_event("{\"action\":\"concession\",\"side\":\"canada\",\"issueId\":\"border-facilitation\",\"magnitude\":20,\"estimatedOwnCost\":1.5,\"estimatedCounterpartValue\":2.0,\"reciprocal\":false,\"conditional\":true,\"note\":\"Conditional tranche\"}"));
@@ -53,6 +67,7 @@ int main() {
     assert(json.find("Conditional tranche") != std::string::npos);
     assert(json.find("Counterpart focused on procurement") != std::string::npos);
     assert(json.find("eventSchemaVersion\":1") != std::string::npos);
+    assert(json.find("operationIdDeduplication\":true") != std::string::npos);
     assert(json.find("secureForProtectedInformation\":false") != std::string::npos);
 
     // Invalid live actions fail closed and cannot mutate revision/state. The old
@@ -69,7 +84,8 @@ int main() {
   }
 
   // Newly persisted records are canonical V1 events even though legacy valid
-  // unversioned records remain accepted on replay.
+  // unversioned records remain accepted on replay. Duplicate retries are not
+  // appended, so the seven accepted mutations remain seven durable records.
   {
     std::ifstream in(path);
     assert(in.good());
@@ -85,6 +101,14 @@ int main() {
     assert(lines == 7);
   }
 
+  // Simulate a torn/corrupted trailing record. Replay must recover every prior
+  // durable event, skip the malformed tail, and expose the recovery warning.
+  {
+    std::ofstream out(path, std::ios::app | std::ios::binary);
+    assert(out.good());
+    out << "{\"schemaVersion\":1,\"action\":\"debrief\",\"summary\":";
+  }
+
   {
     cad::NegotiationRoom restored(path);
     const auto json = restored.json(&negotiation, &robust);
@@ -94,6 +118,12 @@ int main() {
     assert(json.find("Conditional tranche") != std::string::npos);
     assert(json.find("U.S. asks for full opening") != std::string::npos);
     assert(json.find("Counterpart focused on procurement") != std::string::npos);
+    assert(restored.recovery_warning_count() == 1);
+
+    const std::string before_replay = restored.json(&negotiation, &robust);
+    assert(restored.apply_event(round_event));
+    assert(restored.last_apply_replayed());
+    assert(restored.json(&negotiation, &robust) == before_replay);
   }
 
   std::remove(path.c_str());
