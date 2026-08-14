@@ -70,14 +70,10 @@ std::size_t accumulate_avx2_prefix(
   const __m256d rate_inflation_response = _mm256_set1_pd(p.rate_inflation_response);
   const __m256d rate_output_response = _mm256_set1_pd(p.rate_output_response);
   const __m256d output_persistence = _mm256_set1_pd(p.output_persistence);
-  const __m256d fiscal_multiplier = _mm256_set1_pd(p.fiscal_demand_multiplier);
   const __m256d real_rate_sensitivity = _mm256_set1_pd(p.real_rate_demand_sensitivity);
-  const __m256d global_growth_sensitivity = _mm256_set1_pd(p.global_growth_sensitivity);
   const __m256d inflation_persistence = _mm256_set1_pd(p.inflation_persistence);
   const __m256d expectations_weight = _mm256_set1_pd(p.inflation_expectations_weight);
   const __m256d phillips_slope = _mm256_set1_pd(p.phillips_curve_slope);
-  const __m256d import_pass = _mm256_set1_pd(p.import_price_pass_through);
-  const __m256d oil_sensitivity = _mm256_set1_pd(p.oil_inflation_sensitivity);
   const __m256d output_shock_sd = _mm256_set1_pd(p.output_shock_sd);
   const __m256d inflation_shock_sd = _mm256_set1_pd(p.inflation_shock_sd);
   const __m256d growth_shock_sd = _mm256_set1_pd(p.growth_shock_sd);
