@@ -18,6 +18,7 @@ jobs:
         run: |
           node --check web/negotiation-model.js
           node --check web/diplomat.js
+          node --check web/session.js
           node --check web/calibration.js
           node --check web/robust-room.js
           node --check web/trade-diplomacy.js
@@ -29,6 +30,8 @@ jobs:
         run: node tests/joint_dashboard_outcomes_test.js
       - name: Verify ambassador quick-look widgets in Node.js
         run: node tests/ambassador_widgets_test.js
+      - name: Verify delegation settings exchange
+        run: node tests/session_persistence_test.js
       - name: Verify collapse and expand cover every remaining panel
         run: node tests/dashboard_panels_test.js
       - name: Preserve Principal Brief contract
