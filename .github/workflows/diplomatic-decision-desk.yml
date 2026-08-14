@@ -1,0 +1,22 @@
+name: Diplomatic decision desk UI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decision-desk-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check diplomatic decision desk syntax
+        run: node --check web/diplomat.js
+      - name: Verify synchronized deduplicated decision desk
+        run: node tests/diplomatic_decision_desk_test.js
+      - name: Verify principal brief contract remains active
+        run: node tests/principal_briefing_test.js
