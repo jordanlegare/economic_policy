@@ -30,9 +30,11 @@ RobustRecommendationAnalysis profiled_analyze_robust_recommendations(
 
 PublishedTradeDiplomacyPlatform profiled_build_trade_diplomacy_platform(
     const Economy& economy, const Result& result,
-    const NegotiationAnalysis& negotiation,
+    NegotiationAnalysis& negotiation,
     const RobustRecommendationAnalysis& robustness) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::platform);
+  ::cad::ensure_robust_package_in_interactive_preview(
+      negotiation, robustness.recommended_package_id);
   return ::cad::build_trade_diplomacy_publication(
       economy, result, negotiation, robustness);
 }
