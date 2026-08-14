@@ -26,6 +26,7 @@ struct Probe {
 };
 
 Probe probe();
+Probe reduced_probe();
 
 // Detailed path is retained for deterministic device qualification/tests.
 bool run(const Input& input, const InnovationBank& innovations,
