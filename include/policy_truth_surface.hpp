@@ -17,7 +17,6 @@ inline bool selected_sector_posture_verified(const Result& result) {
 inline Result truthful_result(Result result) {
   auto& recommendation = result.recommendation;
   const bool policy_grid_complete = recommendation.global_search_complete;
-  const bool sector_posture_verified = selected_sector_posture_verified(result);
 
   // `coverage_levels()` deliberately returns only the submitted delegation
   // value. These legacy search-diagnostic fields therefore must not advertise a
@@ -26,7 +25,6 @@ inline Result truthful_result(Result result) {
   recommendation.sector_candidates_examined = 0;
   recommendation.sector_pareto_frontier_size = 0;
   recommendation.sector_finalists_resimulated = 0;
-  recommendation.sector_search_exhaustive = false;
   recommendation.sector_search_method =
       "authoritative-input: submitted 20-sector posture is evaluated and verified, not optimized";
 
@@ -45,7 +43,6 @@ inline Result truthful_result(Result result) {
   // Preserve the legacy field for compatibility, but its production JSON is
   // accompanied by an explicit semantic label and truthful replacement fields.
   recommendation.global_search_complete = policy_grid_complete;
-  (void)sector_posture_verified;
   return result;
 }
 
@@ -54,6 +51,16 @@ inline std::string to_json(const Result& result) {
   const bool sector_posture_verified = selected_sector_posture_verified(result);
   Result truthful = truthful_result(result);
   std::string json = ::cad::to_json(truthful);
+
+  // The legacy serializer derives this flag from globalSearchComplete rather
+  // than from an actual sector-search field. Force it false in the production
+  // truth surface so legacy and replacement fields cannot contradict each other.
+  const std::string legacy_exhaustive = "\"sectorSearchExhaustive\":true";
+  if (const auto legacy_position = json.find(legacy_exhaustive);
+      legacy_position != std::string::npos) {
+    json.replace(legacy_position, legacy_exhaustive.size(),
+        "\"sectorSearchExhaustive\":false");
+  }
 
   const std::string marker = std::string("\"globalSearchComplete\":")
       + (truthful.recommendation.global_search_complete ? "true" : "false");
