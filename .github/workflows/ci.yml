@@ -222,8 +222,8 @@ jobs:
           LDFLAGS: -fsanitize=thread
         run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug
       - name: Build concurrency contracts
-        run: cmake --build build-tsan --parallel --target compute_executor_tests thread_pool_tests server_session_tests negotiation_atomicity_tests
+        run: cmake --build build-tsan --parallel --target evaluation_result_cache_tests compute_executor_tests thread_pool_tests server_session_tests negotiation_atomicity_tests
       - name: Run concurrency contracts
         env:
           TSAN_OPTIONS: halt_on_error=1
-        run: ctest --test-dir build-tsan --output-on-failure -R 'compute_executor_concurrency|thread_pool_concurrency|server_session_contract|negotiation_atomicity'
+        run: ctest --test-dir build-tsan --output-on-failure -R 'evaluation_result_cache|compute_executor_concurrency|thread_pool_concurrency|server_session_contract|negotiation_atomicity'
