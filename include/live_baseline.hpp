@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -13,10 +14,20 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
 namespace cad::server {
+
+struct LiveBaselineStatus {
+  bool refresh_in_progress = false;
+  std::size_t total_failures = 0;
+  std::size_t consecutive_failures = 0;
+  std::string last_attempt;
+  std::string last_success;
+  std::string last_error;
+};
 
 class LiveBaselineCache {
  public:
@@ -52,6 +63,13 @@ class LiveBaselineCache {
   bool refresh_in_progress() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return refreshing_;
+  }
+
+  LiveBaselineStatus status() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return LiveBaselineStatus{
+        refreshing_, total_failures_, consecutive_failures_,
+        last_attempt_, last_success_, last_error_};
   }
 
  private:
@@ -118,7 +136,7 @@ class LiveBaselineCache {
         << (warming
             ? "calibrated baseline returned immediately while the live market cache refreshes asynchronously"
             : any_live
-                ? "partial live baseline: market feeds refreshed where available; macro state fields remain explicitly calibrated/default inputs"
+                ? "partial live baseline: last-known-good market observations are retained across transient feed failures; macro state fields remain explicitly calibrated/default inputs"
                 : "calibrated/default baseline; live Bank of Canada market refresh unavailable")
         << "\",\"asOf\":\"" << utc_stamp()
         << "\",\"cache\":{\"refreshInProgress\":" << (warming ? "true" : "false")
@@ -177,31 +195,78 @@ class LiveBaselineCache {
     return out.str();
   }
 
+  void mark_failure(const std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    refreshing_ = false;
+    ++total_failures_;
+    ++consecutive_failures_;
+    last_error_ = error.empty() ? "live baseline refresh failed" : error;
+  }
+
   void refresh_once() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       refreshing_ = true;
+      last_attempt_ = utc_stamp();
     }
-    auto rate = std::async(std::launch::async, [] {
-      return download("https://www.bankofcanada.ca/valet/observations/V39079/json?recent=1");
-    });
-    auto fx = std::async(std::launch::async, [] {
-      return download("https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1");
-    });
-    auto wti = std::async(std::launch::async, [] {
-      return download("https://www.bankofcanada.ca/valet/observations/WTI/json?recent=1");
-    });
-    const std::string updated = render(rate.get(), fx.get(), wti.get(), false);
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      cached_json_ = updated;
-      refreshing_ = false;
+
+    try {
+      auto rate = std::async(std::launch::async, [] {
+        return download("https://www.bankofcanada.ca/valet/observations/V39079/json?recent=1");
+      });
+      auto fx = std::async(std::launch::async, [] {
+        return download("https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1");
+      });
+      auto wti = std::async(std::launch::async, [] {
+        return download("https://www.bankofcanada.ca/valet/observations/WTI/json?recent=1");
+      });
+
+      const std::string new_rate = rate.get();
+      const std::string new_fx = fx.get();
+      const std::string new_wti = wti.get();
+      if (new_rate.empty() && new_fx.empty() && new_wti.empty()) {
+        mark_failure("all live Bank of Canada market feeds were unavailable");
+        return;
+      }
+
+      std::string rate_value;
+      std::string fx_value;
+      std::string wti_value;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!new_rate.empty()) last_rate_ = new_rate;
+        if (!new_fx.empty()) last_fx_ = new_fx;
+        if (!new_wti.empty()) last_wti_ = new_wti;
+        rate_value = last_rate_;
+        fx_value = last_fx_;
+        wti_value = last_wti_;
+      }
+
+      const std::string updated = render(rate_value, fx_value, wti_value, false);
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cached_json_ = updated;
+        refreshing_ = false;
+        consecutive_failures_ = 0;
+        last_error_.clear();
+        last_success_ = utc_stamp();
+      }
+    } catch (const std::exception& error) {
+      mark_failure(error.what());
+    } catch (...) {
+      mark_failure("unknown live baseline refresh exception");
     }
   }
 
-  void refresh_loop() {
+  void refresh_loop() noexcept {
     while (true) {
-      refresh_once();
+      try {
+        refresh_once();
+      } catch (const std::exception& error) {
+        mark_failure(error.what());
+      } catch (...) {
+        mark_failure("unknown live baseline worker exception");
+      }
       std::unique_lock<std::mutex> lock(mutex_);
       if (wake_.wait_for(lock, refresh_interval_, [this] { return stopping_; })) return;
     }
@@ -215,6 +280,14 @@ class LiveBaselineCache {
   std::condition_variable wake_;
   std::thread worker_;
   std::string cached_json_;
+  std::string last_rate_;
+  std::string last_fx_;
+  std::string last_wti_;
+  std::string last_attempt_;
+  std::string last_success_;
+  std::string last_error_;
+  std::size_t total_failures_ = 0;
+  std::size_t consecutive_failures_ = 0;
   bool refreshing_ = false;
   bool stopping_ = false;
 };

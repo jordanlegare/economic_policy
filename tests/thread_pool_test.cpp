@@ -11,6 +11,7 @@
 int main() {
   using namespace std::chrono_literals;
   cad::server::ThreadPool pool(2, 4);
+  assert(pool.capacity() == 4);
   std::mutex mutex;
   std::condition_variable ready;
   bool release_first = false;

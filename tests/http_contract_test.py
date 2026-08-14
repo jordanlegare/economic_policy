@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -17,6 +18,7 @@ PORT = 18082
 AUTH_PORT = 18083
 HOST = "127.0.0.1"
 AUTH_TOKEN = "test-access-token-0123456789"
+PROCESS_GROUP_FLAGS = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
 def request(
@@ -67,19 +69,28 @@ def wait_ready(
         if process.poll() is not None:
             raise RuntimeError(f"server exited early with status {process.returncode}")
         try:
-            status, _ = request("GET", "/api/health", port=port, headers=headers)
-            if status == 200:
+            status, payload = request("GET", "/api/ready", port=port, headers=headers)
+            if status == 200 and json.loads(payload).get("ready") is True:
                 return
-        except OSError:
+        except (OSError, json.JSONDecodeError):
             pass
         time.sleep(0.1)
     raise RuntimeError("server did not become ready")
 
 
+def request_graceful_shutdown(process: subprocess.Popen[bytes]) -> None:
+    if os.name == "nt":
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+    else:
+        process.terminate()
+
+
 def terminate(process: subprocess.Popen[bytes]) -> None:
-    process.terminate()
+    if process.poll() is not None:
+        return
+    request_graceful_shutdown(process)
     try:
-        process.wait(timeout=3)
+        process.wait(timeout=8)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=3)
@@ -100,16 +111,28 @@ def main() -> int:
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=PROCESS_GROUP_FLAGS,
     )
     try:
         wait_ready(process)
         health = json.loads(expect_status("GET", "/api/health", None, 200))
         assert health["workers"] == 2
         assert health["authRequired"] is False
+        assert health["queueCapacity"] == 64
+        assert health["queueDepth"] >= 0
+        assert health["activeJobs"] >= 1
+        assert health["failedJobs"] >= 0
+        assert "baselineRefreshFailures" in health
+        assert "baselineLastAttempt" in health
+        assert "baselineLastSuccess" in health
 
-        # Occupy one real worker with an intentionally incomplete HTTP header.
-        # A second request must still be serviced promptly by the other worker;
-        # the old single-threaded accept/handle loop could not satisfy this.
+        readiness = json.loads(expect_status("GET", "/api/ready", None, 200))
+        assert readiness["ready"] is True
+        assert readiness["reason"] == "ready"
+        assert readiness["queueCapacity"] == 64
+        assert readiness["queueDepth"] < readiness["queueCapacity"]
+        assert "baselineLastError" in readiness
+
         blocker = socket.create_connection((HOST, PORT), timeout=2)
         try:
             blocker.sendall(b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n")
@@ -124,8 +147,6 @@ def main() -> int:
         finally:
             blocker.close()
 
-        # The first baseline request must return the calibrated cache immediately;
-        # it may not wait on three external curl calls.
         started = time.monotonic()
         baseline = json.loads(expect_status("GET", "/api/baseline", None, 200))
         elapsed = time.monotonic() - started
@@ -133,12 +154,8 @@ def main() -> int:
         assert "cache" in baseline
         assert "refreshInProgress" in baseline["cache"]
 
-        # Syntax, duplicate keys, non-finite numbers, type mismatches and
-        # out-of-contract values all fail closed instead of becoming silent defaults.
         expect_status("POST", "/api/evaluate", '{"usTariff":', 400)
-        expect_status(
-            "POST", "/api/evaluate", '{"usTariff":10,"usTariff":20}', 400
-        )
+        expect_status("POST", "/api/evaluate", '{"usTariff":10,"usTariff":20}', 400)
         expect_status("POST", "/api/evaluate", '{"usTariff":1e9999}', 400)
         expect_status("POST", "/api/evaluate", '{"riskAversion":"high"}', 400)
         expect_status("POST", "/api/evaluate", '{"usSector0":101}', 400)
@@ -146,27 +163,15 @@ def main() -> int:
         expect_status("POST", "/api/v2/robustness-batch", '{"parameterDraws":24}', 400)
         expect_status("POST", "/api/v2/robustness-batch", '{"parameterDraws":129}', 400)
         expect_status("POST", "/api/room", '{"action":', 400)
+        expect_status("POST", "/api/evaluate", "{}", 415, default_json_content_type=False)
         expect_status(
-            "POST",
-            "/api/evaluate",
-            "{}",
-            415,
-            default_json_content_type=False,
-        )
-        expect_status(
-            "GET",
-            "/api/room",
-            None,
-            400,
-            headers={"X-CAD-Session-Id": "../escape"},
+            "GET", "/api/room", None, 400, headers={"X-CAD-Session-Id": "../escape"}
         )
 
         registry = json.loads(expect_status("GET", "/api/v2/structural-registry", None, 200))
         assert registry["complete"] is True
         assert registry["invalidParameterCount"] == 0
 
-        # Browser/API state is isolated by explicit session id. Mutating session A
-        # cannot change session B's negotiation revision or room identity.
         session_a = {"X-CAD-Session-Id": "contract-session-a"}
         session_b = {"X-CAD-Session-Id": "contract-session-b"}
         initial_a = json.loads(expect_status("GET", "/api/negotiation", None, 200, headers=session_a))
@@ -176,19 +181,13 @@ def main() -> int:
 
         valid_a = json.loads(
             expect_status(
-                "POST",
-                "/api/negotiation",
-                json.dumps(
-                    {
-                        "actor": "canada",
-                        "retaliatoryTariff": 10,
-                        "canadaPriority": 55,
-                        "riskAversion": 50,
-                        "cooperationCeiling": 50,
-                    }
-                ),
-                200,
-                headers=session_a,
+                "POST", "/api/negotiation",
+                json.dumps({
+                    "actor": "canada", "retaliatoryTariff": 10,
+                    "canadaPriority": 55, "riskAversion": 50,
+                    "cooperationCeiling": 50,
+                }),
+                200, headers=session_a,
             )
         )
         assert valid_a["revision"] == 1
@@ -201,62 +200,57 @@ def main() -> int:
         assert room_b["sessionId"] == "contract-session-b"
 
         expect_status(
-            "POST",
-            "/api/negotiation",
+            "POST", "/api/negotiation",
             json.dumps({"actor": "canada", "retaliatoryTariff": 1000}),
-            400,
-            headers=session_a,
+            400, headers=session_a,
         )
         after_invalid = json.loads(expect_status("GET", "/api/negotiation", None, 200, headers=session_a))
-        assert after_invalid["revision"] == valid_a["revision"], (
-            "rejected negotiation writes must not mutate revision/state"
-        )
+        assert after_invalid["revision"] == valid_a["revision"]
 
         session_js = expect_status("GET", "/session.js", None, 200)
         assert "X-CAD-Session-Id" in session_js
         assert "Authorization" in session_js
 
-        # Network binding is fail-closed: no token means startup rejection.
         rejected = subprocess.run(
             [str(executable), str(AUTH_PORT), "--no-browser", "--bind-all"],
-            cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=5,
-            check=False,
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=5, check=False,
         )
         assert rejected.returncode == 2
         assert b"requires an access token" in rejected.stderr
 
         auth_process = subprocess.Popen(
             [
-                str(executable),
-                str(AUTH_PORT),
-                "--no-browser",
-                "--bind-all",
-                "--auth-token",
-                AUTH_TOKEN,
-                "--workers=2",
+                str(executable), str(AUTH_PORT), "--no-browser", "--bind-all",
+                "--auth-token", AUTH_TOKEN, "--workers=2",
             ],
-            cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=PROCESS_GROUP_FLAGS,
         )
         auth_headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
         try:
             wait_ready(auth_process, port=AUTH_PORT, headers=auth_headers)
             expect_status("GET", "/api/health", None, 401, port=AUTH_PORT)
-            authenticated = json.loads(
-                expect_status(
-                    "GET", "/api/health", None, 200, port=AUTH_PORT, headers=auth_headers
-                )
-            )
+            expect_status("GET", "/api/ready", None, 401, port=AUTH_PORT)
+            authenticated = json.loads(expect_status(
+                "GET", "/api/health", None, 200, port=AUTH_PORT, headers=auth_headers
+            ))
             assert authenticated["authRequired"] is True
-            # Static UI remains loadable so it can prompt for the bearer token;
-            # API data and mutations remain protected.
+            authenticated_ready = json.loads(expect_status(
+                "GET", "/api/ready", None, 200, port=AUTH_PORT, headers=auth_headers
+            ))
+            assert authenticated_ready["ready"] is True
             expect_status("GET", "/", None, 200, port=AUTH_PORT)
         finally:
             terminate(auth_process)
+
+        request_graceful_shutdown(process)
+        process.wait(timeout=10)
+        assert process.returncode == 0, f"graceful shutdown returned {process.returncode}"
+        stdout, stderr = process.communicate()
+        assert b"Shutdown requested; draining" in stdout, stdout.decode(errors="replace")
+        assert b"Shutdown complete" in stdout, stdout.decode(errors="replace")
+        assert not stderr, stderr.decode(errors="replace")
 
         print("HTTP operational contract tests passed")
         return 0
