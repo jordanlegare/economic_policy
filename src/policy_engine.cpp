@@ -1,4 +1,5 @@
 #include "policy_engine.hpp"
+#include "compute_executor.hpp"
 #include "policy_dynamics.hpp"
 #include "trade_network.hpp"
 #include "bilateral_trade.hpp"
@@ -620,6 +621,25 @@ double min_sector_metric(const Scenario& s) {
   return std::isfinite(out) ? out : 0.0;
 }
 
+struct ScenarioSpec {
+  std::string id;
+  std::string name;
+  std::string description;
+  double move = 0.0;
+  double fiscal = 0.0;
+  double productive = 0.0;
+  double deescalation = 0.0;
+  double relief = 0.0;
+  double diversification = 0.0;
+};
+
+Scenario simulate_spec(const Economy& e, const StructuralParameters& parameters,
+                       const ScenarioSpec& spec, std::uint64_t seed, int draws) {
+  return simulate(e, parameters, spec.id, spec.name, spec.description,
+      spec.move, spec.fiscal, spec.productive, spec.deescalation,
+      spec.relief, spec.diversification, seed, draws);
+}
+
 struct ScenarioMeta {
   std::string id;
   int candidates_examined = 0;
@@ -709,30 +729,29 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
   r.data_confidence = clamp(92.0 - 4.0 * std::abs(e.inflation - e.core_inflation)
       - 2.0 * std::abs(e.output_gap), 70.0, 97.0);
 
-  auto add = [&](std::string id, std::string name, std::string description,
-                 double move, double fiscal, double productive, double deescalation,
-                 double relief, double diversification) {
-    r.scenarios.push_back(simulate(e, parameters_, std::move(id), std::move(name), std::move(description),
-        move, fiscal, productive, deescalation, relief, diversification, seed_, kBaseDraws));
+  const std::vector<ScenarioSpec> expert_specs{
+    {"statusquo","Tariff status quo","Current tariffs persist; BoC and fiscal settings hold.",0,0,.5,0,0,0},
+    {"retaliate","Symmetric retaliation","Canada matches trade barriers and supports affected demand.",0,.35,.25,0,.25,0},
+    {"relief","Worker transition bridge","A measured cut and temporary, targeted tariff adjustment support.",-25,.30,.65,0,.35,.15},
+    {"compact","North American compact","Mutual tariff removal, border facilitation and productive Canadian investment.",0,.25,.9,.85,.10,.20},
+    {"diversify","Market diversification","Trade infrastructure and export-market diversification with a BoC hold.",0,.35,.9,0,.10,.45},
+    {"guardrail","Inflation guardrail","A 25 bp increase and limited retaliation constrain tariff pass-through.",25,-.10,.75,.20,0,.10},
+    {"supply","Cost-of-living supply plan","Housing, logistics and productivity investment with targeted household relief.",0,.40,.95,.35,.20,.25},
+    {"stabilizer","Automatic stabilizers","Income insurance absorbs the trade shock while monetary policy remains data dependent.",0,.22,.35,0,.30,.08},
+    {"eastwest","East-west trade corridor","Ports, rail and interprovincial trade reform accelerate non-U.S. market access.",0,.48,.96,0,.08,.60},
+    {"productivity","Productivity compact","Accelerated investment expensing, skills and competition policy lift supply capacity.",0,.32,1.0,.10,.05,.30},
+    {"defence","Fiscal consolidation buffer","Spending restraint preserves debt capacity while the Bank cushions demand.",-25,-.22,.70,0,0,.12},
+    {"sectoral","Sector-targeted response","Time-limited support protects tariff-exposed workers without broad retaliation.",0,.28,.62,.05,.48,.22},
+    {"balance","Balanced market-access compact","Procurement, standards and export-finance measures expand two-way market access without forcing a bilateral accounting target.",0,.45,.95,.70,.08,.55}
   };
+  r.scenarios.resize(expert_specs.size());
+  compute::parallel_for(expert_specs.size(), [&](std::size_t index) {
+    r.scenarios[index] = simulate_spec(
+        e, parameters_, expert_specs[index], seed_, kBaseDraws);
+  });
 
-  add("statusquo","Tariff status quo","Current tariffs persist; BoC and fiscal settings hold.",0,0,.5,0,0,0);
-  add("retaliate","Symmetric retaliation","Canada matches trade barriers and supports affected demand.",0,.35,.25,0,.25,0);
-  add("relief","Worker transition bridge","A measured cut and temporary, targeted tariff adjustment support.",-25,.30,.65,0,.35,.15);
-  add("compact","North American compact","Mutual tariff removal, border facilitation and productive Canadian investment.",0,.25,.9,.85,.10,.20);
-  add("diversify","Market diversification","Trade infrastructure and export-market diversification with a BoC hold.",0,.35,.9,0,.10,.45);
-  add("guardrail","Inflation guardrail","A 25 bp increase and limited retaliation constrain tariff pass-through.",25,-.10,.75,.20,0,.10);
-  add("supply","Cost-of-living supply plan","Housing, logistics and productivity investment with targeted household relief.",0,.40,.95,.35,.20,.25);
-  add("stabilizer","Automatic stabilizers","Income insurance absorbs the trade shock while monetary policy remains data dependent.",0,.22,.35,0,.30,.08);
-  add("eastwest","East-west trade corridor","Ports, rail and interprovincial trade reform accelerate non-U.S. market access.",0,.48,.96,0,.08,.60);
-  add("productivity","Productivity compact","Accelerated investment expensing, skills and competition policy lift supply capacity.",0,.32,1.0,.10,.05,.30);
-  add("defence","Fiscal consolidation buffer","Spending restraint preserves debt capacity while the Bank cushions demand.",-25,-.22,.70,0,0,.12);
-  add("sectoral","Sector-targeted response","Time-limited support protects tariff-exposed workers without broad retaliation.",0,.28,.62,.05,.48,.22);
-  add("balance","Balanced market-access compact","Procurement, standards and export-finance measures expand two-way market access without forcing a bilateral accounting target.",0,.45,.95,.70,.08,.55);
-
-  Scenario custom;
-  bool have_custom = false;
-  double best_custom_score = -std::numeric_limits<double>::infinity();
+  std::vector<ScenarioSpec> custom_specs;
+  custom_specs.reserve(288);
   int candidate = 0;
   const double max_deescalation = clamp(e.cooperation_ceiling / 100.0, 0.0, 1.0);
   for (double move : {-25.0, 0.0, 25.0})
@@ -746,38 +765,53 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
             const double diversification = clamp(.08 + .48 * productive * (1.0 - deescalation)
                 + diversification_boost, 0.0, .70);
             ++candidate;
-            std::string id = "custom";
-            std::string name = "Custom win-win frontier";
+            ScenarioSpec spec;
+            spec.id = "custom";
+            spec.name = "Custom win-win frontier";
+            spec.description = "Autonomously generated from the policy search.";
+            spec.move = move;
+            spec.fiscal = fiscal;
+            spec.productive = productive;
+            spec.deescalation = deescalation;
+            spec.relief = relief;
+            spec.diversification = diversification;
             if (e.exhaustive_policy_search) {
               std::ostringstream generated_id;
               generated_id << "custom-" << std::setw(3) << std::setfill('0') << candidate;
-              id = generated_id.str();
-              name = "Generated win-win mix";
-            }
-            auto s = simulate(e, parameters_, id, name,
-                "Autonomously generated from the policy search.",
-                move, fiscal, productive, deescalation, relief, diversification,
-                seed_, kBaseDraws);
-            if (e.exhaustive_policy_search) {
+              spec.id = generated_id.str();
+              spec.name = "Generated win-win mix";
               std::ostringstream description;
               description << "Generated policy mix " << candidate << " of 288: "
                   << (move < 0 ? "ease 25 bp" : move > 0 ? "tighten 25 bp" : "hold rates")
                   << ", " << std::setprecision(2) << fiscal << "% fiscal impulse, "
                   << 100.0 * deescalation << "% negotiated rate relief, productive share "
                   << 100.0 * productive << "%, diversification " << 100.0 * diversification << "%.";
-              s.description = description.str();
-              r.scenarios.push_back(std::move(s));
-            } else {
-              const double candidate_score = deal_score(s, e, false);
-              if (!have_custom || candidate_score > best_custom_score) {
-                best_custom_score = candidate_score;
-                custom = std::move(s);
-                have_custom = true;
-              }
+              spec.description = description.str();
             }
+            custom_specs.push_back(std::move(spec));
           }
-  r.candidates_examined = candidate;
-  if (!e.exhaustive_policy_search) {
+
+  std::vector<Scenario> custom_results(custom_specs.size());
+  compute::parallel_for(custom_specs.size(), [&](std::size_t index) {
+    custom_results[index] = simulate_spec(
+        e, parameters_, custom_specs[index], seed_, kBaseDraws);
+  });
+  r.candidates_examined = static_cast<int>(custom_specs.size());
+  if (e.exhaustive_policy_search) {
+    r.scenarios.reserve(r.scenarios.size() + custom_results.size());
+    for (auto& scenario : custom_results) r.scenarios.push_back(std::move(scenario));
+  } else {
+    Scenario custom;
+    bool have_custom = false;
+    double best_custom_score = -std::numeric_limits<double>::infinity();
+    for (auto& scenario : custom_results) {
+      const double candidate_score = deal_score(scenario, e, false);
+      if (!have_custom || candidate_score > best_custom_score) {
+        best_custom_score = candidate_score;
+        custom = std::move(scenario);
+        have_custom = true;
+      }
+    }
     std::ostringstream custom_description;
     custom_description << "Best of " << candidate << " generated policy mixes under fixed delegation priorities: "
         << (custom.first_move_bp < 0 ? "ease monetary policy"
@@ -817,13 +851,15 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
     r.recommendation.baseline_us_score = baseline_us;
   }
 
-  std::vector<ScenarioMeta> meta;
-  meta.reserve(r.scenarios.size());
-  bool all_sector_frontiers_verified = true;
-  for (auto& base : r.scenarios) {
+  struct VerificationOutcome {
+    Scenario scenario;
+    ScenarioMeta meta;
+    bool frontier_exhaustive = true;
+  };
+  std::vector<VerificationOutcome> outcomes(r.scenarios.size());
+  compute::parallel_for(r.scenarios.size(), [&](std::size_t index) {
+    const Scenario& base = r.scenarios[index];
     const SectorSearch search = search_sector_frontier(e, base);
-    if (e.exhaustive_policy_search && !search.verification_exhaustive)
-      all_sector_frontiers_verified = false;
     Scenario selected;
     CoverageCandidate selected_coverage;
     bool have_selected = false;
@@ -866,19 +902,31 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
       selected_coverage.us_score = search.baseline_us_score;
     }
     selected.score = selected_rank;
-    base = std::move(selected);
 
-    ScenarioMeta m;
-    m.id = base.id;
-    m.candidates_examined = search.candidates_examined;
-    m.pareto_size = search.pareto_frontier_size;
-    m.finalists = finalists_run;
-    m.exhaustive = search.verification_exhaustive;
-    m.sector_ca_score = selected_coverage.canada_score;
-    m.sector_us_score = selected_coverage.us_score;
-    m.baseline_ca_score = search.baseline_canada_score;
-    m.baseline_us_score = search.baseline_us_score;
-    meta.push_back(std::move(m));
+    ScenarioMeta meta;
+    meta.id = selected.id;
+    meta.candidates_examined = search.candidates_examined;
+    meta.pareto_size = search.pareto_frontier_size;
+    meta.finalists = finalists_run;
+    meta.exhaustive = search.verification_exhaustive;
+    meta.sector_ca_score = selected_coverage.canada_score;
+    meta.sector_us_score = selected_coverage.us_score;
+    meta.baseline_ca_score = search.baseline_canada_score;
+    meta.baseline_us_score = search.baseline_us_score;
+
+    outcomes[index].scenario = std::move(selected);
+    outcomes[index].meta = std::move(meta);
+    outcomes[index].frontier_exhaustive = search.verification_exhaustive;
+  });
+
+  std::vector<ScenarioMeta> meta;
+  meta.reserve(r.scenarios.size());
+  bool all_sector_frontiers_verified = true;
+  for (std::size_t i = 0; i < outcomes.size(); ++i) {
+    if (e.exhaustive_policy_search && !outcomes[i].frontier_exhaustive)
+      all_sector_frontiers_verified = false;
+    r.scenarios[i] = std::move(outcomes[i].scenario);
+    meta.push_back(std::move(outcomes[i].meta));
   }
 
   if (e.exhaustive_policy_search) {
@@ -888,7 +936,9 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
         + deal_score(starting_baseline, e, false);
     r.scenarios.push_back(std::move(starting_baseline));
   } else {
-    for (auto& scenario : r.scenarios) {
+    std::vector<Scenario> verified_scenarios(r.scenarios.size());
+    compute::parallel_for(r.scenarios.size(), [&](std::size_t index) {
+      const Scenario& scenario = r.scenarios[index];
       Economy verified_e = e;
       verified_e.us_sector_coverage = scenario.applied_us_sector_coverage;
       verified_e.canada_sector_coverage = scenario.applied_canada_sector_coverage;
@@ -900,8 +950,9 @@ Result PolicyEngine::evaluate(const Economy& economy, EvaluationOptions options)
       const double raw_score = deal_score(verified, e, false);
       const bool growth_ok = verified.bilateral_growth_floor + 1e-9 >= e.minimum_bilateral_growth;
       verified.score = (growth_ok ? 0.0 : -1e6) + raw_score;
-      scenario = std::move(verified);
-    }
+      verified_scenarios[index] = std::move(verified);
+    });
+    r.scenarios = std::move(verified_scenarios);
   }
 
   std::sort(r.scenarios.begin(), r.scenarios.end(),
