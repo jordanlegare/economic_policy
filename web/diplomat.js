@@ -13,8 +13,15 @@
     maxRecessionRisk: 35,
     maxEffectiveTariffGap: 15
   });
+  const DEFAULT_WIDGET_ORDER = Object.freeze([
+    'resolution','balance','growth','border','trade','households','fiscal','sectors'
+  ]);
+  const ORDER_STORAGE_KEY = 'economic-policy-ambassador-widget-order-v1';
 
   let bound = false;
+  let draggingId = null;
+  let ignoreClickUntil = 0;
+
   const hasNumber = value => Number.isFinite(Number(value));
   const num = (value, fallback=0) => hasNumber(value) ? Number(value) : fallback;
   const fmt = (value, digits=1) => hasNumber(value) ? Number(value).toFixed(digits) : '—';
@@ -25,6 +32,52 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[char]));
+
+  function normalizeWidgetOrder(order, available=DEFAULT_WIDGET_ORDER) {
+    const allowed = [...new Set((available || []).map(String))];
+    const requested = Array.isArray(order) ? order.map(String) : [];
+    const seen = new Set();
+    const normalized = [];
+    for (const id of requested) {
+      if (!allowed.includes(id) || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push(id);
+    }
+    for (const id of allowed) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      normalized.push(id);
+    }
+    return normalized;
+  }
+
+  function orderWidgets(widgets, order) {
+    const list = Array.isArray(widgets) ? [...widgets] : [];
+    const ids = list.map(widget => String(widget?.id || '')).filter(Boolean);
+    const normalized = normalizeWidgetOrder(order, ids);
+    const byId = new Map(list.map(widget => [String(widget.id), widget]));
+    return normalized.map(id => byId.get(id)).filter(Boolean);
+  }
+
+  function readWidgetOrder() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(ORDER_STORAGE_KEY) || '[]');
+      return normalizeWidgetOrder(parsed);
+    } catch (_) {
+      return [...DEFAULT_WIDGET_ORDER];
+    }
+  }
+
+  function writeWidgetOrder(order) {
+    const normalized = normalizeWidgetOrder(order);
+    try { localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(normalized)); } catch (_) {}
+    return normalized;
+  }
+
+  function resetWidgetOrder() {
+    try { localStorage.removeItem(ORDER_STORAGE_KEY); } catch (_) {}
+    return [...DEFAULT_WIDGET_ORDER];
+  }
 
   function sectorImpactSummary(scenario, country='canada', metric='output') {
     const external = root?.JointDashboardOutcomes?.sectorImpactSummary;
@@ -56,40 +109,20 @@
     const recessionRisk = num(scenario.recessionRisk, 100);
     const tariffGap = Math.abs(num(context.usEffective) - num(context.canadaEffective));
     return [
-      {
-        id:'bilateral-value', label:'Both sides receive modeled value',
-        pass: weakest >= SCREEN.scoreFloor,
-        detail:`Weakest side ${fmt(weakest,0)}/100 · screen ≥${SCREEN.scoreFloor}`
-      },
-      {
-        id:'growth-floor', label:'Both economies clear the growth floor',
-        pass: scenario.sustainedBilateralGrowth === true,
-        detail:`Bilateral floor ${fmt(scenario.bilateralGrowthFloor)}%`
-      },
-      {
-        id:'balance', label:'Deal value is reasonably balanced',
-        pass: scoreGap <= SCREEN.maxScoreGap,
-        detail:`${fmt(scoreGap,0)}-point score gap · screen ≤${SCREEN.maxScoreGap}`
-      },
-      {
-        id:'macro-risk', label:'Macro downside stays contained',
-        pass: recessionRisk <= SCREEN.maxRecessionRisk,
-        detail:`${fmt(recessionRisk,0)}% recession risk · screen ≤${SCREEN.maxRecessionRisk}%`
-      },
-      {
-        id:'border-symmetry', label:'Border burden is not highly asymmetric',
-        pass: tariffGap <= SCREEN.maxEffectiveTariffGap,
-        detail:`${fmt(tariffGap)}pp effective-tariff gap · screen ≤${SCREEN.maxEffectiveTariffGap}pp`
-      }
+      {id:'bilateral-value',label:'Both sides receive modeled value',pass:weakest>=SCREEN.scoreFloor,detail:`Weakest side ${fmt(weakest,0)}/100 · screen ≥${SCREEN.scoreFloor}`},
+      {id:'growth-floor',label:'Both economies clear the growth floor',pass:scenario.sustainedBilateralGrowth===true,detail:`Bilateral floor ${fmt(scenario.bilateralGrowthFloor)}%`},
+      {id:'balance',label:'Deal value is reasonably balanced',pass:scoreGap<=SCREEN.maxScoreGap,detail:`${fmt(scoreGap,0)}-point score gap · screen ≤${SCREEN.maxScoreGap}`},
+      {id:'macro-risk',label:'Macro downside stays contained',pass:recessionRisk<=SCREEN.maxRecessionRisk,detail:`${fmt(recessionRisk,0)}% recession risk · screen ≤${SCREEN.maxRecessionRisk}%`},
+      {id:'border-symmetry',label:'Border burden is not highly asymmetric',pass:tariffGap<=SCREEN.maxEffectiveTariffGap,detail:`${fmt(tariffGap)}pp effective-tariff gap · screen ≤${SCREEN.maxEffectiveTariffGap}pp`}
     ];
   }
 
   function resolutionStatus(checks) {
     const passed = (checks || []).filter(check => check.pass).length;
-    if (passed >= 5) return {passed, label:'Strong resolution window', tone:'positive'};
-    if (passed === 4) return {passed, label:'Resolution window open', tone:'positive'};
-    if (passed === 3) return {passed, label:'Narrow resolution window', tone:'caution'};
-    return {passed, label:'Material blockers remain', tone:'negative'};
+    if (passed >= 5) return {passed,label:'Strong resolution window',tone:'positive'};
+    if (passed === 4) return {passed,label:'Resolution window open',tone:'positive'};
+    if (passed === 3) return {passed,label:'Narrow resolution window',tone:'caution'};
+    return {passed,label:'Material blockers remain',tone:'negative'};
   }
 
   function sparklinePath(values, width=280, height=60, padding=5) {
@@ -114,14 +147,10 @@
       for (const country of ['canada','us']) {
         const value = num(sector?.[country]?.output, NaN);
         if (!Number.isFinite(value)) continue;
-        signals.push({
-          name: sector.name || sector.code || 'Sector',
-          country: country === 'canada' ? 'Canada' : 'U.S.',
-          value
-        });
+        signals.push({name:sector.name||sector.code||'Sector',country:country==='canada'?'Canada':'U.S.',value});
       }
     }
-    return signals.sort((a,b) => Math.abs(b.value) - Math.abs(a.value)).slice(0,limit);
+    return signals.sort((a,b) => Math.abs(b.value)-Math.abs(a.value)).slice(0,limit);
   }
 
   function buildAmbassadorWidgets(scenario, baseline, context={}) {
@@ -131,105 +160,24 @@
     const canadaScore = num(scenario.canadaScore), usScore = num(scenario.usScore);
     const weakest = Math.min(canadaScore, usScore), scoreGap = Math.abs(canadaScore-usScore);
     const usCoverage = average(context.usCoverage), canadaCoverage = average(context.canadaCoverage);
-    const usRelief = 100 - usCoverage, canadaRelief = 100 - canadaCoverage;
-    const tariffGap = Math.abs(num(context.usEffective) - num(context.canadaEffective));
-    const canadaOutput = sectorImpactSummary(scenario, 'canada', 'output');
-    const usOutput = sectorImpactSummary(scenario, 'us', 'output');
-    const canadaJobs = sectorImpactSummary(scenario, 'canada', 'jobs');
-    const usJobs = sectorImpactSummary(scenario, 'us', 'jobs');
+    const usRelief = 100-usCoverage, canadaRelief = 100-canadaCoverage;
+    const tariffGap = Math.abs(num(context.usEffective)-num(context.canadaEffective));
+    const canadaOutput = sectorImpactSummary(scenario,'canada','output');
+    const usOutput = sectorImpactSummary(scenario,'us','output');
+    const canadaJobs = sectorImpactSummary(scenario,'canada','jobs');
+    const usJobs = sectorImpactSummary(scenario,'us','jobs');
     const sectorLeaders = sectorPressureLeaders(scenario);
-    const terminalRate = Array.isArray(scenario.rates) && scenario.rates.length
-      ? scenario.rates[scenario.rates.length - 1] : null;
+    const terminalRate = Array.isArray(scenario.rates) && scenario.rates.length ? scenario.rates[scenario.rates.length-1] : null;
 
     return [
-      {
-        id:'resolution', kind:'resolution', featured:true,
-        kicker:'Possible resolution', title:'Resolution window',
-        headline:resolution.label, tone:resolution.tone,
-        summary:`${resolution.passed}/5 transparent quick-look conditions clear`,
-        checks, panel:'decision-overview'
-      },
-      {
-        id:'balance', kind:'balance', kicker:'Fairness at a glance', title:'Deal balance',
-        headline:`CA ${fmt(canadaScore,0)} · US ${fmt(usScore,0)}`,
-        summary:`Weakest side ${fmt(weakest,0)}/100 · ${fmt(scoreGap,0)}-point gap`,
-        bars:[
-          {label:'Canada', value:canadaScore, max:100},
-          {label:'United States', value:usScore, max:100}
-        ],
-        metrics:[
-          {label:'Weakest-side value', value:`${fmt(weakest,0)}/100`},
-          {label:'Growth protection', value:scenario.sustainedBilateralGrowth ? 'Protected' : 'Not protected'}
-        ],
-        panel:'strategies'
-      },
-      {
-        id:'growth', kind:'spark', kicker:'Prosperity', title:'Growth protection',
-        headline:`CA ${fmt(scenario.growth)}% · US ${fmt(scenario.usGrowth)}%`,
-        summary:`Bilateral floor ${fmt(scenario.bilateralGrowthFloor)}% · recession risk ${fmt(scenario.recessionRisk,0)}%`,
-        metrics:[
-          {label:'Canada vs no-tariff', value:delta(scenario,baseline,'growth')},
-          {label:'U.S. vs no-tariff', value:delta(scenario,baseline,'usGrowth')}
-        ],
-        series:scenario.growthPath, seriesLabel:'Canada GDP path', panel:'projection', drillSeries:'growthPath'
-      },
-      {
-        id:'border', kind:'balance', kicker:'Border terms', title:'Tariff burden',
-        headline:`US ${fmt(context.usEffective)}% · CA ${fmt(context.canadaEffective)}%`,
-        summary:`${fmt(tariffGap)}pp coverage-adjusted tariff gap`,
-        bars:[
-          {label:'U.S. burden', value:num(context.usEffective), max:Math.max(25,num(context.usEffective),num(context.canadaEffective))},
-          {label:'Canada burden', value:num(context.canadaEffective), max:Math.max(25,num(context.usEffective),num(context.canadaEffective))}
-        ],
-        metrics:[
-          {label:'U.S. sector relief', value:`${fmt(usRelief,0)}pt`},
-          {label:'Canada sector relief', value:`${fmt(canadaRelief,0)}pt`}
-        ],
-        panel:'decision-overview'
-      },
-      {
-        id:'trade', kind:'spark', kicker:'Commercial exchange', title:'Trade momentum',
-        headline:`CA ${signed(scenario.exports)} · US ${signed(scenario.usExportChange)}`,
-        summary:hasNumber(scenario.tradeBalanceGapUsd)
-          ? `US$${fmt(scenario.tradeBalanceGapUsd)}B bilateral accounting gap` : 'Bilateral accounting gap unavailable',
-        metrics:[
-          {label:'Canada exports vs no-tariff', value:delta(scenario,baseline,'exports')},
-          {label:'U.S. exports vs no-tariff', value:delta(scenario,baseline,'usExportChange')}
-        ],
-        series:scenario.exportPath, seriesLabel:'Canada export path', panel:'projection', drillSeries:'exportPath'
-      },
-      {
-        id:'households', kind:'spark', kicker:'People & prices', title:'Household pressure',
-        headline:`Inflation ${fmt(scenario.inflation)}%`,
-        summary:`Cost of living ${fmt(scenario.costOfLiving)}% · real income ${signed(scenario.realIncomeGrowth)}`,
-        metrics:[
-          {label:'Inflation vs no-tariff', value:delta(scenario,baseline,'inflation')},
-          {label:'Terminal policy rate', value:hasNumber(terminalRate)?`${fmt(terminalRate,2)}%`:'—'}
-        ],
-        series:scenario.inflationPath, seriesLabel:'Inflation path', panel:'projection', drillSeries:'inflationPath'
-      },
-      {
-        id:'fiscal', kind:'plain', kicker:'Public finance', title:'Tariff take',
-        headline:`US$${fmt(scenario.usTariffRevenueUsd)}B · C$${fmt(scenario.canadaTariffRevenueCad)}B`,
-        summary:'Annualized post-elasticity tariff receipts',
-        metrics:[
-          {label:'Canada debt metric', value:hasNumber(scenario.debt)?`${fmt(scenario.debt)}%`:'—'},
-          {label:'Fiscal impulse', value:hasNumber(scenario.fiscal)?signed(scenario.fiscal):'—'}
-        ],
-        panel:'fiscal-ledger'
-      },
-      {
-        id:'sectors', kind:'sectors', kicker:'Complete economy', title:'20-sector reach',
-        headline:`CA ${canadaOutput.negative}/20 · US ${usOutput.negative}/20 output-negative`,
-        summary:'Breadth of modeled deal effects across the full NAICS economy',
-        metrics:[
-          {label:'Canada output', value:`${canadaOutput.positive} protected · ${canadaOutput.negative} negative`},
-          {label:'U.S. output', value:`${usOutput.positive} protected · ${usOutput.negative} negative`},
-          {label:'Canada jobs', value:`${canadaJobs.positive} protected · ${canadaJobs.negative} negative`},
-          {label:'U.S. jobs', value:`${usJobs.positive} protected · ${usJobs.negative} negative`}
-        ],
-        leaders:sectorLeaders, panel:'sectors', sectorMetric:'output'
-      }
+      {id:'resolution',kind:'resolution',featured:true,kicker:'Possible resolution',title:'Resolution window',headline:resolution.label,tone:resolution.tone,summary:`${resolution.passed}/5 transparent quick-look conditions clear`,checks,panel:'decision-overview'},
+      {id:'balance',kind:'balance',kicker:'Fairness at a glance',title:'Deal balance',headline:`CA ${fmt(canadaScore,0)} · US ${fmt(usScore,0)}`,summary:`Weakest side ${fmt(weakest,0)}/100 · ${fmt(scoreGap,0)}-point gap`,bars:[{label:'Canada',value:canadaScore,max:100},{label:'United States',value:usScore,max:100}],metrics:[{label:'Weakest-side value',value:`${fmt(weakest,0)}/100`},{label:'Growth protection',value:scenario.sustainedBilateralGrowth?'Protected':'Not protected'}],panel:'strategies'},
+      {id:'growth',kind:'spark',kicker:'Prosperity',title:'Growth protection',headline:`CA ${fmt(scenario.growth)}% · US ${fmt(scenario.usGrowth)}%`,summary:`Bilateral floor ${fmt(scenario.bilateralGrowthFloor)}% · recession risk ${fmt(scenario.recessionRisk,0)}%`,metrics:[{label:'Canada vs no-tariff',value:delta(scenario,baseline,'growth')},{label:'U.S. vs no-tariff',value:delta(scenario,baseline,'usGrowth')}],series:scenario.growthPath,seriesLabel:'Canada GDP path',panel:'projection',drillSeries:'growthPath'},
+      {id:'border',kind:'balance',kicker:'Border terms',title:'Tariff burden',headline:`US ${fmt(context.usEffective)}% · CA ${fmt(context.canadaEffective)}%`,summary:`${fmt(tariffGap)}pp coverage-adjusted tariff gap`,bars:[{label:'U.S. burden',value:num(context.usEffective),max:Math.max(25,num(context.usEffective),num(context.canadaEffective))},{label:'Canada burden',value:num(context.canadaEffective),max:Math.max(25,num(context.usEffective),num(context.canadaEffective))}],metrics:[{label:'U.S. sector relief',value:`${fmt(usRelief,0)}pt`},{label:'Canada sector relief',value:`${fmt(canadaRelief,0)}pt`}],panel:'decision-overview'},
+      {id:'trade',kind:'spark',kicker:'Commercial exchange',title:'Trade momentum',headline:`CA ${signed(scenario.exports)} · US ${signed(scenario.usExportChange)}`,summary:hasNumber(scenario.tradeBalanceGapUsd)?`US$${fmt(scenario.tradeBalanceGapUsd)}B bilateral accounting gap`:'Bilateral accounting gap unavailable',metrics:[{label:'Canada exports vs no-tariff',value:delta(scenario,baseline,'exports')},{label:'U.S. exports vs no-tariff',value:delta(scenario,baseline,'usExportChange')}],series:scenario.exportPath,seriesLabel:'Canada export path',panel:'projection',drillSeries:'exportPath'},
+      {id:'households',kind:'spark',kicker:'People & prices',title:'Household pressure',headline:`Inflation ${fmt(scenario.inflation)}%`,summary:`Cost of living ${fmt(scenario.costOfLiving)}% · real income ${signed(scenario.realIncomeGrowth)}`,metrics:[{label:'Inflation vs no-tariff',value:delta(scenario,baseline,'inflation')},{label:'Terminal policy rate',value:hasNumber(terminalRate)?`${fmt(terminalRate,2)}%`:'—'}],series:scenario.inflationPath,seriesLabel:'Inflation path',panel:'projection',drillSeries:'inflationPath'},
+      {id:'fiscal',kind:'plain',kicker:'Public finance',title:'Tariff take',headline:`US$${fmt(scenario.usTariffRevenueUsd)}B · C$${fmt(scenario.canadaTariffRevenueCad)}B`,summary:'Annualized post-elasticity tariff receipts',metrics:[{label:'Canada debt metric',value:hasNumber(scenario.debt)?`${fmt(scenario.debt)}%`:'—'},{label:'Fiscal impulse',value:hasNumber(scenario.fiscal)?signed(scenario.fiscal):'—'}],panel:'fiscal-ledger'},
+      {id:'sectors',kind:'sectors',kicker:'Complete economy',title:'20-sector reach',headline:`CA ${canadaOutput.negative}/20 · US ${usOutput.negative}/20 output-negative`,summary:'Breadth of modeled deal effects across the full NAICS economy',metrics:[{label:'Canada output',value:`${canadaOutput.positive} protected · ${canadaOutput.negative} negative`},{label:'U.S. output',value:`${usOutput.positive} protected · ${usOutput.negative} negative`},{label:'Canada jobs',value:`${canadaJobs.positive} protected · ${canadaJobs.negative} negative`},{label:'U.S. jobs',value:`${usJobs.positive} protected · ${usJobs.negative} negative`}],leaders:sectorLeaders,panel:'sectors',sectorMetric:'output'}
     ];
   }
 
@@ -245,8 +193,7 @@
     if (!scenario) return null;
     try {
       if (typeof noTariff === 'undefined') return null;
-      return noTariff?.scenarios?.find(item => item.id === scenario.id)
-        || noTariff?.scenarios?.[0] || null;
+      return noTariff?.scenarios?.find(item => item.id === scenario.id) || noTariff?.scenarios?.[0] || null;
     } catch (_) { return null; }
   }
 
@@ -254,7 +201,7 @@
     const external = root?.JointDashboardOutcomes?.evaluatedDealContext;
     let context = typeof external === 'function' ? external() : {};
     const country = document.querySelector('.country-switch button.active')?.dataset.country || 'canada';
-    context = {...context, sectorCountry:country};
+    context = {...context,sectorCountry:country};
     if (!Array.isArray(context.usCoverage)) {
       try { context.usCoverage = typeof positions !== 'undefined' ? [...positions.us] : []; } catch (_) { context.usCoverage=[]; }
     }
@@ -263,8 +210,8 @@
     }
     if (!hasNumber(context.usTariff)) context.usTariff = num(document.querySelector('#usTariff')?.value);
     if (!hasNumber(context.canadaTariff)) context.canadaTariff = num(document.querySelector('#retaliatoryTariff')?.value);
-    if (!hasNumber(context.usEffective)) context.usEffective = num(context.usTariff) * average(context.usCoverage) / 100;
-    if (!hasNumber(context.canadaEffective)) context.canadaEffective = num(context.canadaTariff) * average(context.canadaCoverage) / 100;
+    if (!hasNumber(context.usEffective)) context.usEffective = num(context.usTariff)*average(context.usCoverage)/100;
+    if (!hasNumber(context.canadaEffective)) context.canadaEffective = num(context.canadaTariff)*average(context.canadaCoverage)/100;
     return context;
   }
 
@@ -279,36 +226,30 @@
 
   function renderMetrics(metrics) {
     if (!metrics?.length) return '';
-    return `<div class="ambassador-widget-metrics">${metrics.map(metric =>
-      `<div><span>${esc(metric.label)}</span><b>${esc(metric.value)}</b>${metric.note?`<small>${esc(metric.note)}</small>`:''}</div>`
-    ).join('')}</div>`;
+    return `<div class="ambassador-widget-metrics">${metrics.map(metric => `<div><span>${esc(metric.label)}</span><b>${esc(metric.value)}</b>${metric.note?`<small>${esc(metric.note)}</small>`:''}</div>`).join('')}</div>`;
   }
 
   function renderSparkline(widget) {
     const path = sparklinePath(widget.series);
     if (!path) return '';
     const values = widget.series.map(Number).filter(Number.isFinite);
-    return `<div class="ambassador-spark"><svg viewBox="0 0 280 60" role="img" aria-label="${esc(widget.seriesLabel || widget.title)}"><path d="${path}"></path></svg><span>${fmt(values[0])}</span><span>${fmt(values[values.length-1])}</span></div>`;
+    return `<div class="ambassador-spark"><svg viewBox="0 0 280 60" role="img" aria-label="${esc(widget.seriesLabel||widget.title)}"><path d="${path}"></path></svg><span>${fmt(values[0])}</span><span>${fmt(values[values.length-1])}</span></div>`;
   }
 
   function renderResolution(widget) {
-    return `<div class="ambassador-resolution"><div class="ambassador-resolution-score ${esc(widget.tone)}"><strong>${widget.checks.filter(check=>check.pass).length}/5</strong><span>conditions clear</span></div><div class="ambassador-resolution-checks">${widget.checks.map(check =>
-      `<div class="${check.pass?'pass':'block'}"><i>${check.pass?'✓':'!'}</i><span><b>${esc(check.label)}</b><small>${esc(check.detail)}</small></span></div>`
-    ).join('')}</div></div>`;
+    return `<div class="ambassador-resolution"><div class="ambassador-resolution-score ${esc(widget.tone)}"><strong>${widget.checks.filter(check=>check.pass).length}/5</strong><span>conditions clear</span></div><div class="ambassador-resolution-checks">${widget.checks.map(check => `<div class="${check.pass?'pass':'block'}"><i>${check.pass?'✓':'!'}</i><span><b>${esc(check.label)}</b><small>${esc(check.detail)}</small></span></div>`).join('')}</div></div>`;
   }
 
   function renderSectorLeaders(leaders) {
     if (!leaders?.length) return '';
-    return `<div class="ambassador-sector-signals"><span>Largest output signals</span>${leaders.map(item =>
-      `<div><b>${esc(item.name)}</b><small>${esc(item.country)}</small><em class="${item.value<0?'negative':'positive'}">${signed(item.value)}</em></div>`
-    ).join('')}</div>`;
+    return `<div class="ambassador-sector-signals"><span>Largest output signals</span>${leaders.map(item => `<div><b>${esc(item.name)}</b><small>${esc(item.country)}</small><em class="${item.value<0?'negative':'positive'}">${signed(item.value)}</em></div>`).join('')}</div>`;
   }
 
   function renderWidget(widget) {
-    return `<article class="ambassador-widget ${widget.featured?'featured':''}" data-widget="${esc(widget.id)}" data-panel="${esc(widget.panel || '')}"${widget.drillSeries?` data-series="${esc(widget.drillSeries)}"`:''}${widget.sectorMetric?` data-sector-metric="${esc(widget.sectorMetric)}"`:''} tabindex="0">
-      <div class="ambassador-widget-head"><div><span>${esc(widget.kicker)}</span><h3>${esc(widget.title)}</h3></div><i>↗</i></div>
-      <strong class="ambassador-widget-headline ${esc(widget.tone || '')}">${esc(widget.headline)}</strong>
-      <p>${esc(widget.summary || '')}</p>
+    return `<article class="ambassador-widget ${widget.featured?'featured':''}" data-widget="${esc(widget.id)}" data-panel="${esc(widget.panel||'')}"${widget.drillSeries?` data-series="${esc(widget.drillSeries)}"`:''}${widget.sectorMetric?` data-sector-metric="${esc(widget.sectorMetric)}"`:''} draggable="true" tabindex="0" role="listitem" aria-label="${esc(widget.title)}. Drag to rearrange; activate to open details.">
+      <div class="ambassador-widget-head"><div><span>${esc(widget.kicker)}</span><h3>${esc(widget.title)}</h3></div><div class="ambassador-widget-actions"><button class="ambassador-drag-handle" type="button" tabindex="-1" aria-hidden="true" title="Drag to rearrange">⠿</button><i>↗</i></div></div>
+      <strong class="ambassador-widget-headline ${esc(widget.tone||'')}">${esc(widget.headline)}</strong>
+      <p>${esc(widget.summary||'')}</p>
       ${widget.kind==='resolution'?renderResolution(widget):''}
       ${renderBars(widget.bars)}
       ${renderSparkline(widget)}
@@ -322,13 +263,13 @@
     const content = document.querySelector('#dashboardView .content');
     const tools = document.querySelector('#dashboardView .dashboard-stack-tools');
     if (!content || !tools) return false;
-    const section = document.createElement('section');
-    section.id = 'ambassadorQuickLook';
-    section.className = 'ambassador-quick-look';
-    section.innerHTML = `<div class="ambassador-quick-look-head"><div><div class="eyebrow">Ambassador quick look</div><h2>Deal-resolution widgets</h2><p>Preconfigured from the currently selected deal so both delegations can read the same headline economics before opening the detailed model panels.</p></div><div class="ambassador-quick-look-state"><span id="ambassadorQuickLookFreshness">Current evaluated deal</span><button id="ambassadorRunUpdated" type="button" hidden>Run updated deal →</button></div></div><div id="ambassadorQuickLookPackage" class="ambassador-quick-look-package">Waiting for the selected deal…</div><div id="ambassadorWidgetGrid" class="ambassador-widget-grid"></div><div class="ambassador-widget-foot"><b>Current /api/evaluate payload</b><span>Selected package + matched no-tariff comparison. The resolution screen is a transparent UI heuristic—not a political acceptance probability, forecast, or legal conclusion.</span></div>`;
+    const board = document.createElement('div');
+    board.id = 'ambassadorQuickLook';
+    board.className = 'ambassador-floating-board';
+    board.innerHTML = `<div class="ambassador-floating-toolbar"><div><div class="eyebrow">Ambassador quick look</div><b id="ambassadorQuickLookPackage">Waiting for the selected deal…</b><small>Drag widgets to rearrange them. Your order is saved on this device.</small></div><div class="ambassador-quick-look-state"><button id="ambassadorResetOrder" type="button">Reset order</button><span id="ambassadorQuickLookFreshness">Current evaluated deal</span><button id="ambassadorRunUpdated" type="button" hidden>Run updated deal →</button></div></div><div id="ambassadorWidgetGrid" class="ambassador-widget-grid" role="list" aria-label="Draggable ambassador deal widgets"></div><div class="ambassador-floating-note"><b>Current /api/evaluate payload</b><span>Selected package + matched no-tariff comparison. Resolution is a transparent UI heuristic—not a political acceptance probability, forecast, or legal conclusion.</span></div>`;
     const banner = document.querySelector('#dealAttributionBanner');
-    if (banner) banner.insertAdjacentElement('afterend', section);
-    else content.insertBefore(section, tools);
+    if (banner) content.insertBefore(board,banner);
+    else content.insertBefore(board,tools);
     return true;
   }
 
@@ -337,7 +278,7 @@
     const button = document.querySelector('#ambassadorRunUpdated');
     if (!state) return;
     const staged = root?.EvaluationRunController?.state?.().staged === true;
-    state.classList.toggle('staged', staged);
+    state.classList.toggle('staged',staged);
     state.textContent = staged ? 'Inputs changed · showing last evaluated deal' : 'Current evaluated deal';
     if (button) button.hidden = !staged;
   }
@@ -354,11 +295,33 @@
     }
     const baseline = matchedBaseline(scenario);
     const context = browserDealContext();
-    const widgets = buildAmbassadorWidgets(scenario, baseline, context);
+    const widgets = orderWidgets(buildAmbassadorWidgets(scenario,baseline,context),readWidgetOrder());
     grid.innerHTML = widgets.map(renderWidget).join('');
     const packageNode = document.querySelector('#ambassadorQuickLookPackage');
-    if (packageNode) packageNode.textContent = `Selected deal · ${scenario.name || scenario.id || 'modeled package'} · Canada ${fmt(scenario.canadaScore,0)}/100 · U.S. ${fmt(scenario.usScore,0)}/100`;
+    if (packageNode) packageNode.textContent = `Selected deal · ${scenario.name||scenario.id||'modeled package'} · Canada ${fmt(scenario.canadaScore,0)}/100 · U.S. ${fmt(scenario.usScore,0)}/100`;
     freshness();
+  }
+
+  function currentDomOrder() {
+    return [...document.querySelectorAll('#ambassadorWidgetGrid .ambassador-widget[data-widget]')].map(node => node.dataset.widget);
+  }
+
+  function persistDomOrder() {
+    const order = currentDomOrder();
+    if (order.length) writeWidgetOrder(order);
+    return order;
+  }
+
+  function moveDraggedWidget(event) {
+    if (!draggingId) return;
+    const grid = document.querySelector('#ambassadorWidgetGrid');
+    const dragged = grid?.querySelector(`.ambassador-widget[data-widget="${draggingId}"]`);
+    const target = event.target?.closest?.('.ambassador-widget[data-widget]');
+    if (!grid || !dragged || !target || dragged === target || target.parentElement !== grid) return;
+    const rect = target.getBoundingClientRect();
+    const before = event.clientY < rect.top + rect.height/2 ||
+      (Math.abs(event.clientY-(rect.top+rect.height/2)) < rect.height*.22 && event.clientX < rect.left+rect.width/2);
+    grid.insertBefore(dragged,before?target:target.nextSibling);
   }
 
   function drill(widget) {
@@ -370,7 +333,7 @@
       const select = document.querySelector('#sectorMetric');
       if (select) {
         select.value = metric;
-        select.dispatchEvent(new Event('change', {bubbles:true}));
+        select.dispatchEvent(new Event('change',{bubbles:true}));
       }
     }
     const panel = widget.dataset.panel;
@@ -387,36 +350,78 @@
     const cards = document.querySelector('#cards');
     if (cards && typeof MutationObserver === 'function')
       new MutationObserver(() => setTimeout(render,0)).observe(cards,{childList:true});
+
+    document.addEventListener('dragstart', event => {
+      const widget = event.target?.closest?.('.ambassador-widget[data-widget]');
+      if (!widget) return;
+      draggingId = widget.dataset.widget;
+      widget.classList.add('is-dragging');
+      widget.setAttribute('aria-grabbed','true');
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain',draggingId);
+      }
+    },true);
+    document.addEventListener('dragover', event => {
+      if (!draggingId || !event.target?.closest?.('#ambassadorWidgetGrid')) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      moveDraggedWidget(event);
+    },true);
+    document.addEventListener('drop', event => {
+      if (!draggingId || !event.target?.closest?.('#ambassadorWidgetGrid')) return;
+      event.preventDefault();
+      moveDraggedWidget(event);
+      persistDomOrder();
+    },true);
+    document.addEventListener('dragend', event => {
+      if (!draggingId) return;
+      event.target?.closest?.('.ambassador-widget')?.classList.remove('is-dragging');
+      event.target?.closest?.('.ambassador-widget')?.setAttribute('aria-grabbed','false');
+      persistDomOrder();
+      draggingId = null;
+      ignoreClickUntil = Date.now()+350;
+    },true);
+
     document.addEventListener('click', event => {
       if (event.target?.closest?.('#ambassadorRunUpdated')) {
         document.querySelector('#run')?.click();
         return;
       }
+      if (event.target?.closest?.('#ambassadorResetOrder')) {
+        resetWidgetOrder();
+        render();
+        return;
+      }
       const widget = event.target?.closest?.('.ambassador-widget[data-panel]');
-      if (widget) drill(widget);
+      if (widget && Date.now() >= ignoreClickUntil && !event.target?.closest?.('.ambassador-drag-handle')) drill(widget);
       if (event.target?.closest?.('.card,.country-switch button')) setTimeout(render,0);
-    }, true);
+    },true);
     document.addEventListener('keydown', event => {
-      if ((event.key === 'Enter' || event.key === ' ') && event.target?.matches?.('.ambassador-widget[data-panel]')) {
+      if ((event.key==='Enter'||event.key===' ') && event.target?.matches?.('.ambassador-widget[data-panel]')) {
         event.preventDefault();
         drill(event.target);
       }
     });
-    document.addEventListener('input', () => setTimeout(freshness,0), true);
-    document.addEventListener('change', event => {
+    document.addEventListener('input',() => setTimeout(freshness,0),true);
+    document.addEventListener('change',event => {
       setTimeout(freshness,0);
       if (event.target?.matches?.('#sectorMetric')) setTimeout(render,0);
-    }, true);
+    },true);
   }
 
   function boot() {
-    const start = () => setTimeout(() => { installBoard(); bind(); render(); }, 0);
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    const start = () => setTimeout(() => { installBoard(); bind(); render(); },0);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',start);
     else start();
   }
 
   return {
     SCREEN,
+    DEFAULT_WIDGET_ORDER,
+    ORDER_STORAGE_KEY,
+    normalizeWidgetOrder,
+    orderWidgets,
     resolutionChecks,
     resolutionStatus,
     sparklinePath,
