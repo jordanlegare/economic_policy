@@ -98,8 +98,13 @@ void report_search_profile(std::atomic<bool>& stop) {
          << ", GPU runs=" << delta(backend.gpu_runs, previous_backend.gpu_runs)
          << ", CPU fallbacks=" << delta(backend.cpu_fallback_runs,
                                          previous_backend.cpu_fallback_runs);
-    if (backend.performance_checked)
-      line << ", qualified speedup=" << backend.measured_speedup << 'x';
+    if (backend.performance_checked) {
+      line << ", GPU gate=" << (backend.performance_passed ? "pass" : "fail")
+           << " (" << backend.measured_speedup << "x measured vs "
+           << backend.required_speedup << "x required, "
+           << backend.performance_lanes << " lanes x "
+           << backend.performance_draws << " draws)";
+    }
     std::cout << line.str() << '\n' << std::flush;
 
     previous = current;
