@@ -2,14 +2,17 @@
 #include "monte_carlo_opencl.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <limits>
 #include <mutex>
 #include <string>
+#include <vector>
 
 // Compile the audited detailed CPU/OpenCL dispatcher unchanged, but rename its
-// public run entry point. The production wrapper below reuses every private
-// equivalence/qualification helper from that translation unit while swapping
-// only the CPU throughput/fallback path to the fused implementation.
+// public production entry point and legacy synthetic aggregate helpers. The
+// wrapper below reuses its innovation cache, detailed scalar reference and GPU
+// qualification machinery while giving production results a compact payload.
 namespace cad::monte_carlo::opencl {
 
 bool original_backend_run(const Input& input, const InnovationBank& innovations,
@@ -20,10 +23,106 @@ bool original_backend_run(const Input& input, const InnovationBank& innovations,
 }  // namespace cad::monte_carlo::opencl
 
 #define run original_backend_run
+#define aggregate_signature original_aggregate_signature
+#define for_signature_values original_for_signature_values
+#define equivalent_aggregate original_equivalent_aggregate
+#define maximum_aggregate_difference original_maximum_aggregate_difference
 #include "monte_carlo_backend.cpp"
+#undef maximum_aggregate_difference
+#undef equivalent_aggregate
+#undef for_signature_values
+#undef aggregate_signature
 #undef run
 
 namespace cad::monte_carlo {
+namespace {
+
+bool valid_compact_aggregate(const BatchResult& result) {
+  if (!result.aggregate_encoded) return true;
+  return result.aggregate.terminal_inflation.size() == result.aggregate.sample_count
+      && result.aggregate.terminal_debt.size() == result.aggregate.sample_count;
+}
+
+AggregateSignature compact_signature(const BatchResult& result) {
+  if (!result.aggregate_encoded) return original_aggregate_signature(result);
+
+  AggregateSignature out;
+  const auto& aggregate = result.aggregate;
+  out.rates = aggregate.rates;
+  out.inflation = aggregate.inflation;
+  out.growth = aggregate.growth;
+  out.us_growth = aggregate.us_growth;
+  out.debt = aggregate.debt;
+  out.cost = aggregate.cost;
+  out.exports = aggregate.exports;
+  out.us_exports = aggregate.us_exports;
+  out.terminal_growth = aggregate.terminal_growth;
+  out.terminal_us_growth = aggregate.terminal_us_growth;
+  out.terminal_unemployment = aggregate.terminal_unemployment;
+  out.terminal_housing = aggregate.terminal_housing;
+  out.terminal_cost = aggregate.terminal_cost;
+  out.terminal_income = aggregate.terminal_income;
+  out.terminal_exports = aggregate.terminal_exports;
+  out.terminal_us_exports = aggregate.terminal_us_exports;
+  out.recessions = aggregate.recessions;
+
+  for (double value : aggregate.terminal_inflation) out.terminal_inflation += value;
+  for (double value : aggregate.terminal_debt) out.terminal_debt += value;
+
+  if (!aggregate.terminal_debt.empty()) {
+    auto debt = aggregate.terminal_debt;
+    auto inflation = aggregate.terminal_inflation;
+    const std::size_t index = debt.size() * 9 / 10;
+    auto debt_it = debt.begin() + static_cast<std::ptrdiff_t>(index);
+    auto inflation_it = inflation.begin() + static_cast<std::ptrdiff_t>(index);
+    std::nth_element(debt.begin(), debt_it, debt.end());
+    std::nth_element(inflation.begin(), inflation_it, inflation.end());
+    out.debt_p90 = *debt_it;
+    out.inflation_p90 = *inflation_it;
+  }
+  return out;
+}
+
+bool equivalent_aggregate(const BatchResult& reference, const BatchResult& candidate) {
+  if (reference.sample_count() != candidate.sample_count()
+      || !valid_compact_aggregate(reference) || !valid_compact_aggregate(candidate)) return false;
+  const auto a = compact_signature(reference);
+  const auto b = compact_signature(candidate);
+  std::vector<double> left;
+  std::vector<double> right;
+  original_for_signature_values(a, [&](double value) { left.push_back(value); });
+  original_for_signature_values(b, [&](double value) { right.push_back(value); });
+  if (left.size() != right.size()) return false;
+  bool ok = true;
+  for (std::size_t i = 0; i < left.size(); ++i)
+    ok = ok && equivalent_value(left[i], right[i]);
+  return ok;
+}
+
+}  // namespace
+
+double maximum_aggregate_difference(const BatchResult& reference,
+                                    const BatchResult& candidate) {
+  if (reference.sample_count() != candidate.sample_count()
+      || !valid_compact_aggregate(reference) || !valid_compact_aggregate(candidate))
+    return std::numeric_limits<double>::infinity();
+  const auto a = compact_signature(reference);
+  const auto b = compact_signature(candidate);
+  std::vector<double> left;
+  std::vector<double> right;
+  original_for_signature_values(a, [&](double value) { left.push_back(value); });
+  original_for_signature_values(b, [&](double value) { right.push_back(value); });
+  if (left.size() != right.size()) return std::numeric_limits<double>::infinity();
+  double maximum = 0.0;
+  for (std::size_t i = 0; i < left.size(); ++i) {
+    if (!std::isfinite(left[i]) || !std::isfinite(right[i])) {
+      if (left[i] != right[i]) return std::numeric_limits<double>::infinity();
+    } else {
+      maximum = std::max(maximum, std::abs(left[i] - right[i]));
+    }
+  }
+  return maximum;
+}
 
 BatchResult run(const Input& input, const InnovationBank& innovations) {
   validate(input, innovations);
@@ -107,7 +206,7 @@ BatchResult run(const Input& input, const InnovationBank& innovations) {
         cpu_us += concurrent_elapsed_microseconds(lanes,
             [&](std::size_t, std::string&) {
               auto sink = run_cpu_fast(perf_input, perf_innovations);
-              return sink.draws.size() == static_cast<std::size_t>(perf_input.draws)
+              return sink.sample_count() == static_cast<std::size_t>(perf_input.draws)
                   && sink.aggregate_encoded;
             }, cpu_ok, cpu_error);
         if (!cpu_ok) {
