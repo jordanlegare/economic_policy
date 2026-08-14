@@ -264,13 +264,13 @@ class NegotiationState {
       updated_by_ = "Canada delegation";
     }
     if (us) {
-      if (!bounded("usTariff", 0.0, 60.0, us_tariff_)
+      if (!bounded("usTariff", 0.0, 100.0, us_tariff_)
           || !bounded("usPriority", 0.0, 100.0, us_priority_)) return false;
       canada_priority_ = 100.0 - us_priority_;
       updated_by_ = "U.S. delegation";
     }
     if (automatic) {
-      if (!bounded("usTariff", 0.0, 60.0, us_tariff_)
+      if (!bounded("usTariff", 0.0, 100.0, us_tariff_)
           || !bounded("retaliatoryTariff", 0.0, 60.0, retaliatory_tariff_)) return false;
       updated_by_ = "automatic win-win search";
     }

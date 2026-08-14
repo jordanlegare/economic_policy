@@ -23,8 +23,8 @@
       <summary><span class="dashboard-panel-title"><small>Scenario input</small><b>Trade shock</b></span></summary>
       <div class="dashboard-panel-body">
         <div class="eyebrow">Build your briefing</div><h2>U.S. tariff rate</h2><p class="muted">Set the trade-weighted tariff imposed by the United States on Canadian goods, then tell the optimizer what a fair, durable agreement means to you.</p>
-        <div class="tariff-control"><output id="tariffValue">50%</output><input id="usTariff" type="range" min="0" max="60" step="1" value="50" aria-label="US tariff percentage"><div><span>0% free trade</span><span>60% severe shock</span></div></div>
-        <div class="presets"><button data-rate="0">Free trade</button><button data-rate="10">10%</button><button data-rate="25">25%</button><button data-rate="50">50%</button></div>
+        <div class="tariff-control"><output id="tariffValue">50%</output><input id="usTariff" type="range" min="0" max="100" step="1" value="50" aria-label="US tariff percentage"><div><span>0% free trade</span><span>100% maximum shock</span></div></div>
+        <div class="presets"><button data-rate="0">Free trade</button><button data-rate="10">10%</button><button data-rate="25">25%</button><button data-rate="50">50%</button><button data-rate="100">100%</button></div>
       </div>
     </details>
 
@@ -37,7 +37,6 @@
       <summary><span class="dashboard-panel-title"><small>Optimizer</small><b>Win-win preferences</b></span></summary>
       <div class="dashboard-panel-body"><div class="preferences"><div class="eyebrow">Automatic opening · fixed outcome weights + explicit GDP floor · always 100%</div><div class="priority-total"><span>Shared outcome allocation</span><b id="priorityTotal">100%</b></div><label>Canada outcome weight <output id="canadaPriorityValue">50%</output><input id="canadaPriority" type="range" min="0" max="100" value="50"></label><label>U.S. outcome weight <output id="usPriorityValue">50%</output><input id="usPriority" type="range" min="0" max="100" value="50"></label><small class="linked-note">Linked: moving either party automatically assigns the remainder to the other. The 50% tariff is an input, not a preselected deal: every change launches a fresh sector-by-sector optimum.</small><label>Tail-risk caution <output id="riskAversionValue">50</output><input id="riskAversion" type="range" min="0" max="100" value="50"></label><label>Negotiated relief ceiling <output id="cooperationCeilingValue">50%</output><input id="cooperationCeiling" type="range" min="0" max="100" value="50"></label></div><div class="recommendation" aria-live="polite"><div class="eyebrow">Engine-recommended starting point</div><b id="recommendationValues">Evaluating both nations…</b><p id="recommendationText">The opening run starts from the visible 50% shock with both delegation sector tables at 100%, then searches for the verified win-win adjustment.</p><button id="applyRecommendation" type="button" disabled>Apply current recommendation</button></div><div class="auto"><i></i><span>Automatic win-win is on. Every change re-scores all metrics and moves both delegations’ 20 sector sliders to the highest fairness-protected bilateral score.</span></div><button id="run">Run again now <span>→</span></button></div>
     </details>
-
     <details class="dashboard-panel" data-dashboard-panel="data-guardrails" open>
       <summary><span class="dashboard-panel-title"><small>Provenance</small><b>Data & guardrails</b></span></summary>
       <div class="dashboard-panel-body"><div class="data-card"><div class="eyebrow">Internet baseline</div><b id="dataStatus">Connecting…</b><span id="asOf"></span><button class="text-button" id="sourcesButton">View sources & assumptions</button></div><div class="notice"><b>Research guardrail</b><br>Illustrative scenarios—not a forecast, official advice, or a claim of causal precision.</div></div>
@@ -106,6 +105,18 @@
 })();
 </script>
 <script src="/app.js"></script>
+<script id="tariffShockCeilingController">
+(() => {
+  'use strict';
+  const baseSyncPartyView = syncPartyView;
+  syncPartyView = function tariffShockAwareSyncPartyView(...args) {
+    const control = $('#partyTariff');
+    if (control) control.max = negotiator === 'us' ? '100' : '60';
+    return baseSyncPartyView(...args);
+  };
+  syncPartyView();
+})();
+</script>
 <script src="/trade-incidence.js"></script>
 <script id="initialOpeningScenarioController">
 (() => {
