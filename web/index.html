@@ -23,8 +23,8 @@
       <summary><span class="dashboard-panel-title"><small>Scenario input</small><b>Trade shock</b></span></summary>
       <div class="dashboard-panel-body">
         <div class="eyebrow">Build your briefing</div><h2>U.S. tariff rate</h2><p class="muted">Set the trade-weighted tariff imposed by the United States on Canadian goods, then tell the optimizer what a fair, durable agreement means to you.</p>
-        <div class="tariff-control"><output id="tariffValue">50%</output><input id="usTariff" type="range" min="0" max="100" step="1" value="50" aria-label="US tariff percentage"><div><span>0% free trade</span><span>100% maximum shock</span></div></div>
-        <div class="presets"><button data-rate="0">Free trade</button><button data-rate="10">10%</button><button data-rate="25">25%</button><button data-rate="50">50%</button><button data-rate="100">100%</button></div>
+        <div class="tariff-control"><output id="tariffValue">50%</output><input id="usTariff" type="range" min="0" max="200" step="1" value="50" aria-label="US tariff percentage"><div><span>0% free trade</span><span>200% maximum shock</span></div></div>
+        <div class="presets"><button data-rate="0">Free trade</button><button data-rate="10">10%</button><button data-rate="25">25%</button><button data-rate="50">50%</button><button data-rate="100">100%</button><button data-rate="200">200%</button></div>
       </div>
     </details>
 
@@ -111,7 +111,7 @@
   const baseSyncPartyView = syncPartyView;
   syncPartyView = function tariffShockAwareSyncPartyView(...args) {
     const control = $('#partyTariff');
-    if (control) control.max = negotiator === 'us' ? '100' : '60';
+    if (control) control.max = negotiator === 'us' ? '200' : '60';
     return baseSyncPartyView(...args);
   };
   syncPartyView();
