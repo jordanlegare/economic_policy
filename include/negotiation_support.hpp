@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -22,6 +23,7 @@ struct NegotiationIssueMove {
 
 struct NegotiationPackage {
   std::string id;
+  std::size_t pareto_rank = 0;
   std::string strategy_id;
   std::string strategy_name;
   double canada_utility = 0.0;
@@ -38,7 +40,14 @@ struct NegotiationPackage {
   bool individually_rational = false;
   bool pareto_efficient = false;
   bool stable = false;
+  // Legacy alias for the verified upstream sector posture. It does not certify
+  // that bargaining terms have been re-simulated through the macro/trade model.
   bool sector_verified = false;
+  bool macro_base_verified = false;
+  bool sector_posture_verified = false;
+  bool bargaining_terms_screened = false;
+  bool bargaining_robustness_passed = false;
+  bool full_package_resimulated = false;
   bool verified_win_win = false;
   std::array<double, 20> us_sector_coverage{};
   std::array<double, 20> canada_sector_coverage{};
@@ -196,9 +205,59 @@ struct Candidate {
   double nash_gain = 0.0;
 };
 
+inline void fingerprint_byte(std::uint64_t& hash, unsigned char value) {
+  hash ^= static_cast<std::uint64_t>(value);
+  hash *= 1099511628211ULL;
+}
+
+inline void fingerprint_u64(std::uint64_t& hash, std::uint64_t value) {
+  for (int shift = 0; shift < 64; shift += 8)
+    fingerprint_byte(hash, static_cast<unsigned char>((value >> shift) & 0xffU));
+}
+
+inline void fingerprint_string(std::uint64_t& hash, const std::string& value) {
+  fingerprint_u64(hash, static_cast<std::uint64_t>(value.size()));
+  for (unsigned char c : value) fingerprint_byte(hash, c);
+}
+
+inline void fingerprint_number(std::uint64_t& hash, double value) {
+  constexpr double scale = 1000000.0;
+  const auto quantized = static_cast<std::int64_t>(std::llround(value * scale));
+  fingerprint_u64(hash, static_cast<std::uint64_t>(quantized));
+}
+
+template<std::size_t N>
+inline void fingerprint_array(std::uint64_t& hash, const std::array<double, N>& values) {
+  for (double value : values) fingerprint_number(hash, value);
+}
+
+inline std::string stable_package_id(const Candidate& candidate) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  const auto& scenario = *candidate.scenario;
+  fingerprint_string(hash, scenario.id);
+  fingerprint_number(hash, scenario.first_move_bp);
+  fingerprint_number(hash, scenario.fiscal_impulse);
+  fingerprint_number(hash, scenario.productive_share);
+  fingerprint_number(hash, scenario.negotiated_relief);
+  fingerprint_number(hash, scenario.targeted_relief);
+  fingerprint_number(hash, scenario.diversification);
+  fingerprint_number(hash, candidate.terms.us_tariff_relief);
+  fingerprint_number(hash, candidate.terms.canada_tariff_relief);
+  fingerprint_number(hash, candidate.terms.border_facilitation);
+  fingerprint_number(hash, candidate.terms.procurement_reciprocity);
+  fingerprint_number(hash, candidate.terms.supply_chain_commitment);
+  fingerprint_array(hash, scenario.applied_us_sector_coverage);
+  fingerprint_array(hash, scenario.applied_canada_sector_coverage);
+
+  std::ostringstream out;
+  out << "pkg-" << std::hex << std::setfill('0') << std::setw(16) << hash;
+  return out.str();
+}
+
 inline NegotiationPackage make_package(const Candidate& candidate, std::size_t rank) {
   NegotiationPackage package;
-  package.id = "pareto-" + std::to_string(rank + 1);
+  package.id = stable_package_id(candidate);
+  package.pareto_rank = rank + 1;
   package.strategy_id = candidate.scenario->id;
   package.strategy_name = candidate.scenario->name;
   package.canada_utility = candidate.evaluated.canada_utility;
@@ -219,8 +278,16 @@ inline NegotiationPackage make_package(const Candidate& candidate, std::size_t r
   package.stable = candidate.evaluated.canada_deviation_gain <= 0.5
       && candidate.evaluated.us_deviation_gain <= 0.5;
   package.sector_verified = candidate.scenario->sector_verified;
-  package.verified_win_win = package.individually_rational && package.pareto_efficient
-      && package.sector_verified;
+  package.macro_base_verified = candidate.scenario->sector_verified;
+  package.sector_posture_verified = candidate.scenario->sector_verified;
+  package.bargaining_terms_screened = true;
+  package.bargaining_robustness_passed = false;
+  package.full_package_resimulated = false;
+  // A bargaining package changes tariff relief, border facilitation,
+  // procurement and supply-chain commitments after the upstream scenario was
+  // verified. Do not certify the combined package until those terms are put
+  // back through the full stochastic macro/trade engine.
+  package.verified_win_win = false;
   package.us_sector_coverage = candidate.scenario->applied_us_sector_coverage;
   package.canada_sector_coverage = candidate.scenario->applied_canada_sector_coverage;
   package.issues = {
@@ -258,7 +325,8 @@ inline void array_json(std::ostringstream& out, const std::array<double, N>& val
 
 inline void package_json(std::ostringstream& out, const NegotiationPackage& package) {
   out << "{\"id\":\"" << escape_json(package.id)
-      << "\",\"strategyId\":\"" << escape_json(package.strategy_id)
+      << "\",\"paretoRank\":" << package.pareto_rank
+      << ",\"strategyId\":\"" << escape_json(package.strategy_id)
       << "\",\"strategyName\":\"" << escape_json(package.strategy_name)
       << "\",\"canadaUtility\":" << package.canada_utility
       << ",\"usUtility\":" << package.us_utility
@@ -275,6 +343,11 @@ inline void package_json(std::ostringstream& out, const NegotiationPackage& pack
       << ",\"paretoEfficient\":" << (package.pareto_efficient ? "true" : "false")
       << ",\"stable\":" << (package.stable ? "true" : "false")
       << ",\"sectorVerified\":" << (package.sector_verified ? "true" : "false")
+      << ",\"macroBaseVerified\":" << (package.macro_base_verified ? "true" : "false")
+      << ",\"sectorPostureVerified\":" << (package.sector_posture_verified ? "true" : "false")
+      << ",\"bargainingTermsScreened\":" << (package.bargaining_terms_screened ? "true" : "false")
+      << ",\"bargainingRobustnessPassed\":" << (package.bargaining_robustness_passed ? "true" : "false")
+      << ",\"fullPackageResimulated\":" << (package.full_package_resimulated ? "true" : "false")
       << ",\"verifiedWinWin\":" << (package.verified_win_win ? "true" : "false")
       << ",\"usSectorCoverage\":";
   array_json(out, package.us_sector_coverage);
@@ -409,14 +482,15 @@ inline NegotiationAnalysis analyze_negotiation(const Economy& economy, const Res
   for (std::size_t i = 0; i < frontier.size(); ++i)
     analysis.frontier.push_back(make_package(frontier[i], i));
   analysis.recommended = analysis.frontier.front();
-  analysis.sector_schedule_verified = analysis.recommended.sector_verified;
+  analysis.sector_schedule_verified = analysis.recommended.sector_posture_verified;
   analysis.data_integrity_pass = analysis.independent_us_trade_channel
       && !analysis.trade_balance_is_objective
       && analysis.mandate_weights_fixed
       && analysis.recommended.individually_rational
       && analysis.recommended.pareto_efficient
-      && analysis.recommended.sector_verified;
-  analysis.recommended.verified_win_win = analysis.data_integrity_pass;
+      && analysis.recommended.macro_base_verified
+      && analysis.recommended.sector_posture_verified
+      && analysis.recommended.bargaining_terms_screened;
   return analysis;
 }
 

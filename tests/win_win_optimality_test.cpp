@@ -127,7 +127,12 @@ int main() {
   assert(std::abs(analysis.recommended.nash_gain - brute_best->nash) < 1e-9);
   assert(analysis.recommended.pareto_efficient);
   assert(analysis.recommended.individually_rational);
-  assert(analysis.recommended.verified_win_win);
+  assert(analysis.recommended.macro_base_verified);
+  assert(analysis.recommended.sector_posture_verified);
+  assert(analysis.recommended.bargaining_terms_screened);
+  assert(!analysis.recommended.bargaining_robustness_passed);
+  assert(!analysis.recommended.full_package_resimulated);
+  assert(!analysis.recommended.verified_win_win);
 
   const auto json = cad::negotiation_to_json(analysis);
   assert(json.find("\"paretoDefinition\":\"epsilon\"") != std::string::npos);
