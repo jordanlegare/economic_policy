@@ -1,11 +1,15 @@
 #pragma once
 
+#include "durable_journal.hpp"
 #include "policy_engine.hpp"
 #include "request_json.hpp"
 
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <iomanip>
+#include <map>
 #include <sstream>
 #include <string>
 
@@ -27,6 +31,42 @@ inline std::string json_escape(const std::string& value) {
 
 inline std::string error_json(const std::string& error) {
   return "{\"error\":\"" + json_escape(error) + "\"}";
+}
+
+inline bool valid_operation_id(const std::string& value) {
+  if (value.empty() || value.size() > 128) return false;
+  for (const unsigned char c : value) {
+    if (!(std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == ':'))
+      return false;
+  }
+  return true;
+}
+
+inline std::string canonical_scalar_object_json(const request_json::Object& object) {
+  std::ostringstream out;
+  out << std::setprecision(17) << '{';
+  bool comma = false;
+  for (const auto& [key, value] : object.values) {
+    if (comma) out << ',';
+    comma = true;
+    out << '\"' << json_escape(key) << "\":";
+    switch (value.kind) {
+      case request_json::Kind::number:
+        out << value.number_value;
+        break;
+      case request_json::Kind::boolean:
+        out << (value.bool_value ? "true" : "false");
+        break;
+      case request_json::Kind::string:
+        out << '\"' << json_escape(value.string_value) << '\"';
+        break;
+      case request_json::Kind::null_value:
+        out << "null";
+        break;
+    }
+  }
+  out << '}';
+  return out.str();
 }
 
 inline bool parse_economy(const request_json::Object& object,
@@ -104,12 +144,16 @@ inline bool request_integer(const request_json::Object& object, const std::strin
 
 class NegotiationState {
  public:
-  NegotiationState() {
+  explicit NegotiationState(std::string event_log_path = {})
+      : event_log_path_(std::move(event_log_path)) {
     canada_sectors_.fill(100.0);
     us_sectors_.fill(100.0);
+    load();
   }
 
   unsigned long revision() const { return revision_; }
+  bool last_update_replayed() const { return last_update_replayed_; }
+  std::size_t recovery_warning_count() const { return recovery_warning_count_; }
 
   std::string json() const {
     std::ostringstream out;
@@ -130,18 +174,64 @@ class NegotiationState {
     };
     add("canadaSectors", canada_sectors_);
     add("usSectors", us_sectors_);
-    out << '}';
+    out << ",\"persistence\":{\"mode\":\"fsync-append-only-event-log\""
+        << ",\"operationIdDeduplication\":true,\"recoveryWarnings\":"
+        << recovery_warning_count_ << "}}";
     return out.str();
   }
 
   bool update(const request_json::Object& object, std::string& error) {
+    error.clear();
+    last_update_replayed_ = false;
+    std::string operation_id;
+    if (!extract_operation_id(object, operation_id, error)) return false;
+    const std::string canonical = canonical_scalar_object_json(object);
+
+    if (!operation_id.empty()) {
+      const auto existing = operation_fingerprints_.find(operation_id);
+      if (existing != operation_fingerprints_.end()) {
+        if (existing->second == canonical) {
+          last_update_replayed_ = true;
+          return true;
+        }
+        error = "operationId was already used for a different negotiation update";
+        return false;
+      }
+    }
+
     NegotiationState candidate = *this;
+    candidate.last_update_replayed_ = false;
     if (!candidate.update_in_place(object, error)) return false;
-    *this = candidate;
+
+    if (!event_log_path_.empty()
+        && !durable_journal::append_line(event_log_path_, canonical)) {
+      error = "unable to durably append negotiation update";
+      return false;
+    }
+    if (!operation_id.empty())
+      candidate.operation_fingerprints_[operation_id] = canonical;
+    *this = std::move(candidate);
     return true;
   }
 
  private:
+  static bool extract_operation_id(const request_json::Object& object,
+                                   std::string& operation_id,
+                                   std::string& error) {
+    const auto* scalar = object.find("operationId");
+    if (!scalar) return true;
+    if (scalar->kind != request_json::Kind::string) {
+      error = "operationId must be a string";
+      return false;
+    }
+    operation_id = scalar->string_value;
+    if (!valid_operation_id(operation_id)) {
+      error = "operationId contains unsupported characters";
+      return false;
+    }
+    return true;
+  }
+
   bool update_in_place(const request_json::Object& object, std::string& error) {
     const auto actor = object.string("actor");
     if (!actor || (*actor != "canada" && *actor != "us" && *actor != "automatic")) {
@@ -187,6 +277,42 @@ class NegotiationState {
     return true;
   }
 
+  void load() {
+    if (event_log_path_.empty()) return;
+    for (const auto& line : durable_journal::read_lines(event_log_path_)) {
+      const auto object = request_json::parse_object(line);
+      if (!object.valid) {
+        ++recovery_warning_count_;
+        continue;
+      }
+      std::string error;
+      std::string operation_id;
+      if (!extract_operation_id(object, operation_id, error)) {
+        ++recovery_warning_count_;
+        continue;
+      }
+      const std::string canonical = canonical_scalar_object_json(object);
+      if (!operation_id.empty()) {
+        const auto existing = operation_fingerprints_.find(operation_id);
+        if (existing != operation_fingerprints_.end()) {
+          if (existing->second != canonical) ++recovery_warning_count_;
+          continue;
+        }
+      }
+
+      NegotiationState candidate = *this;
+      if (!candidate.update_in_place(object, error)) {
+        ++recovery_warning_count_;
+        continue;
+      }
+      if (!operation_id.empty())
+        candidate.operation_fingerprints_[operation_id] = canonical;
+      *this = std::move(candidate);
+    }
+    last_update_replayed_ = false;
+  }
+
+  std::string event_log_path_;
   unsigned long revision_ = 0;
   double us_tariff_ = 50.0;
   double retaliatory_tariff_ = 5.0;
@@ -197,6 +323,9 @@ class NegotiationState {
   std::array<double, 20> canada_sectors_{};
   std::array<double, 20> us_sectors_{};
   std::string updated_by_ = "automatic allocation search";
+  std::map<std::string, std::string> operation_fingerprints_;
+  std::size_t recovery_warning_count_ = 0;
+  bool last_update_replayed_ = false;
 };
 
 }  // namespace cad::server
