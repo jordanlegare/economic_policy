@@ -160,6 +160,7 @@ struct DispatcherState {
   opencl::Probe probe;
   double max_equivalence_error = 0.0;
   double measured_speedup = 0.0;
+  double required_speedup = 0.0;
   std::string detail;
   std::atomic<std::uint64_t> gpu_runs{0};
   std::atomic<std::uint64_t> cpu_fallback_runs{0};
@@ -388,16 +389,21 @@ BatchResult run(const Input& input, const std::vector<Innovation>& innovations) 
       state.performance_checked = true;
       state.measured_speedup = gpu_ok && gpu_us > 0.0
           ? cpu_us / gpu_us : 0.0;
+      const double cpu_lanes = static_cast<double>(
+          std::max<std::size_t>(1, input.expected_cpu_parallelism));
+      state.required_speedup = kAutoGpuMinimumSpeedupPerCpuLane * cpu_lanes;
       state.performance_passed = gpu_ok
-          && state.measured_speedup >= kAutoGpuMinimumSpeedup;
+          && state.measured_speedup >= state.required_speedup;
       if (!gpu_ok) {
         state.detail = "OpenCL backend rejected during throughput gate: " + error;
       } else if (state.performance_passed) {
-        state.detail = "OpenCL FP64 backend passed equivalence and throughput gates; measured speedup="
-            + std::to_string(state.measured_speedup) + "x";
+        state.detail = "OpenCL FP64 backend passed equivalence and aggregate-throughput gates; measured speedup="
+            + std::to_string(state.measured_speedup) + "x, required="
+            + std::to_string(state.required_speedup) + "x";
       } else {
         state.detail = "OpenCL backend retained as available but CPU stayed active; measured speedup="
-            + std::to_string(state.measured_speedup) + "x is below automatic promotion threshold";
+            + std::to_string(state.measured_speedup) + "x is below aggregate CPU opportunity threshold="
+            + std::to_string(state.required_speedup) + "x";
       }
     }
 
@@ -443,6 +449,7 @@ BackendStatus status() {
   out.detail = state.detail.empty() ? probe.detail : state.detail;
   out.max_equivalence_error = state.max_equivalence_error;
   out.measured_speedup = state.measured_speedup;
+  out.required_speedup = state.required_speedup;
   out.gpu_runs = state.gpu_runs.load(std::memory_order_relaxed);
   out.cpu_fallback_runs = state.cpu_fallback_runs.load(std::memory_order_relaxed);
   return out;
