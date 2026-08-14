@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
   if (monte_carlo.device_present && monte_carlo.fp64_supported) {
     std::cout << "Monte Carlo accelerator candidate: "
               << (monte_carlo.device_name.empty() ? "OpenCL FP64 device" : monte_carlo.device_name)
-              << "; deterministic CPU/GPU qualification runs on first evaluation\n";
+              << "; CPU/GPU equivalence and throughput qualification runs on the first large evaluation\n";
   } else {
     std::cout << "Monte Carlo backend: cpu-multicore (" << monte_carlo.detail << ")\n";
   }
