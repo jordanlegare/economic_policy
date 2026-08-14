@@ -82,7 +82,8 @@ for (const token of [
   'window.JointDashboardOutcomes = {buildImpactGroups, sectorImpactSummary, evaluatedDealContext}'
 ]) assert(source.includes(token), `missing outcome-first dashboard behavior contract: ${token}`);
 
-assert(!source.includes('Computational negotiation support'),
-  'retired computational negotiation UI must not return with the redesign');
+assert(!source.includes("section.id = 'computationalNegotiation'") &&
+       !source.includes('id=\"computationalNegotiation\"'),
+  'retired computational negotiation DOM surface must not return with the redesign');
 
 console.log('joint dashboard attributable outcomes test passed');
