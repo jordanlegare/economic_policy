@@ -1,4 +1,4 @@
-# Canada Policy Studio
+# Canada Tariff Observatory
 
 Canada Policy Studio is a dependency-light C++17 monetary, fiscal, trade and negotiation scenario engine with a browser dashboard for examining Canada–U.S. tariff shocks and policy responses. It searches monetary, fiscal, productive-investment, negotiated-relief and diversification choices under an explicit submitted 20-sector tariff posture, then reruns candidate policy packages through stochastic macro, trade-network and bilateral-welfare checks before linked-issue bargaining and robust recommendation.
 
