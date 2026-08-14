@@ -42,6 +42,16 @@ struct TradeNetworkTuning {
   double output_cost_cyclical = 0.18;
   double jobs_output_base = 0.20;
   double jobs_output_exposure = 0.35;
+
+  // Finalist-only bargaining-owned production state. These are not structural
+  // coefficients and are intentionally not populated from the structural
+  // parameter registry. PolicyEngine refreshes the eight coefficients above
+  // on every solve while preserving these two per-evaluation channels.
+  // Procurement is an additive percentage-point uplift to each direction's
+  // bilateral quantity ratio. Supply-chain mitigation is the fraction of
+  // indirect IO-network propagation removed after direct tariff incidence.
+  double procurement_quantity_uplift_pp = 0.0;
+  double supply_chain_mitigation = 0.0;
 };
 
 struct TradeNetworkInput {
