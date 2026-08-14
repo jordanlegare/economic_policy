@@ -55,10 +55,7 @@ int main() {
     // second room/negotiation object for the same id.
     auto again = store.get("session-a");
     assert(again == a);
-    {
-      std::lock_guard<std::mutex> lock(again->mutex);
-      assert(again->negotiation.revision() == 1);
-    }
+    assert(again->capture_negotiation_revision() == 1);
   }
 
   // Destroying the in-memory store and reopening the same runtime root must
@@ -81,9 +78,42 @@ int main() {
       std::lock_guard<std::mutex> lock(restored_b->mutex);
       assert(restored_b->negotiation.revision() == 0);
     }
+
+    // A solve admitted against revision 1 must not publish over a delegation
+    // change that reached revision 2 while the expensive computation was running.
+    const unsigned long admitted_revision = restored_a->capture_negotiation_revision();
+    assert(admitted_revision == 1);
+    const auto changed = request_json::parse_object(
+        R"({"actor":"canada","operationId":"session-neg-op-2","retaliatoryTariff":13,"canadaPriority":61})");
+    assert(changed.valid);
+    {
+      std::lock_guard<std::mutex> lock(restored_a->mutex);
+      error.clear();
+      assert(restored_a->negotiation.update(changed, error));
+      assert(restored_a->negotiation.revision() == 2);
+    }
+
+    Economy stale_economy = baseline;
+    stale_economy.policy_rate = 9.0;
+    assert(!restored_a->publish_evaluation(
+        admitted_revision, stale_economy, NegotiationAnalysis{},
+        RobustRecommendationAnalysis{}, "fnv1a64:stale"));
+    assert(!restored_a->has_evaluation);
+    assert(restored_a->last_economy.policy_rate == 2.75);
+
+    const unsigned long current_revision = restored_a->capture_negotiation_revision();
+    Economy current_economy = baseline;
+    current_economy.policy_rate = 3.25;
+    assert(restored_a->publish_evaluation(
+        current_revision, current_economy, NegotiationAnalysis{},
+        RobustRecommendationAnalysis{}, "fnv1a64:current"));
+    assert(restored_a->has_evaluation);
+    assert(restored_a->last_economy.policy_rate == 3.25);
+    assert(restored_a->last_input_fingerprint == "fnv1a64:current");
+    assert(restored_a->last_evaluation_negotiation_revision == 2);
   }
 
   std::filesystem::remove_all(root);
-  std::cout << "server session restart and negotiation recovery tests passed\n";
+  std::cout << "server session restart and stale-publication tests passed\n";
   return 0;
 }

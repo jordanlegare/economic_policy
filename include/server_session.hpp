@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace cad::server {
 
@@ -46,12 +47,35 @@ struct SessionState {
       : id(std::move(session_id)),
         negotiation((event_log_path.parent_path() / "negotiation.events").string()),
         room(event_log_path.string()),
+        evaluation_submission_log(
+            (event_log_path.parent_path() / "evaluation-submissions.events").string()),
         last_economy(std::move(baseline)) {}
 
   std::string room_json() const {
     return expose_room_session_id(
         room.json(has_evaluation ? &last_bargaining : nullptr,
                   has_evaluation ? &last_robustness : nullptr), id);
+  }
+
+  unsigned long capture_negotiation_revision() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return negotiation.revision();
+  }
+
+  bool publish_evaluation(unsigned long expected_negotiation_revision,
+                          Economy economy,
+                          NegotiationAnalysis bargaining,
+                          RobustRecommendationAnalysis robustness,
+                          std::string input_fingerprint) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (negotiation.revision() != expected_negotiation_revision) return false;
+    last_economy = std::move(economy);
+    last_bargaining = std::move(bargaining);
+    last_robustness = std::move(robustness);
+    last_input_fingerprint = std::move(input_fingerprint);
+    last_evaluation_negotiation_revision = expected_negotiation_revision;
+    has_evaluation = true;
+    return true;
   }
 
   std::string id;
@@ -64,9 +88,12 @@ struct SessionState {
   mutable std::mutex mutex;
   NegotiationState negotiation;
   NegotiationRoom room;
+  std::string evaluation_submission_log;
   NegotiationAnalysis last_bargaining;
   RobustRecommendationAnalysis last_robustness;
   Economy last_economy;
+  std::string last_input_fingerprint;
+  unsigned long last_evaluation_negotiation_revision = 0;
   bool has_evaluation = false;
 };
 

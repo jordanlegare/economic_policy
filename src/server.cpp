@@ -1,6 +1,7 @@
 #include "server.hpp"
 
 #include "calibration.hpp"
+#include "evaluation_provenance.hpp"
 #include "http_request.hpp"
 #include "live_baseline.hpp"
 #include "model_evidence.hpp"
@@ -244,6 +245,7 @@ const char* status_text(int status) {
     case 200: return "OK";
     case 400: return "Bad Request";
     case 401: return "Unauthorized";
+    case 409: return "Conflict";
     case 404: return "Not Found";
     case 405: return "Method Not Allowed";
     case 413: return "Payload Too Large";
@@ -516,6 +518,7 @@ void handle_api(const http::Request& request, socket_handle client,
       respond(client, 400, "application/json", error_json(error));
       return;
     }
+    economy = apply_non_control_calibration(std::move(economy), context.engine.snapshot());
     economy.loss_weights = context.decision_loss.weights;
 
     // Comparison-only requests have no session side effects and can run in
@@ -530,10 +533,27 @@ void handle_api(const http::Request& request, socket_handle client,
       return;
     }
 
+    const unsigned long evaluated_negotiation_revision =
+        session->capture_negotiation_revision();
+    const std::string input_fingerprint =
+        evaluation_provenance::fingerprint(economy);
+    if (!comparison_only
+        && !evaluation_provenance::checkpoint_submission(
+            session->evaluation_submission_log, economy, input_fingerprint,
+            evaluated_negotiation_revision, context.engine.snapshot().snapshot_id,
+            context.structural_registry.registry_id)) {
+      respond(client, 503, "application/json",
+          error_json("unable to durably checkpoint evaluation submission"));
+      return;
+    }
+
     auto result = context.engine.evaluate(economy);
     if (comparison_only) {
-      respond(client, 200, "application/json",
-          attach_calibration_json(to_json(result), context.engine.snapshot()));
+      auto output = attach_calibration_json(to_json(result), context.engine.snapshot());
+      output = evaluation_provenance::attach_json(
+          std::move(output), input_fingerprint, evaluated_negotiation_revision,
+          context.engine.snapshot().snapshot_id, context.structural_registry.registry_id);
+      respond(client, 200, "application/json", output);
       return;
     }
 
@@ -542,18 +562,26 @@ void handle_api(const http::Request& request, socket_handle client,
     auto robustness = analyze_robust_recommendations(
         economy, result, bargaining, context.engine.snapshot());
     auto platform = build_trade_diplomacy_platform(economy, result, bargaining);
-    {
-      std::lock_guard<std::mutex> lock(session->mutex);
-      session->last_economy = economy;
-      session->last_bargaining = bargaining;
-      session->last_robustness = robustness;
-      session->has_evaluation = true;
+    if (!session->publish_evaluation(
+            evaluated_negotiation_revision, economy, bargaining, robustness,
+            input_fingerprint)) {
+      respond(client, 409, "application/json",
+          evaluation_provenance::attach_json(
+              error_json("negotiation state changed while this evaluation was running; result was not published"),
+              input_fingerprint, evaluated_negotiation_revision,
+              context.engine.snapshot().snapshot_id,
+              context.structural_registry.registry_id, true));
+      return;
     }
+
     auto with_calibration = attach_calibration_json(to_json(result), context.engine.snapshot());
     auto with_negotiation = attach_negotiation_json(with_calibration, bargaining);
     auto with_robustness = attach_robustness_json(with_negotiation, robustness);
-    respond(client, 200, "application/json",
-        attach_trade_diplomacy_json(with_robustness, platform));
+    auto output = attach_trade_diplomacy_json(with_robustness, platform);
+    output = evaluation_provenance::attach_json(
+        std::move(output), input_fingerprint, evaluated_negotiation_revision,
+        context.engine.snapshot().snapshot_id, context.structural_registry.registry_id);
+    respond(client, 200, "application/json", output);
     return;
   }
 
