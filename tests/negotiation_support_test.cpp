@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <set>
 #include <string>
 
 namespace {
@@ -65,7 +66,14 @@ int main() {
   assert(analysis.recommended.pareto_efficient);
   assert(analysis.recommended.issues.size() == 5);
   assert(analysis.recommended.sector_verified);
-  assert(analysis.recommended.verified_win_win);
+  assert(analysis.recommended.macro_base_verified);
+  assert(analysis.recommended.sector_posture_verified);
+  assert(analysis.recommended.bargaining_terms_screened);
+  assert(!analysis.recommended.bargaining_robustness_passed);
+  assert(!analysis.recommended.full_package_resimulated);
+  assert(!analysis.recommended.verified_win_win);
+  assert(analysis.recommended.pareto_rank == 1);
+  assert(analysis.recommended.id.rfind("pkg-", 0) == 0);
   assert(analysis.data_integrity_pass);
   assert(analysis.independent_us_trade_channel);
   assert(!analysis.trade_balance_is_objective);
@@ -85,11 +93,12 @@ int main() {
       - analysis.recommended.us_export_change) > 1e-6);
 
   // Bilateral accounting balance is report-only. Changing only the reported
-  // trade gap must not change the bargain, utilities or Nash ranking.
+  // trade gap must not change the bargain, utilities, Nash ranking or package identity.
   auto accounting_only = result;
   for (auto& s : accounting_only.scenarios) s.trade_balance_gap_usd += 5000.0;
   const auto accounting_analysis = cad::analyze_negotiation(economy, accounting_only);
   assert(accounting_analysis.recommended.strategy_id == analysis.recommended.strategy_id);
+  assert(accounting_analysis.recommended.id == analysis.recommended.id);
   assert(std::abs(accounting_analysis.recommended.canada_utility
       - analysis.recommended.canada_utility) < 1e-9);
   assert(std::abs(accounting_analysis.recommended.us_utility
@@ -98,18 +107,23 @@ int main() {
       - analysis.recommended.nash_gain) < 1e-9);
 
   // The generalized Nash bargain must respect the fixed diplomatic mandate.
+  // Priority weights may reorder the same candidate set, but immutable package
+  // identifiers must not depend on transient Pareto rank.
   cad::Economy canada_first = economy;
   canada_first.canada_priority = 90.0;
   canada_first.us_priority = 10.0;
   const auto canada_weighted = cad::analyze_negotiation(canada_first, result);
   assert(canada_weighted.candidates_examined == analysis.candidates_examined);
   assert(canada_weighted.recommended.individually_rational);
+  std::set<std::string> original_ids;
+  std::set<std::string> reweighted_ids;
+  for (const auto& package : analysis.frontier) original_ids.insert(package.id);
+  for (const auto& package : canada_weighted.frontier) reweighted_ids.insert(package.id);
+  assert(original_ids == reweighted_ids);
 
-  // Current empirical tariff calibration (5.0% U.S.-on-Canada and 1.5%
-  // Canada-on-U.S.) can collapse the exact mathematical skyline to one point.
-  // The diplomatic surface therefore reports an auditable epsilon-Pareto set:
-  // packages separated by less than 0.5 utility point for either principal are
-  // materially indistinguishable rather than discarded. Keep Pareto 1-9 visible.
+  // Current empirical tariff calibration can collapse the exact mathematical
+  // skyline to one point. The diplomatic surface therefore reports an auditable
+  // epsilon-Pareto set. Rank remains presentation metadata; identity is content-derived.
   cad::Economy calibrated_like = economy;
   calibrated_like.us_tariff_canada = 5.0;
   calibrated_like.canada_retaliatory_tariff = 1.5;
@@ -118,7 +132,8 @@ int main() {
   assert(calibrated_analysis.pareto_frontier_size >= 9);
   assert(calibrated_analysis.frontier.size() >= 9);
   for (std::size_t i = 0; i < 9; ++i) {
-    assert(calibrated_analysis.frontier[i].id == "pareto-" + std::to_string(i + 1));
+    assert(calibrated_analysis.frontier[i].pareto_rank == i + 1);
+    assert(calibrated_analysis.frontier[i].id.rfind("pkg-", 0) == 0);
     assert(calibrated_analysis.frontier[i].pareto_efficient);
   }
 
@@ -127,13 +142,19 @@ int main() {
   assert(negotiation_json.find("\"reservation\"") != std::string::npos);
   assert(negotiation_json.find("\"paretoFrontierSize\"") != std::string::npos);
   assert(negotiation_json.find("\"paretoUtilityTolerance\":0.500") != std::string::npos);
+  assert(negotiation_json.find("\"paretoRank\":1") != std::string::npos);
   assert(negotiation_json.find("\"canadaExportChange\"") != std::string::npos);
   assert(negotiation_json.find("\"usExportChange\"") != std::string::npos);
   assert(negotiation_json.find("\"usSectorCoverage\"") != std::string::npos);
   assert(negotiation_json.find("\"canadaSectorCoverage\"") != std::string::npos);
   assert(negotiation_json.find("\"tradeBalanceIsObjective\":false") != std::string::npos);
   assert(negotiation_json.find("\"dataIntegrityPass\":true") != std::string::npos);
-  assert(negotiation_json.find("\"verifiedWinWin\":true") != std::string::npos);
+  assert(negotiation_json.find("\"macroBaseVerified\":true") != std::string::npos);
+  assert(negotiation_json.find("\"sectorPostureVerified\":true") != std::string::npos);
+  assert(negotiation_json.find("\"bargainingTermsScreened\":true") != std::string::npos);
+  assert(negotiation_json.find("\"bargainingRobustnessPassed\":false") != std::string::npos);
+  assert(negotiation_json.find("\"fullPackageResimulated\":false") != std::string::npos);
+  assert(negotiation_json.find("\"verifiedWinWin\":false") != std::string::npos);
 
   const auto combined = cad::attach_negotiation_json("{\"policy\":1}", analysis);
   assert(combined.find("\"negotiation\"") != std::string::npos);
@@ -154,6 +175,8 @@ int main() {
   for (auto& s : unverified.scenarios) s.sector_verified = false;
   const auto unverified_analysis = cad::analyze_negotiation(economy, unverified);
   assert(!unverified_analysis.data_integrity_pass);
+  assert(!unverified_analysis.recommended.macro_base_verified);
+  assert(!unverified_analysis.recommended.sector_posture_verified);
   assert(!unverified_analysis.recommended.verified_win_win);
 
   return 0;
