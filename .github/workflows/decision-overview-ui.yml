@@ -1,0 +1,22 @@
+name: Decision overview UI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decision-overview-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check negotiation dashboard syntax
+        run: node --check web/negotiation-model.js
+      - name: Verify deal-focused decision overview
+        run: node tests/decision_overview_ui_test.js
+      - name: Preserve frontier dedup contract
+        run: node tests/negotiation_frontier_ui_test.js
