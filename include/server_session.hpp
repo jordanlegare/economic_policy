@@ -54,10 +54,10 @@ struct SessionState {
   }
 
   std::string id;
-  // Stateful evaluations do not overlap within one session. Lock acquisition
-  // defines their serialization order; other sessions use distinct operation
-  // mutexes and remain concurrent.
-  mutable std::mutex operation_mutex;
+  // Stateful evaluations do not overlap within one session. A timed mutex lets
+  // the HTTP boundary reject a duplicate run instead of occupying a worker
+  // indefinitely behind an already-running evaluation for the same session.
+  mutable std::timed_mutex operation_mutex;
   // Short critical sections protect published state and negotiation/room
   // mutations. Expensive model computation does not hold this mutex.
   mutable std::mutex mutex;
