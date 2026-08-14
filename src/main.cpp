@@ -51,8 +51,11 @@ void report_search_profile(std::atomic<bool>& stop) {
     const std::uint64_t ledger_calls = delta(current.bilateral_ledger_calls, previous.bilateral_ledger_calls);
     const std::uint64_t monte_calls = delta(current.monte_carlo_calls, previous.monte_carlo_calls);
     const std::uint64_t parallel_blocks = delta(current.policy_parallel_blocks, previous.policy_parallel_blocks);
+    const std::size_t executor_active = cad::compute::active_jobs();
+    const std::size_t executor_queued = cad::compute::queued_jobs();
     if (network_calls == 0 && source_calls == 0 && ledger_calls == 0
-        && monte_calls == 0 && parallel_blocks == 0) {
+        && monte_calls == 0 && parallel_blocks == 0
+        && executor_active == 0 && executor_queued == 0) {
       previous = current;
       continue;
     }
@@ -75,6 +78,8 @@ void report_search_profile(std::atomic<bool>& stop) {
          << " blocks/" << parallel_items << " items, wall="
          << milliseconds(delta(current.policy_parallel_wall_ns,
                                previous.policy_parallel_wall_ns)) << " ms"
+         << " | executor=" << executor_active << " active/"
+         << executor_queued << " queued"
          << " | trade-network=" << network_calls << " calls ("
          << network_hits << " cached, " << network_computations << " computed), worker="
          << milliseconds(delta(current.trade_network_compute_ns,
@@ -95,7 +100,7 @@ void report_search_profile(std::atomic<bool>& stop) {
                                          previous_backend.cpu_fallback_runs);
     if (backend.performance_checked)
       line << ", qualified speedup=" << backend.measured_speedup << 'x';
-    std::cout << line.str() << '\n';
+    std::cout << line.str() << '\n' << std::flush;
 
     previous = current;
     previous_backend = backend;
