@@ -69,6 +69,25 @@ inline std::string bridge_candidate(const TradeDiplomacyPlatform& platform,
 
 }  // namespace robust_trade_diplomacy_detail
 
+inline void ensure_robust_package_in_interactive_preview(
+    NegotiationAnalysis& negotiation, const std::string& package_id,
+    std::size_t preview_limit = 100) {
+  if (package_id.empty() || preview_limit == 0
+      || negotiation.frontier.size() <= preview_limit)
+    return;
+  auto found = std::find_if(negotiation.frontier.begin(), negotiation.frontier.end(),
+      [&](const NegotiationPackage& package) { return package.id == package_id; });
+  if (found == negotiation.frontier.end()) return;
+  const auto index = static_cast<std::size_t>(
+      std::distance(negotiation.frontier.begin(), found));
+  if (index < preview_limit) return;
+
+  // Preserve the package's immutable identity and original paretoRank metadata;
+  // only the bounded transport order changes so the browser can resolve the
+  // authoritative robust package without fetching the complete frontier.
+  std::swap(negotiation.frontier[preview_limit - 1], *found);
+}
+
 inline PublishedTradeDiplomacyPlatform build_trade_diplomacy_publication(
     const Economy& economy, const Result& result,
     const NegotiationAnalysis& negotiation,
