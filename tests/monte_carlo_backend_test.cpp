@@ -75,8 +75,24 @@ int main() {
       seed, input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
   assert(innovations.size() == static_cast<std::size_t>(input.draws) * 12);
   assert(innovations.size() == repeated.size());
+  assert(innovations.identity() == repeated.identity());
+  assert(innovations.data() == repeated.data());
+  assert(innovations.storage_size() == innovations.size());
   for (std::size_t i = 0; i < innovations.size(); ++i)
     assert(same_innovation(innovations[i], repeated[i]));
+
+  const auto base_bank = cad::monte_carlo::generate_innovations(
+      seed + 1, cad::monte_carlo::kSharedInnovationBankMinimumDraws,
+      -0.006249264169, 2.0, 1.75, 1.35, true);
+  const auto verification_bank = cad::monte_carlo::generate_innovations(
+      seed + 1, cad::monte_carlo::kSharedInnovationBankDraws,
+      -0.006249264169, 2.0, 1.75, 1.35, true);
+  assert(base_bank.identity() == verification_bank.identity());
+  assert(base_bank.data() == verification_bank.data());
+  assert(base_bank.storage_size()
+      == static_cast<std::size_t>(cad::monte_carlo::kSharedInnovationBankDraws) * 12);
+  assert(base_bank.size()
+      == static_cast<std::size_t>(cad::monte_carlo::kSharedInnovationBankMinimumDraws) * 12);
 
   const auto first = cad::monte_carlo::run_cpu(input, innovations);
   const auto second = cad::monte_carlo::run_cpu(input, innovations);
@@ -97,6 +113,10 @@ int main() {
   changed.move_bp = 25.0;
   const auto changed_result = cad::monte_carlo::run_cpu(changed, innovations);
   assert(cad::monte_carlo::maximum_difference(first, changed_result) > 0.0);
+
+  const auto backend_status = cad::monte_carlo::status();
+  assert(backend_status.innovation_bank_generations >= 1);
+  assert(backend_status.innovation_bank_hits >= 2);
 
   std::cout << "Monte Carlo backend contract tests passed\n";
   return 0;
