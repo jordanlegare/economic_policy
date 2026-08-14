@@ -39,7 +39,15 @@ class Executor {
             job = std::move(jobs_.front());
             jobs_.pop();
           }
-          job();
+          active_jobs_.fetch_add(1, std::memory_order_relaxed);
+          try {
+            job();
+          } catch (...) {
+            // Packaged tasks normally capture user exceptions in their futures.
+            // Keep the executor worker alive if an unexpected wrapper exception
+            // escapes so one failed model lane cannot shrink machine capacity.
+          }
+          active_jobs_.fetch_sub(1, std::memory_order_relaxed);
         }
       });
     }
@@ -75,11 +83,21 @@ class Executor {
 
   std::size_t worker_count() const { return workers_.size(); }
 
+  std::size_t queued() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return jobs_.size();
+  }
+
+  std::size_t active() const {
+    return active_jobs_.load(std::memory_order_relaxed);
+  }
+
  private:
   mutable std::mutex mutex_;
   std::condition_variable ready_;
   std::queue<std::function<void()>> jobs_;
   std::vector<std::thread> workers_;
+  std::atomic<std::size_t> active_jobs_{0};
   bool stopping_ = false;
 };
 
@@ -105,6 +123,14 @@ inline std::size_t configured_worker_count() {
   const std::size_t limit = worker_limit_storage().load(std::memory_order_relaxed);
   const std::size_t capacity = worker_capacity();
   return limit == 0 ? capacity : std::max<std::size_t>(1, std::min(limit, capacity));
+}
+
+inline std::size_t queued_jobs() {
+  return global_executor().queued();
+}
+
+inline std::size_t active_jobs() {
+  return global_executor().active();
 }
 
 inline std::size_t resolve_parallelism(std::size_t task_count) {
