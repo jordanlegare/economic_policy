@@ -167,15 +167,45 @@ struct DrawResult {
   bool recession = false;
 };
 
+// Compact production transport shared by the fused CPU and reduced OpenCL
+// paths. It carries only the sufficient statistics consumed by PolicyEngine:
+// quarterly sums, non-tail terminal sums, a recession count, and the two exact
+// terminal sample vectors required by the existing P90 nth_element contract.
+struct AggregateResult {
+  std::size_t sample_count = 0;
+  std::array<double, kQuarterCount> rates{};
+  std::array<double, kQuarterCount> inflation{};
+  std::array<double, kQuarterCount> growth{};
+  std::array<double, kQuarterCount> us_growth{};
+  std::array<double, kQuarterCount> debt{};
+  std::array<double, kQuarterCount> cost{};
+  std::array<double, kQuarterCount> exports{};
+  std::array<double, kQuarterCount> us_exports{};
+  double terminal_growth = 0.0;
+  double terminal_us_growth = 0.0;
+  double terminal_unemployment = 0.0;
+  double terminal_housing = 0.0;
+  double terminal_cost = 0.0;
+  double terminal_income = 0.0;
+  double terminal_exports = 0.0;
+  double terminal_us_exports = 0.0;
+  double recessions = 0.0;
+  std::vector<double> terminal_inflation;
+  std::vector<double> terminal_debt;
+};
+
 struct BatchResult {
+  // Detailed draw trajectories are retained only for the scalar numerical
+  // reference/equivalence path. Production CPU and reduced-GPU results use
+  // `aggregate` and leave this vector empty.
   std::vector<DrawResult> draws;
   std::string backend = "cpu";
-  // When true, the vector is an aggregate transport encoding rather than a
-  // detailed per-draw trajectory: terminal inflation/debt remain per draw for
-  // P90 calculation, while all other sums are carried by the final element.
-  // Policy-engine aggregation therefore remains unchanged while PCIe traffic
-  // falls from 107 doubles/draw to two tail doubles/draw plus fixed sums.
   bool aggregate_encoded = false;
+  AggregateResult aggregate;
+
+  std::size_t sample_count() const {
+    return aggregate_encoded ? aggregate.sample_count : draws.size();
+  }
 };
 
 struct BackendStatus {
