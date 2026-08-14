@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fmt = (value, digits = 2) => Number(value ?? 0).toFixed(digits);
   const pct = value => `${(100 * Number(value || 0)).toFixed(1)}%`;
   let roomState = null;
