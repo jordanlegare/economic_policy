@@ -1,10 +1,12 @@
 #include "calibration.hpp"
 #include "evaluation_profile.hpp"
+#include "interactive_frontier.hpp"
 #include "negotiation_support.hpp"
-#include "robust_recommendation_fast.hpp"
+#include "robust_recommendation_hot.hpp"
 #include "trade_diplomacy_platform.hpp"
 
 #include <cstdint>
+#include <string>
 #include <utility>
 
 namespace cad {
@@ -21,7 +23,7 @@ RobustRecommendationAnalysis profiled_analyze_robust_recommendations(
     const CalibrationSnapshot& calibration,
     int draws = 5000, std::uint64_t seed = 20260811) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::robustness);
-  return ::cad::analyze_robust_recommendations_fast(
+  return ::cad::analyze_robust_recommendations_hot(
       economy, result, negotiation, calibration, draws, seed);
 }
 
@@ -39,18 +41,18 @@ auto profiled_attach_calibration_json(Args&&... args)
   return ::cad::attach_calibration_json(std::forward<Args>(args)...);
 }
 
-template<class... Args>
-auto profiled_attach_negotiation_json(Args&&... args)
-    -> decltype(::cad::attach_negotiation_json(std::forward<Args>(args)...)) {
+std::string profiled_attach_negotiation_json(
+    std::string base_json, const NegotiationAnalysis& analysis) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
-  return ::cad::attach_negotiation_json(std::forward<Args>(args)...);
+  return interactive_frontier::attach_negotiation_json(
+      std::move(base_json), analysis);
 }
 
-template<class... Args>
-auto profiled_attach_robustness_json(Args&&... args)
-    -> decltype(::cad::attach_robustness_json(std::forward<Args>(args)...)) {
+std::string profiled_attach_robustness_json(
+    std::string base_json, const RobustRecommendationAnalysis& analysis) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
-  return ::cad::attach_robustness_json(std::forward<Args>(args)...);
+  return interactive_frontier::attach_robustness_json(
+      std::move(base_json), analysis);
 }
 
 template<class... Args>
