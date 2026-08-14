@@ -112,12 +112,16 @@ bool parse_economy_with_negotiation_authority(
 
 // Keep the server routing/session implementation unchanged. Interpose only the
 // synchronous phases that execute after PolicyEngine::evaluate(), the production
-// truth serializer, and the negotiation-owned input boundary for stateful
-// evaluation. `comparisonOnly` deliberately bypasses negotiation-state authority
-// for stateless comparisons.
+// truth serializer, the calibrated publication boundary, and the negotiation-
+// owned input boundary for stateful evaluation. `comparisonOnly` deliberately
+// bypasses negotiation-state authority for stateless comparisons.
 #define parse_economy(object, economy, error) \
   ::cad::server::parse_economy_with_negotiation_authority( \
       (object), (economy), (error), session, request.path)
+#define publish_evaluation(expected, economy, bargaining, robustness, fingerprint) \
+  publish_evaluation_with_calibration( \
+      (expected), (economy), (bargaining), (robustness), (fingerprint), \
+      context.engine.snapshot().snapshot_id)
 #define to_json profiled_to_json
 #define analyze_negotiation profiled_analyze_negotiation
 #define analyze_robust_recommendations profiled_analyze_robust_recommendations
@@ -136,4 +140,5 @@ bool parse_economy_with_negotiation_authority(
 #undef analyze_robust_recommendations
 #undef analyze_negotiation
 #undef to_json
+#undef publish_evaluation
 #undef parse_economy

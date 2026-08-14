@@ -1,6 +1,6 @@
 #pragma once
 
-#include "negotiation_room.hpp"
+#include "audited_negotiation_room.hpp"
 #include "policy_engine.hpp"
 #include "robust_recommendation.hpp"
 #include "server_contracts.hpp"
@@ -66,16 +66,31 @@ struct SessionState {
                           Economy economy,
                           NegotiationAnalysis bargaining,
                           RobustRecommendationAnalysis robustness,
-                          std::string input_fingerprint) {
+                          std::string input_fingerprint,
+                          std::string calibration_snapshot_id = {}) {
     std::lock_guard<std::mutex> lock(mutex);
     if (negotiation.revision() != expected_negotiation_revision) return false;
     last_economy = std::move(economy);
     last_bargaining = std::move(bargaining);
     last_robustness = std::move(robustness);
     last_input_fingerprint = std::move(input_fingerprint);
+    last_calibration_snapshot_id = std::move(calibration_snapshot_id);
     last_evaluation_negotiation_revision = expected_negotiation_revision;
+    room.set_evaluation_context(last_input_fingerprint, last_calibration_snapshot_id);
     has_evaluation = true;
     return true;
+  }
+
+  bool publish_evaluation_with_calibration(
+      unsigned long expected_negotiation_revision,
+      Economy economy,
+      NegotiationAnalysis bargaining,
+      RobustRecommendationAnalysis robustness,
+      std::string input_fingerprint,
+      std::string calibration_snapshot_id) {
+    return publish_evaluation(expected_negotiation_revision,
+        std::move(economy), std::move(bargaining), std::move(robustness),
+        std::move(input_fingerprint), std::move(calibration_snapshot_id));
   }
 
   std::string id;
@@ -87,12 +102,13 @@ struct SessionState {
   // mutations. Expensive model computation does not hold this mutex.
   mutable std::mutex mutex;
   NegotiationState negotiation;
-  NegotiationRoom room;
+  AuditedNegotiationRoom room;
   std::string evaluation_submission_log;
   NegotiationAnalysis last_bargaining;
   RobustRecommendationAnalysis last_robustness;
   Economy last_economy;
   std::string last_input_fingerprint;
+  std::string last_calibration_snapshot_id;
   unsigned long last_evaluation_negotiation_revision = 0;
   bool has_evaluation = false;
 };
