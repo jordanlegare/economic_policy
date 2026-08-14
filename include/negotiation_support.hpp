@@ -88,8 +88,12 @@ inline double canada_payoff(const Scenario& scenario) {
 }
 
 inline bool outside_option_candidate(const Scenario& scenario) {
-  const bool generated = scenario.id.rfind("custom-", 0) == 0 || scenario.id == "custom";
-  return scenario.negotiated_relief <= 20.0 && !generated && scenario.id != "balance";
+  // BATNA eligibility follows control ownership, not scenario provenance. Any
+  // strategy composed only of unilateral policy controls is a valid outside
+  // option, including generated/custom strategies. A scenario that already
+  // assumes negotiated tariff relief requires the counterparty's agreement and
+  // therefore cannot be a unilateral BATNA.
+  return std::abs(scenario.negotiated_relief) <= 1e-9;
 }
 
 struct Terms {
@@ -115,13 +119,17 @@ inline EvaluatedTerms evaluate_terms(const Economy& e, const Scenario& scenario,
   const double canada_base = canada_payoff(scenario);
   const double us_base = scenario.us_score;
 
-  // The stochastic policy engine has already propagated the selected 20-sector
-  // tariff-coverage schedule through two independent trade channels. The
-  // bargaining layer therefore starts from those verified country-specific
-  // export outcomes instead of reconstructing U.S. welfare from Canadian data.
+  // The upstream stochastic policy engine may already have applied negotiated
+  // tariff relief. Bargaining terms are incremental concessions on the tariff
+  // that remains after that verified scenario, never a second percentage of the
+  // original headline tariff.
+  const double residual_tariff_fraction = 1.0
+      - clamp_value(scenario.negotiated_relief / 100.0, 0.0, 1.0);
   const double canada_relief_capacity = e.trade_elasticity * e.us_tariff_canada
+      * residual_tariff_fraction
       * clamp_value(e.exports_to_us_share / 100.0, 0.0, 1.0);
   const double us_relief_capacity = e.trade_elasticity * e.canada_retaliatory_tariff
+      * residual_tariff_fraction
       * clamp_value(e.imports_from_us_share / 100.0, 0.0, 1.0);
 
   out.canada_export_change = scenario.export_change
@@ -145,9 +153,9 @@ inline EvaluatedTerms evaluate_terms(const Economy& e, const Scenario& scenario,
   const double linkage_bonus = 1.25 * tariff_link + 0.85 * implementation_link
       + 0.70 * resilience_link;
 
-  const double canada_relief_cost = terms.canada_tariff_relief
+  const double canada_relief_cost = terms.canada_tariff_relief * residual_tariff_fraction
       * (0.35 + 0.11 * e.canada_retaliatory_tariff);
-  const double us_relief_cost = terms.us_tariff_relief
+  const double us_relief_cost = terms.us_tariff_relief * residual_tariff_fraction
       * (0.45 + 0.075 * e.us_tariff_canada);
   const double supply_fiscal_cost = terms.supply_chain_commitment
       * (0.45 + 0.10 * std::max(0.0, -e.fiscal_balance_gdp));
@@ -291,8 +299,8 @@ inline NegotiationPackage make_package(const Candidate& candidate, std::size_t r
   package.us_sector_coverage = candidate.scenario->applied_us_sector_coverage;
   package.canada_sector_coverage = candidate.scenario->applied_canada_sector_coverage;
   package.issues = {
-      {"us-tariff-relief", "U.S. tariff relief", 0.0, 100.0 * candidate.terms.us_tariff_relief},
-      {"canada-tariff-relief", "Canadian retaliatory-tariff relief", 100.0 * candidate.terms.canada_tariff_relief, 0.0},
+      {"us-tariff-relief", "U.S. residual-tariff relief", 0.0, 100.0 * candidate.terms.us_tariff_relief},
+      {"canada-tariff-relief", "Canadian residual retaliatory-tariff relief", 100.0 * candidate.terms.canada_tariff_relief, 0.0},
       {"border-facilitation", "Border and standards facilitation", 100.0 * candidate.terms.border_facilitation, 100.0 * candidate.terms.border_facilitation},
       {"procurement", "Reciprocal procurement access", 100.0 * candidate.terms.procurement_reciprocity, 100.0 * candidate.terms.procurement_reciprocity},
       {"supply-chain", "North American supply-chain commitment", 100.0 * candidate.terms.supply_chain_commitment, 100.0 * candidate.terms.supply_chain_commitment}
