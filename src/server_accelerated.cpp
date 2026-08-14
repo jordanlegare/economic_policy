@@ -1,3 +1,4 @@
+#include "border_finalist_resimulation.hpp"
 #include "calibration.hpp"
 #include "evaluation_profile.hpp"
 #include "finalist_resimulation.hpp"
@@ -43,7 +44,7 @@ PublishedTradeDiplomacyWithFinalists profiled_build_trade_diplomacy_platform(
     NegotiationAnalysis& negotiation,
     const RobustRecommendationAnalysis& robustness) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::platform);
-  auto finalist_resimulation = verify_bargaining_finalists(
+  auto finalist_resimulation = verify_bargaining_finalists_with_border_mapping(
       engine, economy, result, negotiation, robustness);
   ::cad::ensure_robust_package_in_interactive_preview(
       negotiation, robustness.recommended_package_id);
