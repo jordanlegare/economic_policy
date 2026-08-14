@@ -23,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -59,6 +60,16 @@
 
 namespace cad::server {
 namespace {
+
+volatile std::sig_atomic_t shutdown_requested = 0;
+
+void request_shutdown(int) {
+  shutdown_requested = 1;
+}
+
+bool shutting_down() {
+  return shutdown_requested != 0;
+}
 
 #ifdef _WIN32
 using socket_handle = SOCKET;
@@ -397,6 +408,7 @@ struct RuntimeContext {
   SessionStore sessions;
   LiveBaselineCache baseline_cache;
   HistoricalEvidenceCache historical_cache;
+  ThreadPool* pool = nullptr;
   bool auth_required = false;
   std::string auth_token;
   std::size_t worker_count = 1;
@@ -425,13 +437,56 @@ void handle_api(const http::Request& request, socket_handle client,
   }
 
   if (request.path == "/api/health" && request.method == "GET") {
+    const auto baseline = context.baseline_cache.status();
+    const std::size_t queue_depth = context.pool ? context.pool->queued() : 0;
+    const std::size_t queue_capacity = context.pool ? context.pool->capacity() : 0;
+    const std::size_t active_jobs = context.pool ? context.pool->active() : 0;
+    const std::size_t failed_jobs = context.pool ? context.pool->failed() : 0;
     std::ostringstream out;
     out << "{\"status\":\"ok\",\"workers\":" << context.worker_count
         << ",\"sessions\":" << context.sessions.size()
+        << ",\"queueDepth\":" << queue_depth
+        << ",\"queueCapacity\":" << queue_capacity
+        << ",\"activeJobs\":" << active_jobs
+        << ",\"failedJobs\":" << failed_jobs
         << ",\"baselineRefreshInProgress\":"
-        << (context.baseline_cache.refresh_in_progress() ? "true" : "false")
+        << (baseline.refresh_in_progress ? "true" : "false")
+        << ",\"baselineRefreshFailures\":" << baseline.total_failures
+        << ",\"baselineConsecutiveFailures\":" << baseline.consecutive_failures
+        << ",\"baselineLastAttempt\":\"" << json_escape(baseline.last_attempt) << "\""
+        << ",\"baselineLastSuccess\":\"" << json_escape(baseline.last_success) << "\""
         << ",\"authRequired\":" << (context.auth_required ? "true" : "false") << "}";
     respond(client, 200, "application/json", out.str());
+    return;
+  }
+
+  if (request.path == "/api/ready" && request.method == "GET") {
+    const auto baseline = context.baseline_cache.status();
+    const std::size_t queue_depth = context.pool ? context.pool->queued() : 0;
+    const std::size_t queue_capacity = context.pool ? context.pool->capacity() : 0;
+    const std::size_t active_jobs = context.pool ? context.pool->active() : 0;
+    const std::size_t failed_jobs = context.pool ? context.pool->failed() : 0;
+    const bool queue_available = context.pool && queue_depth < queue_capacity;
+    const bool ready = !shutting_down() && queue_available;
+    const char* reason = shutting_down() ? "shutting-down"
+        : !context.pool ? "worker-pool-unavailable"
+        : !queue_available ? "worker-queue-full" : "ready";
+    std::ostringstream out;
+    out << "{\"ready\":" << (ready ? "true" : "false")
+        << ",\"reason\":\"" << reason << "\""
+        << ",\"workers\":" << context.worker_count
+        << ",\"queueDepth\":" << queue_depth
+        << ",\"queueCapacity\":" << queue_capacity
+        << ",\"activeJobs\":" << active_jobs
+        << ",\"failedJobs\":" << failed_jobs
+        << ",\"baselineRefreshInProgress\":"
+        << (baseline.refresh_in_progress ? "true" : "false")
+        << ",\"baselineRefreshFailures\":" << baseline.total_failures
+        << ",\"baselineConsecutiveFailures\":" << baseline.consecutive_failures
+        << ",\"baselineLastAttempt\":\"" << json_escape(baseline.last_attempt) << "\""
+        << ",\"baselineLastSuccess\":\"" << json_escape(baseline.last_success) << "\""
+        << ",\"baselineLastError\":\"" << json_escape(baseline.last_error) << "\"}";
+    respond(client, ready ? 200 : 503, "application/json", out.str());
     return;
   }
 
@@ -464,11 +519,16 @@ void handle_api(const http::Request& request, socket_handle client,
     economy.loss_weights = context.decision_loss.weights;
 
     // Comparison-only requests have no session side effects and can run in
-    // parallel. Stateful evaluations are ordered per session so an earlier
-    // request cannot overwrite a later request merely because it finished last.
-    std::unique_lock<std::mutex> operation_lock;
-    if (!comparison_only)
-      operation_lock = std::unique_lock<std::mutex>(session->operation_mutex);
+    // parallel. Stateful evaluations are ordered per session, but the admission
+    // wait is bounded so one duplicate run cannot consume a worker indefinitely.
+    std::unique_lock<std::timed_mutex> operation_lock(
+        session->operation_mutex, std::defer_lock);
+    if (!comparison_only
+        && !operation_lock.try_lock_for(std::chrono::seconds(1))) {
+      respond(client, 503, "application/json",
+          error_json("this session already has an evaluation in progress; retry shortly"));
+      return;
+    }
 
     auto result = context.engine.evaluate(economy);
     if (comparison_only) {
@@ -681,6 +741,9 @@ void handle_client(socket_handle client, RuntimeContext& context) {
 }  // namespace
 
 int run(const ServerOptions& options) {
+  shutdown_requested = 0;
+  std::signal(SIGINT, request_shutdown);
+  std::signal(SIGTERM, request_shutdown);
 #ifndef _WIN32
   std::signal(SIGPIPE, SIG_IGN);
 #endif
@@ -800,19 +863,50 @@ int run(const ServerOptions& options) {
             << " ready registry entries\n"
             << "U.S. IO network: "
             << (us_trade_input_output_empirical() ? "empirical" : "proxy pending BEA artifact") << '\n'
-            << "Live baseline: asynchronous cache; request path never waits on Bank of Canada curl fetches\n";
+            << "Live baseline: asynchronous last-known-good cache; request path never waits on Bank of Canada curl fetches\n"
+            << "Shutdown: SIGINT/SIGTERM stop admission, then drain queued/running requests\n";
   if (options.launch_browser) open_browser(local_url);
 
-  ThreadPool pool(worker_count, 64);
-  while (true) {
-    const socket_handle client = ::accept(server, nullptr, nullptr);
-    if (client == invalid_socket) continue;
-    if (!pool.submit([client, &context] { handle_client(client, context); })) {
-      respond(client, 503, "application/json",
-          error_json("server worker queue is full; retry shortly"));
-      close_socket(client);
+  {
+    ThreadPool pool(worker_count, 64);
+    context.pool = &pool;
+    while (!shutting_down()) {
+      fd_set readable;
+      FD_ZERO(&readable);
+      FD_SET(server, &readable);
+      timeval wait{};
+      wait.tv_sec = 0;
+      wait.tv_usec = 250000;
+#ifdef _WIN32
+      const int ready = ::select(0, &readable, nullptr, nullptr, &wait);
+#else
+      const int ready = ::select(server + 1, &readable, nullptr, nullptr, &wait);
+#endif
+      if (ready < 0) {
+#ifndef _WIN32
+        if (errno == EINTR) continue;
+#endif
+        if (!shutting_down()) std::cerr << "Server accept poll failed\n";
+        break;
+      }
+      if (ready == 0 || !FD_ISSET(server, &readable)) continue;
+
+      const socket_handle client = ::accept(server, nullptr, nullptr);
+      if (client == invalid_socket) {
+        if (shutting_down()) break;
+        continue;
+      }
+      if (!pool.submit([client, &context] { handle_client(client, context); })) {
+        respond(client, 503, "application/json",
+            error_json("server worker queue is full; retry shortly"));
+        close_socket(client);
+      }
     }
+    context.pool = nullptr;
+    std::cout << "Shutdown requested; draining queued and running requests...\n";
   }
+  std::cout << "Shutdown complete\n";
+  return 0;
 }
 
 }  // namespace cad::server
