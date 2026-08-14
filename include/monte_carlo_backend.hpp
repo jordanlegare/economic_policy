@@ -11,6 +11,8 @@ namespace cad::monte_carlo {
 inline constexpr std::size_t kQuarterCount = 12;
 inline constexpr std::size_t kInnovationsPerQuarter = 8;
 inline constexpr double kGpuEquivalenceTolerance = 1e-10;
+inline constexpr int kAutoGpuMinimumDraws = 2048;
+inline constexpr double kAutoGpuMinimumSpeedup = 1.10;
 
 struct StructuralInputs {
   double neutral_rate = 2.5;
@@ -122,11 +124,14 @@ struct BackendStatus {
   bool fp64_supported = false;
   bool equivalence_checked = false;
   bool equivalence_passed = false;
+  bool performance_checked = false;
+  bool performance_passed = false;
   bool active = false;
   std::string active_backend = "cpu-multicore";
   std::string device_name;
   std::string detail;
   double max_equivalence_error = 0.0;
+  double measured_speedup = 0.0;
   std::uint64_t gpu_runs = 0;
   std::uint64_t cpu_fallback_runs = 0;
 };
