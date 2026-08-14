@@ -1,12 +1,11 @@
 #pragma once
 
+#include "durable_journal.hpp"
 #include "negotiation_support.hpp"
 #include "robust_recommendation.hpp"
 #include "room_action.hpp"
 
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <map>
 #include <sstream>
@@ -165,18 +164,42 @@ class NegotiationRoom {
   bool apply_event(const std::string& body, const NegotiationAnalysis* negotiation = nullptr,
                    const RobustRecommendationAnalysis* robustness = nullptr,
                    bool persist = true) {
+    last_error_.clear();
+    last_apply_replayed_ = false;
     const auto event = room_action::parse(body);
-    if (!event.valid) return false;
+    if (!event.valid) {
+      last_error_ = event.error;
+      return false;
+    }
+    const std::string canonical = room_action::to_json(event);
+
+    if (event.operation_id) {
+      const auto existing = operation_fingerprints_.find(*event.operation_id);
+      if (existing != operation_fingerprints_.end()) {
+        if (existing->second == canonical) {
+          last_apply_replayed_ = true;
+          return true;
+        }
+        last_error_ = "operationId was already used for a different room action";
+        return false;
+      }
+    }
 
     // Persistent room writes are transactional with respect to process memory:
-    // stage the mutation in a detached copy, require a successful checked append,
+    // stage the mutation in a detached copy, require a successful durable append,
     // then publish the staged state. A disk/path failure therefore cannot leave
     // memory ahead of durable history. If the process dies after append but before
     // assignment, replay on the next launch recovers the committed event.
     if (persist) {
       NegotiationRoom candidate = *this;
-      if (!candidate.apply_event(body, negotiation, robustness, false)) return false;
-      if (!append_event(room_action::to_json(event))) return false;
+      if (!candidate.apply_event(canonical, negotiation, robustness, false)) {
+        last_error_ = candidate.last_error_;
+        return false;
+      }
+      if (!durable_journal::append_line(event_log_path_, canonical)) {
+        last_error_ = "unable to durably append room event";
+        return false;
+      }
       *this = std::move(candidate);
       return true;
     }
@@ -201,7 +224,10 @@ class NegotiationRoom {
       offer.side = event.side.value_or("canada");
       offer.package_id = *event.package_id;
       offer.note = event.note.value_or("");
-      if (negotiation && !room_detail::find_package(negotiation, offer.package_id)) return false;
+      if (negotiation && !room_detail::find_package(negotiation, offer.package_id)) {
+        last_error_ = "offer packageId is not present in the current negotiation frontier";
+        return false;
+      }
       offers_.push_back(std::move(offer));
     } else if (action == "concession") {
       ConcessionRecord concession;
@@ -234,14 +260,21 @@ class NegotiationRoom {
       debrief.next_actions = event.next_actions.value_or("");
       debriefs_.push_back(std::move(debrief));
     } else {
+      last_error_ = "unsupported room action";
       return false;
     }
 
     ++revision_;
+    if (event.operation_id)
+      operation_fingerprints_[*event.operation_id] = canonical;
     trim_history();
     (void)robustness;
     return true;
   }
+
+  const std::string& last_error() const { return last_error_; }
+  bool last_apply_replayed() const { return last_apply_replayed_; }
+  std::size_t recovery_warning_count() const { return recovery_warning_count_; }
 
   std::vector<CounterofferSuggestion> counteroffers(
       const NegotiationAnalysis* negotiation,
@@ -294,8 +327,10 @@ class NegotiationRoom {
     out << std::fixed << std::setprecision(4);
     out << "{\"sessionId\":\"local-room-1\",\"revision\":" << revision_
         << ",\"round\":" << round_ << ",\"phase\":\"" << esc(phase_)
-        << "\",\"persistence\":{\"mode\":\"checked-append-only-event-log\",\"path\":\""
-        << esc(event_log_path_) << "\",\"eventSchemaVersion\":1,\"writeFailureRejectsMutation\":true,\"secureForProtectedInformation\":false},\"mandate\":[";
+        << "\",\"persistence\":{\"mode\":\"fsync-append-only-event-log\",\"path\":\""
+        << esc(event_log_path_) << "\",\"eventSchemaVersion\":1,\"writeFailureRejectsMutation\":true"
+        << ",\"operationIdDeduplication\":true,\"recoveryWarnings\":" << recovery_warning_count_
+        << ",\"secureForProtectedInformation\":false},\"mandate\":[";
     std::size_t index = 0;
     for (const auto& item : mandate_) {
       if (index++) out << ',';
@@ -386,26 +421,12 @@ class NegotiationRoom {
     trim(offers_); trim(concessions_); trim(playbooks_); trim(debriefs_);
   }
 
-  bool append_event(std::string body) const {
-    try {
-      for (char& c : body) if (c == '\n' || c == '\r') c = ' ';
-      const std::filesystem::path path(event_log_path_);
-      if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
-      std::ofstream out(event_log_path_, std::ios::app | std::ios::binary);
-      if (!out) return false;
-      out << body << '\n';
-      out.flush();
-      return out.good();
-    } catch (...) {
-      return false;
-    }
-  }
-
   void load() {
-    std::ifstream in(event_log_path_);
-    if (!in) return;
-    std::string line;
-    while (std::getline(in, line)) apply_event(line, nullptr, nullptr, false);
+    for (const auto& line : durable_journal::read_lines(event_log_path_)) {
+      if (!apply_event(line, nullptr, nullptr, false)) ++recovery_warning_count_;
+    }
+    last_error_.clear();
+    last_apply_replayed_ = false;
   }
 
   std::string event_log_path_;
@@ -417,6 +438,10 @@ class NegotiationRoom {
   std::vector<ConcessionRecord> concessions_;
   std::vector<PlaybookRecord> playbooks_;
   std::vector<DebriefRecord> debriefs_;
+  std::map<std::string, std::string> operation_fingerprints_;
+  std::size_t recovery_warning_count_ = 0;
+  std::string last_error_;
+  bool last_apply_replayed_ = false;
 };
 
 }  // namespace cad
