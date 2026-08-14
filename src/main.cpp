@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "accelerator_status.hpp"
 #include "compute_executor.hpp"
 
 #include <cstdlib>
@@ -84,6 +85,17 @@ int main(int argc, char** argv) {
   if (options.auth_token.empty()) {
     if (const char* token = std::getenv("CAD_POLICY_STUDIO_TOKEN"))
       options.auth_token = token;
+  }
+
+  const auto accelerator = cad::accelerator::detect();
+  if (accelerator.gpu_present) {
+    std::cout << "GPU detected: " << accelerator.provider << " ("
+              << accelerator.device_count << " device"
+              << (accelerator.device_count == 1 ? "" : "s") << ", "
+              << accelerator.total_vram_bytes / (1024ull * 1024ull) << " MiB VRAM)\n"
+              << "GPU policy: " << accelerator.policy << '\n';
+  } else {
+    std::cout << "GPU detected: none; model backend: cpu-multicore\n";
   }
 
   return cad::server::run(options);
