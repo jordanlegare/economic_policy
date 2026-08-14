@@ -155,6 +155,17 @@ class NegotiationState {
   bool last_update_replayed() const { return last_update_replayed_; }
   std::size_t recovery_warning_count() const { return recovery_warning_count_; }
 
+  void apply_to(Economy& economy) const {
+    economy.us_tariff_canada = us_tariff_;
+    economy.canada_retaliatory_tariff = retaliatory_tariff_;
+    economy.canada_priority = canada_priority_;
+    economy.us_priority = us_priority_;
+    economy.risk_aversion = risk_aversion_;
+    economy.cooperation_ceiling = cooperation_ceiling_;
+    economy.canada_sector_coverage = canada_sectors_;
+    economy.us_sector_coverage = us_sectors_;
+  }
+
   std::string json() const {
     std::ostringstream out;
     out << "{\"revision\":" << revision_ << ",\"updatedBy\":\""
