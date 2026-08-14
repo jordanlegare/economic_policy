@@ -11,6 +11,21 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(Threads REQUIRED)
+find_package(Git QUIET)
+
+set(CAD_SOURCE_REVISION "unknown")
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --verify HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE CAD_SOURCE_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE CAD_GIT_REVISION_RESULT)
+  if(NOT CAD_GIT_REVISION_RESULT EQUAL 0 OR CAD_SOURCE_REVISION STREQUAL "")
+    set(CAD_SOURCE_REVISION "unknown")
+  endif()
+endif()
 
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -31,6 +46,10 @@ add_library(policy_engine
   src/welfare_sensitivity.cpp
   src/model_evidence.cpp)
 target_include_directories(policy_engine PUBLIC include)
+target_compile_definitions(policy_engine PUBLIC CAD_SOURCE_REVISION="${CAD_SOURCE_REVISION}")
+if(CMAKE_DL_LIBS)
+  target_link_libraries(policy_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
 cad_enable_warnings(policy_engine)
 
 add_executable(cad-policy-studio
@@ -136,6 +155,7 @@ cad_add_test(http_request_tests tests/http_request_test.cpp http_request_contrac
 cad_add_test(server_session_tests tests/server_session_test.cpp server_session_contract)
 cad_add_test(negotiation_atomicity_tests tests/negotiation_atomicity_test.cpp negotiation_atomicity)
 cad_add_test(evaluation_provenance_tests tests/evaluation_provenance_test.cpp evaluation_provenance)
+cad_add_test(evaluation_result_cache_tests tests/evaluation_result_cache_test.cpp evaluation_result_cache)
 cad_add_test(compute_executor_tests tests/compute_executor_test.cpp compute_executor_concurrency)
 cad_add_test(thread_pool_tests tests/thread_pool_test.cpp thread_pool_concurrency)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
