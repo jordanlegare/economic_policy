@@ -15,6 +15,8 @@
 
 namespace cad::server {
 
+inline constexpr double kMaximumUsTariffPercent = 200.0;
+
 inline std::string json_escape(const std::string& value) {
   std::string out;
   out.reserve(value.size());
@@ -93,7 +95,7 @@ inline bool parse_economy(const request_json::Object& object,
   CAD_SERVER_FIELD("expectations", inflation_expectations, -10.0, 30.0);
   CAD_SERVER_FIELD("usGrowth", us_growth, -30.0, 30.0);
   CAD_SERVER_FIELD("usInflation", us_inflation, -10.0, 30.0);
-  CAD_SERVER_FIELD("usTariff", us_tariff_canada, 0.0, 100.0);
+  CAD_SERVER_FIELD("usTariff", us_tariff_canada, 0.0, kMaximumUsTariffPercent);
   CAD_SERVER_FIELD("retaliatoryTariff", canada_retaliatory_tariff, 0.0, 100.0);
   CAD_SERVER_FIELD("exportsUs", exports_to_us_share, 0.0, 100.0);
   CAD_SERVER_FIELD("importsUs", imports_from_us_share, 0.0, 100.0);
@@ -264,13 +266,13 @@ class NegotiationState {
       updated_by_ = "Canada delegation";
     }
     if (us) {
-      if (!bounded("usTariff", 0.0, 100.0, us_tariff_)
+      if (!bounded("usTariff", 0.0, kMaximumUsTariffPercent, us_tariff_)
           || !bounded("usPriority", 0.0, 100.0, us_priority_)) return false;
       canada_priority_ = 100.0 - us_priority_;
       updated_by_ = "U.S. delegation";
     }
     if (automatic) {
-      if (!bounded("usTariff", 0.0, 100.0, us_tariff_)
+      if (!bounded("usTariff", 0.0, kMaximumUsTariffPercent, us_tariff_)
           || !bounded("retaliatoryTariff", 0.0, 60.0, retaliatory_tariff_)) return false;
       updated_by_ = "automatic win-win search";
     }
