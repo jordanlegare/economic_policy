@@ -36,6 +36,7 @@ struct Snapshot {
 };
 
 Snapshot snapshot();
+bool logging_enabled();
 bool trade_cache_enabled();
 
 // Test-only reset. Call only when no evaluation is running.
