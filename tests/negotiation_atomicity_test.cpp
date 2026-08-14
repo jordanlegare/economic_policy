@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 int main() {
@@ -67,6 +68,74 @@ int main() {
     assert(!bounds.update(retaliation_too_high, error));
     assert(bounds.revision() == 2);
     assert(bounds.json() == after_automatic);
+  }
+
+  // A delegation-settings exchange is one bilateral transaction. Every scalar
+  // and all 40 sector positions are required before the journal can advance.
+  {
+    auto exchange_json = [](const std::string& operation_id,
+                            double canada_priority, double us_priority,
+                            double canada_sector_19 = 61.0,
+                            bool include_us_sector_19 = true) {
+      std::ostringstream out;
+      out << "{\"actor\":\"exchange\",\"operationId\":\"" << operation_id
+          << "\",\"usTariff\":180,\"retaliatoryTariff\":55"
+          << ",\"canadaPriority\":" << canada_priority
+          << ",\"usPriority\":" << us_priority
+          << ",\"riskAversion\":63,\"cooperationCeiling\":47";
+      for (int i = 0; i < 20; ++i) {
+        const double value = i == 19 ? canada_sector_19 : 80.0 - i;
+        out << ",\"canadaSector" << i << "\":" << value;
+      }
+      for (int i = 0; i < 20; ++i) {
+        if (i == 19 && !include_us_sector_19) continue;
+        out << ",\"usSector" << i << "\":" << 20.0 + i;
+      }
+      out << '}';
+      return out.str();
+    };
+
+    NegotiationState exchange;
+    std::string error;
+    const auto accepted = cad::request_json::parse_object(
+        exchange_json("exchange-good", 64.0, 36.0));
+    assert(accepted.valid);
+    assert(exchange.update(accepted, error));
+    assert(exchange.revision() == 1);
+    const std::string imported = exchange.json();
+    assert(imported.find("\"updatedBy\":\"imported delegation settings\"")
+           != std::string::npos);
+    assert(imported.find("\"usTariff\":180") != std::string::npos);
+    assert(imported.find("\"retaliatoryTariff\":55") != std::string::npos);
+    assert(imported.find("\"canadaPriority\":64") != std::string::npos);
+    assert(imported.find("\"usPriority\":36") != std::string::npos);
+
+    const auto bad_priority = cad::request_json::parse_object(
+        exchange_json("exchange-priority-bad", 60.0, 30.0));
+    assert(bad_priority.valid);
+    error.clear();
+    assert(!exchange.update(bad_priority, error));
+    assert(error.find("sum to 100") != std::string::npos);
+    assert(exchange.revision() == 1);
+    assert(exchange.json() == imported);
+
+    const auto incomplete = cad::request_json::parse_object(
+        exchange_json("exchange-incomplete", 64.0, 36.0, 61.0, false));
+    assert(incomplete.valid);
+    error.clear();
+    assert(!exchange.update(incomplete, error));
+    assert(error.find("usSector19 is required") != std::string::npos);
+    assert(exchange.revision() == 1);
+    assert(exchange.json() == imported);
+
+    const auto late_invalid_sector = cad::request_json::parse_object(
+        exchange_json("exchange-sector-bad", 64.0, 36.0, 101.0));
+    assert(late_invalid_sector.valid);
+    error.clear();
+    assert(!exchange.update(late_invalid_sector, error));
+    assert(!error.empty());
+    assert(exchange.revision() == 1);
+    assert(exchange.json() == imported);
   }
 
   const std::string path = "negotiation-state-test.events";
