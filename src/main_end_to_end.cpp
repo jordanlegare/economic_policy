@@ -4,6 +4,7 @@
 #include "evaluation_profile.hpp"
 #include "monte_carlo_backend.hpp"
 #include "monte_carlo_cpu_fast.hpp"
+#include "robustness_runtime.hpp"
 #include "search_acceleration.hpp"
 
 #include <atomic>
@@ -51,6 +52,7 @@ void report_search_profile(std::atomic<bool>& stop) {
 
     const auto current = cad::search_acceleration::snapshot();
     const auto evaluation = cad::evaluation_profile::snapshot();
+    const auto robust_runtime = cad::robustness_runtime::snapshot();
     const std::uint64_t network_calls = delta(
         current.trade_network_calls, previous.trade_network_calls);
     const std::uint64_t source_calls = delta(
@@ -156,6 +158,21 @@ void report_search_profile(std::atomic<bool>& stop) {
     if (evaluation.robustness_draws != 0 || evaluation.robustness_packages != 0) {
       line << " | robust-work=" << evaluation.robustness_draws
            << " draws x " << evaluation.robustness_packages << " packages";
+    }
+    if (robust_runtime.total_evaluations != 0) {
+      const double percent = 100.0
+          * static_cast<double>(robust_runtime.completed_evaluations)
+          / static_cast<double>(robust_runtime.total_evaluations);
+      line << " | robust-progress=" << robust_runtime.completed_evaluations
+           << '/' << robust_runtime.total_evaluations
+           << " (" << percent << "%)";
+      if (robust_runtime.active != 0 && robust_runtime.started_ns != 0) {
+        const auto now = cad::robustness_runtime::steady_now_ns();
+        line << ", live="
+             << milliseconds(now >= robust_runtime.started_ns
+                    ? now - robust_runtime.started_ns : 0)
+             << "ms";
+      }
     }
     std::cout << line.str() << '\n' << std::flush;
 
