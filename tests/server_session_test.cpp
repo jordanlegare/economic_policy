@@ -19,7 +19,7 @@ int main() {
   Economy baseline;
   baseline.policy_rate = 2.75;
   const auto update = request_json::parse_object(
-      R"({"actor":"canada","operationId":"session-neg-op-1","retaliatoryTariff":12,"canadaPriority":60})");
+      R"({"actor":"canada","operationId":"session-neg-op-1","retaliatoryTariff":12,"canadaPriority":60,"riskAversion":65,"cooperationCeiling":70,"canadaSector0":35})");
   assert(update.valid);
 
   {
@@ -39,6 +39,30 @@ int main() {
       std::lock_guard<std::mutex> lock(a->mutex);
       assert(a->negotiation.update(update, error));
       assert(a->negotiation.revision() == 1);
+
+      // Stateful evaluation must derive all negotiation-owned controls from the
+      // durable negotiation state rather than a parallel request-body copy.
+      Economy authoritative = baseline;
+      authoritative.us_tariff_canada = 3.0;
+      authoritative.canada_retaliatory_tariff = 1.0;
+      authoritative.canada_priority = 1.0;
+      authoritative.us_priority = 99.0;
+      authoritative.risk_aversion = 1.0;
+      authoritative.cooperation_ceiling = 99.0;
+      authoritative.canada_sector_coverage.fill(0.0);
+      authoritative.us_sector_coverage.fill(0.0);
+      a->negotiation.apply_to(authoritative);
+      assert(authoritative.us_tariff_canada == 50.0);
+      assert(authoritative.canada_retaliatory_tariff == 12.0);
+      assert(authoritative.canada_priority == 60.0);
+      assert(authoritative.us_priority == 40.0);
+      assert(authoritative.risk_aversion == 65.0);
+      assert(authoritative.cooperation_ceiling == 70.0);
+      assert(authoritative.canada_sector_coverage[0] == 35.0);
+      assert(authoritative.canada_sector_coverage[1] == 100.0);
+      assert(authoritative.us_sector_coverage[0] == 100.0);
+      // Non-negotiation scenario state is not owned by NegotiationState.
+      assert(authoritative.policy_rate == 2.75);
     }
     {
       std::lock_guard<std::mutex> lock(b->mutex);
@@ -70,9 +94,21 @@ int main() {
       assert(restored_a->negotiation.revision() == 1);
       assert(restored_a->negotiation.json().find("\"retaliatoryTariff\":12")
           != std::string::npos);
+      assert(restored_a->negotiation.json().find("\"riskAversion\":65")
+          != std::string::npos);
+      assert(restored_a->negotiation.json().find("\"cooperationCeiling\":70")
+          != std::string::npos);
       assert(restored_a->negotiation.update(update, error));
       assert(restored_a->negotiation.last_update_replayed());
       assert(restored_a->negotiation.revision() == 1);
+
+      Economy restored_authoritative = baseline;
+      restored_a->negotiation.apply_to(restored_authoritative);
+      assert(restored_authoritative.canada_retaliatory_tariff == 12.0);
+      assert(restored_authoritative.canada_priority == 60.0);
+      assert(restored_authoritative.risk_aversion == 65.0);
+      assert(restored_authoritative.cooperation_ceiling == 70.0);
+      assert(restored_authoritative.canada_sector_coverage[0] == 35.0);
     }
     {
       std::lock_guard<std::mutex> lock(restored_b->mutex);
