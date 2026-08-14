@@ -22,12 +22,16 @@ assert(html.includes('id="collapseDashboardPanels"'));
 assert(html.includes('id="expandDashboardPanels"'));
 assert(html.includes('id="dashboardPanelStyles"'));
 assert(html.includes('id="initialOpeningScenarioController"'));
-assert(html.includes('id="usTariff" type="range" min="0" max="100" step="1" value="50"'),
-  'trade shock control must render at 50% with a 100% U.S. maximum before scripts run');
+assert(html.includes('id="usTariff" type="range" min="0" max="200" step="1" value="50"'),
+  'trade shock control must render at 50% with a 200% U.S. maximum before scripts run');
+assert(html.includes('<button data-rate="200">200%</button>'),
+  'trade shock presets must expose the 200% endpoint');
 assert(html.includes('id="retaliatoryTariff" type="range" min="0" max="60" value="5"'),
   'Canada retaliatory tariff control must retain its 60% ceiling');
 assert(html.includes('id="tariffShockCeilingController"'),
   'delegation-room headline tariff control must apply country-specific U.S./Canada ceilings');
+assert(html.includes("negotiator === 'us' ? '200' : '60'"),
+  'U.S. delegation-room headline tariff must use the 200% ceiling while Canada remains at 60%');
 assert(html.includes('id="sectorCoverage" type="range" min="0" max="100" value="100"'),
   'normalized delegation sector seed must remain full coverage before app.js converts it to an actual tariff display');
 
