@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -154,8 +155,11 @@ struct DispatcherState {
   bool probed = false;
   bool equivalence_checked = false;
   bool equivalence_passed = false;
+  bool performance_checked = false;
+  bool performance_passed = false;
   opencl::Probe probe;
   double max_equivalence_error = 0.0;
+  double measured_speedup = 0.0;
   std::string detail;
   std::atomic<std::uint64_t> gpu_runs{0};
   std::atomic<std::uint64_t> cpu_fallback_runs{0};
@@ -210,6 +214,14 @@ bool equivalent(const BatchResult& reference, const BatchResult& candidate) {
         || a.recession != b.recession) return false;
   }
   return true;
+}
+
+template<class Function>
+double elapsed_microseconds(Function&& function) {
+  const auto start = std::chrono::steady_clock::now();
+  function();
+  const auto stop = std::chrono::steady_clock::now();
+  return std::chrono::duration<double, std::micro>(stop - start).count();
 }
 
 }  // namespace
@@ -315,7 +327,9 @@ bool run_opencl_for_equivalence_test(
 BatchResult run(const Input& input, const std::vector<Innovation>& innovations) {
   validate(input, innovations);
   auto& state = dispatcher_state();
-  if (preference() == Preference::cpu) {
+  const Preference requested = preference();
+  if (requested == Preference::cpu
+      || (requested == Preference::automatic && input.draws < kAutoGpuMinimumDraws)) {
     state.cpu_fallback_runs.fetch_add(1, std::memory_order_relaxed);
     return run_cpu(input, innovations);
   }
@@ -348,7 +362,48 @@ BatchResult run(const Input& input, const std::vector<Innovation>& innovations) 
         state.detail = "OpenCL backend rejected: CPU/GPU equivalence tolerance exceeded";
       }
     }
-    qualified = state.equivalence_checked && state.equivalence_passed;
+
+    if (requested == Preference::automatic
+        && state.equivalence_passed && !state.performance_checked) {
+      constexpr int repetitions = 3;
+      double cpu_us = 0.0;
+      double gpu_us = 0.0;
+      bool gpu_ok = true;
+      BatchResult sink;
+      std::string error;
+      for (int i = 0; i < repetitions; ++i) {
+        cpu_us += elapsed_microseconds([&] { sink = run_cpu(input, innovations); });
+      }
+      for (int i = 0; i < repetitions; ++i) {
+        gpu_us += elapsed_microseconds([&] {
+          BatchResult candidate;
+          if (!opencl::run(input, innovations, candidate, error)) {
+            gpu_ok = false;
+            return;
+          }
+          sink = std::move(candidate);
+        });
+        if (!gpu_ok) break;
+      }
+      state.performance_checked = true;
+      state.measured_speedup = gpu_ok && gpu_us > 0.0
+          ? cpu_us / gpu_us : 0.0;
+      state.performance_passed = gpu_ok
+          && state.measured_speedup >= kAutoGpuMinimumSpeedup;
+      if (!gpu_ok) {
+        state.detail = "OpenCL backend rejected during throughput gate: " + error;
+      } else if (state.performance_passed) {
+        state.detail = "OpenCL FP64 backend passed equivalence and throughput gates; measured speedup="
+            + std::to_string(state.measured_speedup) + "x";
+      } else {
+        state.detail = "OpenCL backend retained as available but CPU stayed active; measured speedup="
+            + std::to_string(state.measured_speedup) + "x is below automatic promotion threshold";
+      }
+    }
+
+    qualified = state.equivalence_passed
+        && (requested == Preference::gpu
+            || (state.performance_checked && state.performance_passed));
   }
 
   if (qualified) {
@@ -372,17 +427,22 @@ BackendStatus status() {
   auto& state = dispatcher_state();
   std::lock_guard<std::mutex> lock(state.mutex);
   const auto probe = ensure_probe_locked(state);
+  const Preference requested = preference();
   BackendStatus out;
   out.opencl_library_present = probe.library_present;
   out.device_present = probe.device_present;
   out.fp64_supported = probe.fp64_supported;
   out.equivalence_checked = state.equivalence_checked;
   out.equivalence_passed = state.equivalence_passed;
-  out.active = state.equivalence_checked && state.equivalence_passed;
+  out.performance_checked = state.performance_checked;
+  out.performance_passed = state.performance_passed;
+  out.active = state.equivalence_passed
+      && (requested == Preference::gpu || state.performance_passed);
   out.active_backend = out.active ? "opencl-gpu" : "cpu-multicore";
   out.device_name = probe.device_name;
   out.detail = state.detail.empty() ? probe.detail : state.detail;
   out.max_equivalence_error = state.max_equivalence_error;
+  out.measured_speedup = state.measured_speedup;
   out.gpu_runs = state.gpu_runs.load(std::memory_order_relaxed);
   out.cpu_fallback_runs = state.cpu_fallback_runs.load(std::memory_order_relaxed);
   return out;
