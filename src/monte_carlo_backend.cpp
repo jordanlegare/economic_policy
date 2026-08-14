@@ -215,6 +215,7 @@ bool equivalent_value(double left, double right) {
 }
 
 bool equivalent(const BatchResult& reference, const BatchResult& candidate) {
+  if (reference.aggregate_encoded || candidate.aggregate_encoded) return false;
   if (reference.draws.size() != candidate.draws.size()) return false;
   for (std::size_t d = 0; d < reference.draws.size(); ++d) {
     const auto& a = reference.draws[d]; const auto& b = candidate.draws[d];
@@ -237,6 +238,101 @@ bool equivalent(const BatchResult& reference, const BatchResult& candidate) {
         || a.recession != b.recession) return false;
   }
   return true;
+}
+
+struct AggregateSignature {
+  std::array<double, kQuarterCount> rates{};
+  std::array<double, kQuarterCount> inflation{};
+  std::array<double, kQuarterCount> growth{};
+  std::array<double, kQuarterCount> us_growth{};
+  std::array<double, kQuarterCount> debt{};
+  std::array<double, kQuarterCount> cost{};
+  std::array<double, kQuarterCount> exports{};
+  std::array<double, kQuarterCount> us_exports{};
+  double terminal_inflation = 0.0;
+  double terminal_growth = 0.0;
+  double terminal_us_growth = 0.0;
+  double terminal_unemployment = 0.0;
+  double terminal_debt = 0.0;
+  double terminal_housing = 0.0;
+  double terminal_cost = 0.0;
+  double terminal_income = 0.0;
+  double terminal_exports = 0.0;
+  double terminal_us_exports = 0.0;
+  double recessions = 0.0;
+  double debt_p90 = 0.0;
+  double inflation_p90 = 0.0;
+};
+
+AggregateSignature aggregate_signature(const BatchResult& result) {
+  AggregateSignature out;
+  std::vector<double> terminal_debt;
+  std::vector<double> terminal_inflation;
+  terminal_debt.reserve(result.draws.size());
+  terminal_inflation.reserve(result.draws.size());
+  for (const auto& draw : result.draws) {
+    for (std::size_t q = 0; q < kQuarterCount; ++q) {
+      out.rates[q] += draw.rates[q];
+      out.inflation[q] += draw.inflation[q];
+      out.growth[q] += draw.growth[q];
+      out.us_growth[q] += draw.us_growth[q];
+      out.debt[q] += draw.debt[q];
+      out.cost[q] += draw.cost[q];
+      out.exports[q] += draw.exports[q];
+      out.us_exports[q] += draw.us_exports[q];
+    }
+    out.terminal_inflation += draw.terminal_inflation;
+    out.terminal_growth += draw.terminal_growth;
+    out.terminal_us_growth += draw.terminal_us_growth;
+    out.terminal_unemployment += draw.terminal_unemployment;
+    out.terminal_debt += draw.terminal_debt;
+    out.terminal_housing += draw.terminal_housing;
+    out.terminal_cost += draw.terminal_cost;
+    out.terminal_income += draw.terminal_income;
+    out.terminal_exports += draw.terminal_exports;
+    out.terminal_us_exports += draw.terminal_us_exports;
+    if (draw.recession) out.recessions += 1.0;
+    terminal_debt.push_back(draw.terminal_debt);
+    terminal_inflation.push_back(draw.terminal_inflation);
+  }
+  if (!terminal_debt.empty()) {
+    const std::size_t index = terminal_debt.size() * 9 / 10;
+    auto debt_it = terminal_debt.begin() + static_cast<std::ptrdiff_t>(index);
+    auto inf_it = terminal_inflation.begin() + static_cast<std::ptrdiff_t>(index);
+    std::nth_element(terminal_debt.begin(), debt_it, terminal_debt.end());
+    std::nth_element(terminal_inflation.begin(), inf_it, terminal_inflation.end());
+    out.debt_p90 = *debt_it;
+    out.inflation_p90 = *inf_it;
+  }
+  return out;
+}
+
+template<class Function>
+void for_signature_values(const AggregateSignature& value, Function&& function) {
+  for (std::size_t q = 0; q < kQuarterCount; ++q) {
+    function(value.rates[q]); function(value.inflation[q]); function(value.growth[q]);
+    function(value.us_growth[q]); function(value.debt[q]); function(value.cost[q]);
+    function(value.exports[q]); function(value.us_exports[q]);
+  }
+  function(value.terminal_inflation); function(value.terminal_growth);
+  function(value.terminal_us_growth); function(value.terminal_unemployment);
+  function(value.terminal_debt); function(value.terminal_housing);
+  function(value.terminal_cost); function(value.terminal_income);
+  function(value.terminal_exports); function(value.terminal_us_exports);
+  function(value.recessions); function(value.debt_p90); function(value.inflation_p90);
+}
+
+bool equivalent_aggregate(const BatchResult& reference, const BatchResult& candidate) {
+  if (reference.draws.size() != candidate.draws.size()) return false;
+  const auto a = aggregate_signature(reference);
+  const auto b = aggregate_signature(candidate);
+  bool ok = true;
+  std::vector<double> left;
+  std::vector<double> right;
+  for_signature_values(a, [&](double value) { left.push_back(value); });
+  for_signature_values(b, [&](double value) { right.push_back(value); });
+  for (std::size_t i = 0; i < left.size(); ++i) ok = ok && equivalent_value(left[i], right[i]);
+  return ok;
 }
 
 template<class Function>
@@ -307,7 +403,7 @@ InnovationBank generate_innovations(
 
   auto storage = build_innovation_storage(key, bank_draws);
   cache.generations.fetch_add(1, std::memory_order_relaxed);
-  std::uint64_t identity = cache.next_identity++;
+  const std::uint64_t identity = cache.next_identity++;
 
   auto existing = std::find_if(cache.entries.begin(), cache.entries.end(),
       [&](const InnovationCacheEntry& entry) { return entry.key == key; });
@@ -332,17 +428,25 @@ InnovationBank generate_innovations(
 
 BatchResult run_cpu(const Input& input, const InnovationBank& innovations) {
   validate(input, innovations);
-  BatchResult result; result.backend = "cpu"; result.draws.resize(static_cast<std::size_t>(input.draws));
+  BatchResult result;
+  result.backend = "cpu";
+  result.draws.resize(static_cast<std::size_t>(input.draws));
   for (int d = 0; d < input.draws; ++d)
-    result.draws[static_cast<std::size_t>(d)] = run_cpu_draw(input, innovations.data() + static_cast<std::size_t>(d) * kQuarterCount);
+    result.draws[static_cast<std::size_t>(d)] = run_cpu_draw(
+        input, innovations.data() + static_cast<std::size_t>(d) * kQuarterCount);
   return result;
 }
 
 double maximum_difference(const BatchResult& reference, const BatchResult& candidate) {
+  if (reference.aggregate_encoded || candidate.aggregate_encoded)
+    return std::numeric_limits<double>::infinity();
   if (reference.draws.size() != candidate.draws.size()) return std::numeric_limits<double>::infinity();
   double maximum = 0.0;
   const auto record = [&](double a, double b) {
-    if (!std::isfinite(a) || !std::isfinite(b)) { if (a != b) maximum = std::numeric_limits<double>::infinity(); return; }
+    if (!std::isfinite(a) || !std::isfinite(b)) {
+      if (a != b) maximum = std::numeric_limits<double>::infinity();
+      return;
+    }
     maximum = std::max(maximum, std::abs(a - b));
   };
   for (std::size_t d = 0; d < reference.draws.size(); ++d) {
@@ -362,20 +466,48 @@ double maximum_difference(const BatchResult& reference, const BatchResult& candi
   return maximum;
 }
 
+double maximum_aggregate_difference(const BatchResult& reference, const BatchResult& candidate) {
+  if (reference.draws.size() != candidate.draws.size()) return std::numeric_limits<double>::infinity();
+  const auto a = aggregate_signature(reference);
+  const auto b = aggregate_signature(candidate);
+  double maximum = 0.0;
+  std::vector<double> left;
+  std::vector<double> right;
+  for_signature_values(a, [&](double value) { left.push_back(value); });
+  for_signature_values(b, [&](double value) { right.push_back(value); });
+  for (std::size_t i = 0; i < left.size(); ++i) {
+    if (!std::isfinite(left[i]) || !std::isfinite(right[i])) {
+      if (left[i] != right[i]) return std::numeric_limits<double>::infinity();
+    } else {
+      maximum = std::max(maximum, std::abs(left[i] - right[i]));
+    }
+  }
+  return maximum;
+}
+
 bool run_opencl_for_equivalence_test(const Input& input, const InnovationBank& innovations,
                                      BatchResult& output, std::string& error) {
   validate(input, innovations);
   return opencl::run(input, innovations, output, error);
 }
 
+bool run_opencl_reduced_for_equivalence_test(
+    const Input& input, const InnovationBank& innovations,
+    BatchResult& output, std::string& error) {
+  validate(input, innovations);
+  return opencl::run_reduced(input, innovations, output, error);
+}
+
 BatchResult run(const Input& input, const InnovationBank& innovations) {
   validate(input, innovations);
   auto& state = dispatcher_state();
   const Preference requested = preference();
-  if (requested == Preference::cpu || (requested == Preference::automatic && input.draws < kAutoGpuMinimumDraws)) {
+  if (requested == Preference::cpu
+      || (requested == Preference::automatic && input.draws < kAutoGpuMinimumDraws)) {
     state.cpu_fallback_runs.fetch_add(1, std::memory_order_relaxed);
     return run_cpu(input, innovations);
   }
+
   bool qualified = false;
   {
     std::lock_guard<std::mutex> lock(state.mutex);
@@ -385,15 +517,43 @@ BatchResult run(const Input& input, const InnovationBank& innovations) {
       Input gate_input = input; gate_input.draws = gate_draws;
       const auto gate_innovations = innovations.prefix(gate_draws);
       const auto reference = run_cpu(gate_input, gate_innovations);
-      BatchResult candidate; std::string error;
-      const bool ran = opencl::run(gate_input, gate_innovations, candidate, error);
-      state.max_equivalence_error = ran ? maximum_difference(reference, candidate) : std::numeric_limits<double>::infinity();
-      state.equivalence_passed = ran && equivalent(reference, candidate);
+
+      BatchResult detailed_candidate;
+      std::string detailed_error;
+      const bool detailed_ran = opencl::run(
+          gate_input, gate_innovations, detailed_candidate, detailed_error);
+      const bool detailed_passed = detailed_ran && equivalent(reference, detailed_candidate);
+      const double detailed_error_max = detailed_ran
+          ? maximum_difference(reference, detailed_candidate)
+          : std::numeric_limits<double>::infinity();
+
+      BatchResult reduced_candidate;
+      std::string reduced_error;
+      const bool reduced_ran = detailed_passed && opencl::run_reduced(
+          gate_input, gate_innovations, reduced_candidate, reduced_error);
+      const bool reduced_passed = reduced_ran
+          && reduced_candidate.aggregate_encoded
+          && equivalent_aggregate(reference, reduced_candidate);
+      const double reduced_error_max = reduced_ran
+          ? maximum_aggregate_difference(reference, reduced_candidate)
+          : std::numeric_limits<double>::infinity();
+
+      state.max_equivalence_error = std::max(detailed_error_max, reduced_error_max);
+      state.equivalence_passed = detailed_passed && reduced_passed;
       state.equivalence_checked = true;
-      if (state.equivalence_passed) state.detail = "OpenCL FP64 backend passed deterministic CPU equivalence gate";
-      else if (!ran) state.detail = "OpenCL backend rejected during equivalence gate: " + error;
-      else state.detail = "OpenCL backend rejected: CPU/GPU equivalence tolerance exceeded";
+      if (state.equivalence_passed) {
+        state.detail = "OpenCL FP64 backend passed detailed and device-reduction equivalence gates";
+      } else if (!detailed_ran) {
+        state.detail = "OpenCL backend rejected during detailed equivalence gate: " + detailed_error;
+      } else if (!detailed_passed) {
+        state.detail = "OpenCL backend rejected: detailed CPU/GPU equivalence tolerance exceeded";
+      } else if (!reduced_ran) {
+        state.detail = "OpenCL backend rejected during device-reduction gate: " + reduced_error;
+      } else {
+        state.detail = "OpenCL backend rejected: device-reduced aggregates exceeded equivalence tolerance";
+      }
     }
+
     if (requested == Preference::automatic && state.equivalence_passed && !state.performance_checked) {
       constexpr int repetitions = 2;
       constexpr std::size_t max_measured_lanes = 16;
@@ -403,8 +563,10 @@ BatchResult run(const Input& input, const InnovationBank& innovations) {
       const int perf_draws = std::min(input.draws, sample_draws);
       Input perf_input = input; perf_input.draws = perf_draws;
       const auto perf_innovations = innovations.prefix(perf_draws);
-      BatchResult warm; std::string warm_error;
-      bool gpu_ok = opencl::run(perf_input, perf_innovations, warm, warm_error);
+
+      BatchResult warm;
+      std::string warm_error;
+      bool gpu_ok = opencl::run_reduced(perf_input, perf_innovations, warm, warm_error);
       double cpu_us = 0.0, gpu_us = 0.0;
       std::string error = warm_error;
       for (int rep = 0; rep < repetitions && gpu_ok; ++rep) {
@@ -414,12 +576,17 @@ BatchResult run(const Input& input, const InnovationBank& innovations) {
               auto sink = run_cpu(perf_input, perf_innovations);
               return sink.draws.size() == static_cast<std::size_t>(perf_input.draws);
             }, cpu_ok, cpu_error);
-        if (!cpu_ok) { gpu_ok = false; error = "CPU reference failed during concurrent throughput gate: " + cpu_error; break; }
+        if (!cpu_ok) {
+          gpu_ok = false;
+          error = "CPU reference failed during concurrent throughput gate: " + cpu_error;
+          break;
+        }
         bool batch_gpu_ok = false; std::string batch_gpu_error;
         gpu_us += concurrent_elapsed_microseconds(lanes,
             [&](std::size_t, std::string& lane_error) {
               BatchResult candidate;
-              return opencl::run(perf_input, perf_innovations, candidate, lane_error);
+              return opencl::run_reduced(perf_input, perf_innovations, candidate, lane_error)
+                  && candidate.aggregate_encoded;
             }, batch_gpu_ok, batch_gpu_error);
         if (!batch_gpu_ok) { gpu_ok = false; error = batch_gpu_error; }
       }
@@ -430,26 +597,31 @@ BatchResult run(const Input& input, const InnovationBank& innovations) {
       const double unmeasured_cpu_scale = static_cast<double>(host_lanes) / static_cast<double>(lanes);
       state.required_speedup = kAutoGpuMinimumConcurrentSpeedup * unmeasured_cpu_scale;
       state.performance_passed = gpu_ok && state.measured_speedup >= state.required_speedup;
-      if (!gpu_ok) state.detail = "OpenCL backend rejected during concurrent throughput gate: " + error;
-      else if (state.performance_passed)
-        state.detail = "OpenCL FP64 backend passed equivalence and concurrent-throughput gates; measured speedup="
+      if (!gpu_ok) {
+        state.detail = "OpenCL backend rejected during batched concurrent-throughput gate: " + error;
+      } else if (state.performance_passed) {
+        state.detail = "OpenCL FP64 backend passed equivalence and batched concurrent-throughput gates; measured speedup="
             + std::to_string(state.measured_speedup) + "x across " + std::to_string(lanes)
-            + " lanes, required=" + std::to_string(state.required_speedup) + "x";
-      else
-        state.detail = "OpenCL backend retained as available but CPU stayed active; concurrent speedup="
+            + " scenario lanes, required=" + std::to_string(state.required_speedup) + "x";
+      } else {
+        state.detail = "OpenCL backend retained as available but CPU stayed active; batched concurrent speedup="
             + std::to_string(state.measured_speedup) + "x across " + std::to_string(lanes)
-            + " lanes is below required=" + std::to_string(state.required_speedup) + "x";
+            + " scenario lanes is below required=" + std::to_string(state.required_speedup) + "x";
+      }
     }
-    qualified = state.equivalence_passed && (requested == Preference::gpu || (state.performance_checked && state.performance_passed));
+    qualified = state.equivalence_passed
+        && (requested == Preference::gpu || (state.performance_checked && state.performance_passed));
   }
+
   if (qualified) {
-    BatchResult accelerated; std::string error;
-    if (opencl::run(input, innovations, accelerated, error)) {
+    BatchResult accelerated;
+    std::string error;
+    if (opencl::run_reduced(input, innovations, accelerated, error)) {
       state.gpu_runs.fetch_add(1, std::memory_order_relaxed);
       return accelerated;
     }
     std::lock_guard<std::mutex> lock(state.mutex);
-    state.detail = "OpenCL runtime failure; falling back to CPU: " + error;
+    state.detail = "OpenCL reduced runtime failure; falling back to CPU: " + error;
   }
   state.cpu_fallback_runs.fetch_add(1, std::memory_order_relaxed);
   return run_cpu(input, innovations);
@@ -487,6 +659,10 @@ BackendStatus status() {
   out.innovation_bank_generations = innovation_cache().generations.load(std::memory_order_relaxed);
   out.gpu_innovation_uploads = probe.innovation_uploads;
   out.opencl_lane_reuses = probe.lane_reuses;
+  out.gpu_reduced_dispatches = probe.reduced_dispatches;
+  out.gpu_batched_scenarios = probe.batched_scenarios;
+  out.max_gpu_batch_scenarios = probe.max_batch_scenarios;
+  out.gpu_host_values_read = probe.host_values_read;
   return out;
 }
 
