@@ -54,6 +54,28 @@ assert(cmakeSource.includes('web/trade-incidence.js'),
   'Windows standalone must embed the tariff-incidence diagnostics asset');
 
 const appSource = fs.readFileSync('web/app.js', 'utf8');
+const packageHelperMatch = appSource.match(/const compactNumber=.*?window\.PackageTitles=\{.*?\};/s);
+assert(packageHelperMatch, 'ranked package identity and deduplication helpers must be present');
+const packageContext = {window:{}};
+vm.runInNewContext(packageHelperMatch[0], packageContext);
+const duplicateDescription = mix => `Generated policy mix ${mix} of 288: ease 25 bp, 0.6% fiscal impulse, 0% negotiated rate relief, productive share 90%, diversification 66%.`;
+const candidates = [
+  {id:'custom-96', move:-25, fiscal:0.6, description:duplicateDescription(96)},
+  {id:'custom-94', move:-25, fiscal:0.6, description:duplicateDescription(94)},
+  ...Array.from({length:11}, (_,i)=>({
+    id:`custom-unique-${i}`,
+    move:i,
+    fiscal:i/10,
+    description:`Generated policy mix ${i} of 288: ease ${i} bp, ${i/10}% fiscal impulse, ${i}% negotiated rate relief, productive share ${50+i}%, diversification ${20+i}%.`
+  }))
+];
+const topUnique = packageContext.window.PackageTitles.bestUniqueScenarios(candidates, 10);
+assert.strictEqual(topUnique.length, 10, 'ranked strategic response must render at most 10 unique packages');
+assert.strictEqual(topUnique[0].id, 'custom-96', 'the highest-ranked member of a duplicate package group must survive');
+assert(!topUnique.some(item => item.id === 'custom-94'), 'lower-ranked duplicate package variants must be removed');
+assert(appSource.includes('const rankedScenarios=bestUniqueScenarios(result.scenarios,10)'),
+  'dashboard cards must render the deduplicated top-10 package view rather than the raw scenario array');
+
 const helperMatch = appSource.match(/const clampNumber=.*?const tariffToCoverage=.*?;/s);
 assert(helperMatch, 'delegation tariff conversion helpers must be present');
 const tariffMath = {};
