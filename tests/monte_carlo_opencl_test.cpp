@@ -1,10 +1,14 @@
 #include "monte_carlo_backend.hpp"
+#include "monte_carlo_opencl.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <stdlib.h>
@@ -89,6 +93,50 @@ int main() {
   const double maximum = cad::monte_carlo::maximum_difference(reference, device);
   assert(std::isfinite(maximum));
 
+  // Regress the queue architecture itself. All lanes share one context/program,
+  // but each submission owns its queue, kernel and buffers. The start barrier
+  // makes a process-wide run mutex observable as a failed peak-concurrency check.
+  auto concurrent_input = fixture(256);
+  const auto concurrent_innovations = cad::monte_carlo::generate_innovations(
+      20260811, concurrent_input.draws, -0.006249264169, 2.0, 1.75, 1.35, true);
+  const auto concurrent_reference = cad::monte_carlo::run_cpu(
+      concurrent_input, concurrent_innovations);
+  constexpr std::size_t lanes = 4;
+  std::array<cad::monte_carlo::BatchResult, lanes> concurrent_results{};
+  std::array<std::string, lanes> concurrent_errors{};
+  std::array<bool, lanes> concurrent_ok{};
+  std::atomic<std::size_t> ready{0};
+  std::atomic<bool> go{false};
+  std::vector<std::thread> workers;
+  workers.reserve(lanes);
+  for (std::size_t lane = 0; lane < lanes; ++lane) {
+    workers.emplace_back([&, lane] {
+      ready.fetch_add(1, std::memory_order_release);
+      while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+      concurrent_ok[lane] = cad::monte_carlo::run_opencl_for_equivalence_test(
+          concurrent_input, concurrent_innovations,
+          concurrent_results[lane], concurrent_errors[lane]);
+    });
+  }
+  while (ready.load(std::memory_order_acquire) < lanes) std::this_thread::yield();
+  go.store(true, std::memory_order_release);
+  for (auto& worker : workers) worker.join();
+  for (std::size_t lane = 0; lane < lanes; ++lane) {
+    if (!concurrent_ok[lane]) {
+      std::cerr << "Concurrent OpenCL lane " << lane << " failed: "
+                << concurrent_errors[lane] << '\n';
+      return 1;
+    }
+    assert(std::isfinite(cad::monte_carlo::maximum_difference(
+        concurrent_reference, concurrent_results[lane])));
+  }
+  const auto concurrent_probe = cad::monte_carlo::opencl::probe();
+  if (concurrent_probe.max_concurrent_runs < 2) {
+    std::cerr << "OpenCL runtime did not observe concurrent submissions; peak="
+              << concurrent_probe.max_concurrent_runs << '\n';
+    return 1;
+  }
+
   // Exercise the production qualification and promotion gate on the same
   // runtime. CAD_OPENCL_ALLOW_CPU=1 lets CI use POCL while production still
   // restricts automatic selection to actual GPU devices.
@@ -103,6 +151,8 @@ int main() {
   assert(selected.backend == "opencl-gpu");
   assert(status.active);
   assert(status.gpu_runs >= 1);
-  std::cout << "OpenCL Monte Carlo equivalence passed; max absolute error=" << maximum << '\n';
+  assert(status.max_concurrent_gpu_runs >= 2);
+  std::cout << "OpenCL Monte Carlo equivalence passed; max absolute error=" << maximum
+            << "; peak concurrent submissions=" << status.max_concurrent_gpu_runs << '\n';
   return 0;
 }
