@@ -1,0 +1,29 @@
+name: Robust recommendation TSan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  robust-recommendation-tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure TSan
+        env:
+          CC: clang
+          CXX: clang++
+          CXXFLAGS: -fsanitize=thread -fno-omit-frame-pointer
+          LDFLAGS: -fsanitize=thread
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug
+      - name: Build parallel robustness contract
+        run: cmake --build build-tsan --parallel --target robust_recommendation_fast_tests
+      - name: Run parallel robustness contract
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-tsan --output-on-failure -R '^robust_recommendation_fast$'
