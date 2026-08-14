@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include "accelerator_status.hpp"
 #include "compute_executor.hpp"
+#include "monte_carlo_backend.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -92,10 +93,18 @@ int main(int argc, char** argv) {
     std::cout << "GPU detected: " << accelerator.provider << " ("
               << accelerator.device_count << " device"
               << (accelerator.device_count == 1 ? "" : "s") << ", "
-              << accelerator.total_vram_bytes / (1024ull * 1024ull) << " MiB VRAM)\n"
-              << "GPU policy: " << accelerator.policy << '\n';
+              << accelerator.total_vram_bytes / (1024ull * 1024ull) << " MiB VRAM)\n";
   } else {
-    std::cout << "GPU detected: none; model backend: cpu-multicore\n";
+    std::cout << "GPU detected: none\n";
+  }
+
+  const auto monte_carlo = cad::monte_carlo::status();
+  if (monte_carlo.device_present && monte_carlo.fp64_supported) {
+    std::cout << "Monte Carlo accelerator candidate: "
+              << (monte_carlo.device_name.empty() ? "OpenCL FP64 device" : monte_carlo.device_name)
+              << "; CPU/GPU equivalence and throughput qualification runs on the first large evaluation\n";
+  } else {
+    std::cout << "Monte Carlo backend: cpu-multicore (" << monte_carlo.detail << ")\n";
   }
 
   return cad::server::run(options);

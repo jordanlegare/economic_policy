@@ -44,7 +44,9 @@ add_library(policy_engine
   src/trade_network.cpp
   src/decision_robustness.cpp
   src/welfare_sensitivity.cpp
-  src/model_evidence.cpp)
+  src/model_evidence.cpp
+  src/monte_carlo_backend.cpp
+  src/monte_carlo_opencl.cpp)
 target_include_directories(policy_engine PUBLIC include)
 target_compile_definitions(policy_engine PUBLIC CAD_SOURCE_REVISION="${CAD_SOURCE_REVISION}")
 if(CMAKE_DL_LIBS)
@@ -156,6 +158,8 @@ cad_add_test(server_session_tests tests/server_session_test.cpp server_session_c
 cad_add_test(negotiation_atomicity_tests tests/negotiation_atomicity_test.cpp negotiation_atomicity)
 cad_add_test(evaluation_provenance_tests tests/evaluation_provenance_test.cpp evaluation_provenance)
 cad_add_test(evaluation_result_cache_tests tests/evaluation_result_cache_test.cpp evaluation_result_cache)
+cad_add_test(monte_carlo_backend_tests tests/monte_carlo_backend_test.cpp monte_carlo_backend)
+cad_add_test(monte_carlo_opencl_tests tests/monte_carlo_opencl_test.cpp monte_carlo_opencl_equivalence)
 cad_add_test(compute_executor_tests tests/compute_executor_test.cpp compute_executor_concurrency)
 cad_add_test(thread_pool_tests tests/thread_pool_test.cpp thread_pool_concurrency)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)
