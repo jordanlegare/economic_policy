@@ -1,4 +1,5 @@
 #include "calibration.hpp"
+#include "interactive_frontier.hpp"
 #include "negotiation_support.hpp"
 #include "policy_engine.hpp"
 #include "robust_recommendation.hpp"
@@ -102,6 +103,26 @@ int main() {
   assert(runtime.total_evaluations
       == 2u * static_cast<std::uint64_t>(draws)
           * static_cast<std::uint64_t>(negotiation.frontier.size()));
+
+  // The interactive response must be bounded without changing the complete
+  // server-side analysis. Always expose the selected recommendation separately.
+  assert(negotiation.frontier.size() > 3);
+  assert(hot.packages.size() > 3);
+  const auto compact_negotiation =
+      cad::interactive_frontier::negotiation_to_json(negotiation, 3);
+  assert(compact_negotiation.find("\"frontierTotal\":"
+      + std::to_string(negotiation.frontier.size())) != std::string::npos);
+  assert(compact_negotiation.find("\"frontierReturned\":3") != std::string::npos);
+  assert(compact_negotiation.find("\"frontierTruncated\":true") != std::string::npos);
+  const auto compact_robustness =
+      cad::interactive_frontier::robustness_to_json(hot, 3);
+  assert(compact_robustness.find("\"packageTotal\":"
+      + std::to_string(hot.packages.size())) != std::string::npos);
+  assert(compact_robustness.find("\"packageReturned\":3") != std::string::npos);
+  assert(compact_robustness.find("\"packageTruncated\":true") != std::string::npos);
+  assert(compact_robustness.find("\"recommendedPackage\":{") != std::string::npos);
+  assert(compact_robustness.find("\"recommendedPackageId\":\""
+      + hot.recommended_package_id + "\"") != std::string::npos);
 
   // Repeat the production implementation to ensure scheduling does not affect
   // package ordering, random-number use, or the selected recommendation.
