@@ -1,5 +1,6 @@
 #include "calibration.hpp"
 #include "evaluation_profile.hpp"
+#include "finalist_resimulation.hpp"
 #include "interactive_frontier.hpp"
 #include "negotiation_support.hpp"
 #include "policy_truth_surface.hpp"
@@ -32,15 +33,27 @@ RobustRecommendationAnalysis profiled_analyze_robust_recommendations(
       economy, result, negotiation, calibration, draws, seed);
 }
 
-PublishedTradeDiplomacyPlatform profiled_build_trade_diplomacy_platform(
+struct PublishedTradeDiplomacyWithFinalists : PublishedTradeDiplomacyPlatform {
+  FinalistResimulationAnalysis finalist_resimulation;
+};
+
+PublishedTradeDiplomacyWithFinalists profiled_build_trade_diplomacy_platform(
+    CalibratedPolicyEngine& engine,
     const Economy& economy, const Result& result,
     NegotiationAnalysis& negotiation,
     const RobustRecommendationAnalysis& robustness) {
   evaluation_profile::Scope scope(evaluation_profile::Phase::platform);
+  auto finalist_resimulation = verify_bargaining_finalists(
+      engine, economy, result, negotiation, robustness);
   ::cad::ensure_robust_package_in_interactive_preview(
       negotiation, robustness.recommended_package_id);
-  return ::cad::build_trade_diplomacy_publication(
+  auto publication = ::cad::build_trade_diplomacy_publication(
       economy, result, negotiation, robustness);
+
+  PublishedTradeDiplomacyWithFinalists output;
+  static_cast<PublishedTradeDiplomacyPlatform&>(output) = std::move(publication);
+  output.finalist_resimulation = std::move(finalist_resimulation);
+  return output;
 }
 
 std::string profiled_to_json(const Result& result) {
@@ -80,6 +93,16 @@ std::string profiled_attach_trade_diplomacy_json(
   evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
   return ::cad::attach_published_trade_diplomacy_json(
       std::move(base_json), publication);
+}
+
+std::string profiled_attach_trade_diplomacy_json(
+    std::string base_json, const PublishedTradeDiplomacyWithFinalists& publication) {
+  evaluation_profile::Scope scope(evaluation_profile::Phase::serialization);
+  auto output = ::cad::attach_published_trade_diplomacy_json(
+      std::move(base_json),
+      static_cast<const PublishedTradeDiplomacyPlatform&>(publication));
+  return ::cad::attach_finalist_resimulation_json(
+      std::move(output), publication.finalist_resimulation);
 }
 
 }  // namespace cad
@@ -126,7 +149,8 @@ bool parse_economy_with_negotiation_authority(
 #define analyze_negotiation profiled_analyze_negotiation
 #define analyze_robust_recommendations profiled_analyze_robust_recommendations
 #define build_trade_diplomacy_platform(economy, result, negotiation) \
-  profiled_build_trade_diplomacy_platform((economy), (result), (negotiation), robustness)
+  profiled_build_trade_diplomacy_platform( \
+      context.engine, (economy), (result), (negotiation), robustness)
 #define attach_calibration_json profiled_attach_calibration_json
 #define attach_negotiation_json profiled_attach_negotiation_json
 #define attach_robustness_json profiled_attach_robustness_json
