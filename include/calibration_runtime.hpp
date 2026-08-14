@@ -1,10 +1,12 @@
 #pragma once
 
 #include "calibration_loader.hpp"
+#include "evaluation_result_cache.hpp"
 #include "user_anchor_selection.hpp"
 
 #include <algorithm>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -172,7 +174,8 @@ class CalibratedPolicyEngine {
                                   StructuralParameters structural_parameters = {},
                                   StructuralParameterRegistry structural_registry = {})
       : base_(seed, std::move(structural_parameters), std::move(structural_registry)),
-        snapshot_(load_calibration_snapshot(snapshot_path)), path_(std::move(snapshot_path)) {}
+        snapshot_(load_calibration_snapshot(snapshot_path)), path_(std::move(snapshot_path)),
+        result_cache_(std::make_shared<evaluation_cache::EvaluationResultCache>()) {}
 
   Result evaluate(Economy& economy) const {
     // The calibration snapshot seeds /api/baseline. Once the browser submits a
@@ -180,7 +183,12 @@ class CalibratedPolicyEngine {
     // snapshot here would silently erase tariff/coverage what-if inputs.
     const Economy calibrated_baseline = apply_calibration(Economy{}, snapshot_);
     economy = apply_non_control_calibration(std::move(economy), snapshot_);
-    Result result = base_.evaluate(economy, production_evaluation_options());
+    const std::string cache_key = evaluation_cache::make_key(
+        economy, base_.parameters(), snapshot_.snapshot_id,
+        base_.parameter_registry().registry_id, true);
+    Result result = result_cache_->get_or_compute(cache_key, [&] {
+      return base_.evaluate(economy, production_evaluation_options());
+    });
     // Initial calibrated opening remains pure maximum welfare. Once the user
     // changes the visible package, preserve that submitted scenario as the
     // anchor and use proximity only inside the declared 0.5-point welfare band.
@@ -190,11 +198,15 @@ class CalibratedPolicyEngine {
 
   const CalibrationSnapshot& snapshot() const { return snapshot_; }
   const std::string& snapshot_path() const { return path_; }
+  evaluation_cache::Stats cache_stats() const { return result_cache_->stats(); }
+  bool persistent_cache_enabled() const { return result_cache_->persistent_enabled(); }
+  const std::filesystem::path& result_cache_root() const { return result_cache_->root(); }
 
  private:
   PolicyEngine base_;
   CalibrationSnapshot snapshot_;
   std::string path_;
+  std::shared_ptr<evaluation_cache::EvaluationResultCache> result_cache_;
 };
 
 }  // namespace cad
