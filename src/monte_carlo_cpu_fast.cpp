@@ -33,7 +33,7 @@ void validate_fast(const Input& input, const InnovationBank& innovations) {
 void accumulate_scalar_draw(const Input& in, const Innovation* innovations,
                             std::size_t draw_index, BatchResult& result) {
   const auto& p = in.parameters;
-  auto& aggregate = result.aggregate;
+  auto& aggregate = result.draws.aggregate();
 
   double rate = in.policy_rate;
   double inf = in.core_inflation;
@@ -168,9 +168,11 @@ BatchResult run_cpu_fast(const Input& input, const InnovationBank& innovations) 
   BatchResult result;
   result.backend = "cpu";
   result.aggregate_encoded = true;
-  result.aggregate.sample_count = static_cast<std::size_t>(input.draws);
-  result.aggregate.terminal_inflation.resize(result.aggregate.sample_count);
-  result.aggregate.terminal_debt.resize(result.aggregate.sample_count);
+  AggregateResult aggregate;
+  aggregate.sample_count = static_cast<std::size_t>(input.draws);
+  aggregate.terminal_inflation.resize(aggregate.sample_count);
+  aggregate.terminal_debt.resize(aggregate.sample_count);
+  result.draws.set_compact(std::move(aggregate));
 
   fast_runs.fetch_add(1, std::memory_order_relaxed);
   std::size_t processed = 0;
