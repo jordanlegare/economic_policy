@@ -40,6 +40,19 @@ int main() {
   CHECK(std::isfinite(platform.recommended_worst_case_surplus));
   CHECK(platform.operational_readiness >= 0.0 && platform.operational_readiness <= 100.0);
 
+  // The operations heuristic is analytical evidence, not an authorization gate.
+  CHECK(std::abs(publication.analytical_readiness_score - platform.operational_readiness) < 1e-9);
+  CHECK(publication.mandate_clearance == "not-checked");
+  CHECK(publication.legal_clearance == "not-checked");
+  CHECK(publication.implementation_readiness == "heuristic-score-only");
+  CHECK(publication.overall_readiness == "structured-delegation-review-only");
+  CHECK(!publication.offer_ready);
+  const auto* recommended_metrics = cad::robust_trade_diplomacy_detail::find_robust_metrics(
+      robustness, robustness.recommended_package_id);
+  CHECK(recommended_metrics != nullptr);
+  CHECK(publication.bargaining_robustness_screen_passed
+      == recommended_metrics->clears_probability_gate);
+
   CHECK(platform.issue_tracks.size() >= 10);
   bool saw_treaty_track = false, saw_parallel_track = false;
   bool saw_market_access = false, saw_origin = false, saw_enforcement = false;
@@ -90,6 +103,13 @@ int main() {
   CHECK(json.find("\"totalPackageCount\"") != std::string::npos);
   CHECK(json.find("\"decisionAuthority\":\"second-stage-robustness\"") != std::string::npos);
   CHECK(json.find("\"stressCasesAreDiagnostics\":true") != std::string::npos);
+  CHECK(json.find("\"operationalReadinessSemantics\":\"analytical-implementation-heuristic\"") != std::string::npos);
+  CHECK(json.find("\"readiness\"") != std::string::npos);
+  CHECK(json.find("\"mandateClearance\":\"not-checked\"") != std::string::npos);
+  CHECK(json.find("\"legalClearance\":\"not-checked\"") != std::string::npos);
+  CHECK(json.find("\"implementationReadiness\":\"heuristic-score-only\"") != std::string::npos);
+  CHECK(json.find("\"overallStatus\":\"structured-delegation-review-only\"") != std::string::npos);
+  CHECK(json.find("\"offerReady\":false") != std::string::npos);
   CHECK(json.find("\"issueTracks\"") != std::string::npos);
   CHECK(json.find("\"robustnessCases\"") != std::string::npos);
   CHECK(json.find("\"stakeholderGates\"") != std::string::npos);
@@ -129,9 +149,11 @@ int main() {
       economy, result, large_negotiation, large_robustness);
   CHECK(large_publication.has_robust_recommended_package);
   CHECK(large_publication.robust_recommended_package.pareto_rank == 101);
+  CHECK(!large_publication.offer_ready);
   const auto large_json = cad::attach_published_trade_diplomacy_json(
       "{\"previewLimit\":100}", large_publication);
   CHECK(large_json.find("synthetic-package-101") != std::string::npos);
+  CHECK(large_json.find("\"offerReady\":false") != std::string::npos);
   CHECK(large_publication.platform.robust_packages.size() <= 10);
 
   std::cout << "trade diplomacy platform tests passed\n";

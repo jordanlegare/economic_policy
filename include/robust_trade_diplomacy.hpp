@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -19,6 +21,17 @@ struct PublishedTradeDiplomacyPlatform {
   std::size_t total_robust_package_count = 0;
   std::string decision_authority = "second-stage-robustness";
   bool stress_cases_are_diagnostics = true;
+
+  // Readiness is deliberately decomposed. The operations layer has an
+  // analytical/implementation heuristic and a reduced-form robustness screen;
+  // it does not itself establish delegation authority or legal clearance.
+  double analytical_readiness_score = 0.0;
+  bool bargaining_robustness_screen_passed = false;
+  std::string mandate_clearance = "not-checked";
+  std::string legal_clearance = "not-checked";
+  std::string implementation_readiness = "heuristic-score-only";
+  std::string overall_readiness = "structured-delegation-review-only";
+  bool offer_ready = false;
 };
 
 namespace robust_trade_diplomacy_detail {
@@ -36,6 +49,13 @@ inline const DiplomacyRobustPackage* find_operational_package(
     const TradeDiplomacyPlatform& platform, const std::string& package_id) {
   for (const auto& package : platform.robust_packages)
     if (package.package_id == package_id) return &package;
+  return nullptr;
+}
+
+inline const RobustPackageMetrics* find_robust_metrics(
+    const RobustRecommendationAnalysis& robustness, const std::string& package_id) {
+  for (const auto& metrics : robustness.packages)
+    if (metrics.package_id == package_id) return &metrics;
   return nullptr;
 }
 
@@ -97,6 +117,7 @@ inline PublishedTradeDiplomacyPlatform build_trade_diplomacy_publication(
   PublishedTradeDiplomacyPlatform publication;
   publication.platform = build_trade_diplomacy_platform(economy, result, negotiation);
   publication.total_robust_package_count = publication.platform.robust_packages.size();
+  publication.analytical_readiness_score = publication.platform.operational_readiness;
   operational_package_limit = std::max<std::size_t>(1, operational_package_limit);
 
   const std::string former_primary = publication.platform.recommended_robust_package_id;
@@ -110,12 +131,19 @@ inline PublishedTradeDiplomacyPlatform build_trade_diplomacy_publication(
 
     if (const auto* operational = find_operational_package(publication.platform, robust_primary))
       publication.platform.recommended_worst_case_surplus = operational->worst_case_surplus;
+    if (const auto* metrics = find_robust_metrics(robustness, robust_primary))
+      publication.bargaining_robustness_screen_passed = metrics->clears_probability_gate;
 
     // The round plan may sequence implementation diagnostics, but every actual
     // package reference must point at the same 5,000-draw decision authority.
     for (auto& step : publication.platform.round_plan)
       if (!step.package_id.empty()) step.package_id = robust_primary;
   }
+
+  // A high heuristic score or robust-screen pass is not authority to make an
+  // offer. This publication layer does not consume live mandate/legal clearance,
+  // so the synthesized offer-ready state must remain false.
+  publication.offer_ready = false;
 
   // The six hand-authored stress cases remain useful diagnostics. They no longer
   // choose the published primary, and their transport is bounded independently
@@ -145,12 +173,30 @@ inline std::string published_trade_diplomacy_json(
   std::string json = trade_diplomacy_json(publication.platform);
   if (json.empty() || json.back() != '}') return json;
   json.pop_back();
+  std::ostringstream readiness;
+  readiness << std::fixed << std::setprecision(3)
+      << ",\"readiness\":{\"analyticalReadinessScore\":"
+      << publication.analytical_readiness_score
+      << ",\"bargainingRobustnessScreenPassed\":"
+      << (publication.bargaining_robustness_screen_passed ? "true" : "false")
+      << ",\"mandateClearance\":\""
+      << diplomacy_detail::escape_platform_json(publication.mandate_clearance)
+      << "\",\"legalClearance\":\""
+      << diplomacy_detail::escape_platform_json(publication.legal_clearance)
+      << "\",\"implementationReadiness\":\""
+      << diplomacy_detail::escape_platform_json(publication.implementation_readiness)
+      << "\",\"overallStatus\":\""
+      << diplomacy_detail::escape_platform_json(publication.overall_readiness)
+      << "\",\"offerReady\":" << (publication.offer_ready ? "true" : "false")
+      << '}';
   json += ",\"totalPackageCount\":"
       + std::to_string(publication.total_robust_package_count)
       + ",\"decisionAuthority\":\""
       + diplomacy_detail::escape_platform_json(publication.decision_authority)
       + "\",\"stressCasesAreDiagnostics\":"
       + std::string(publication.stress_cases_are_diagnostics ? "true" : "false")
+      + ",\"operationalReadinessSemantics\":\"analytical-implementation-heuristic\""
+      + readiness.str()
       + "}";
   return json;
 }
