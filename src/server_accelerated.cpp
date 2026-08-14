@@ -4,9 +4,12 @@
 #include "negotiation_support.hpp"
 #include "robust_recommendation_hot.hpp"
 #include "robust_trade_diplomacy.hpp"
+#include "server_session.hpp"
 #include "trade_diplomacy_platform.hpp"
 
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -69,12 +72,39 @@ std::string profiled_attach_trade_diplomacy_json(
 
 }  // namespace cad
 
+namespace cad::server {
+
+bool parse_economy_with_negotiation_authority(
+    const request_json::Object& object, Economy& economy, std::string& error,
+    const std::shared_ptr<SessionState>& session, const std::string& path) {
+  if (!::cad::server::parse_economy(object, economy, error)) return false;
+  if (path != "/api/evaluate") return true;
+
+  bool comparison_only = false;
+  if (!request_json::boolean_value(
+          object, "comparisonOnly", false, comparison_only, error))
+    return false;
+  if (comparison_only) return true;
+
+  // The negotiation revision captured by the router immediately after parsing
+  // now identifies the exact control authority used by the solve. Applying the
+  // durable state here also means the evaluation provenance fingerprint is
+  // computed from those authoritative controls rather than a parallel request
+  // copy that merely happened to carry the same revision number.
+  std::lock_guard<std::mutex> lock(session->mutex);
+  session->negotiation.apply_to(economy);
+  return true;
+}
+
+}  // namespace cad::server
+
 // Keep the server routing/session implementation unchanged. Interpose only the
-// synchronous phases that execute after PolicyEngine::evaluate() so the existing
-// live profiler remains useful until the HTTP response is actually built. The
-// server computes `robustness` immediately before constructing the operations
-// platform; bind that in-scope result explicitly so operations cannot choose a
-// second primary package.
+// synchronous phases that execute after PolicyEngine::evaluate() and the
+// negotiation-owned input boundary for stateful evaluation. `comparisonOnly`
+// deliberately bypasses negotiation-state authority for stateless comparisons.
+#define parse_economy(object, economy, error) \
+  ::cad::server::parse_economy_with_negotiation_authority( \
+      (object), (economy), (error), session, request.path)
 #define analyze_negotiation profiled_analyze_negotiation
 #define analyze_robust_recommendations profiled_analyze_robust_recommendations
 #define build_trade_diplomacy_platform(economy, result, negotiation) \
@@ -91,3 +121,4 @@ std::string profiled_attach_trade_diplomacy_json(
 #undef build_trade_diplomacy_platform
 #undef analyze_robust_recommendations
 #undef analyze_negotiation
+#undef parse_economy
