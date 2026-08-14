@@ -21,6 +21,7 @@ struct StructuralInputs {
   double output_persistence = 0.72;
   double fiscal_demand_multiplier = 0.36;
   double real_rate_demand_sensitivity = 0.18;
+  double global_growth_sensitivity = 0.08;
   double inflation_persistence = 0.68;
   double inflation_expectations_weight = 0.32;
   double phillips_curve_slope = 0.12;
