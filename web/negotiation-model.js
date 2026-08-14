@@ -5,6 +5,27 @@
   const fmt = (value, digits=1) => Number(value || 0).toFixed(digits);
   const signed = (value, suffix='') => `${Number(value || 0) >= 0 ? '+' : ''}${fmt(value)}${suffix}`;
 
+  function materialPackageKey(package_) {
+    const issues = (package_?.issues || []).map(issue =>
+      `${String(issue?.label ?? '')}|${Number(issue?.canadaMove || 0).toFixed(6)}|${Number(issue?.usMove || 0).toFixed(6)}`
+    ).sort().join('||');
+    return `${String(package_?.strategyName || '')}||${issues}`;
+  }
+
+  function bestUniqueFrontierPackages(frontier, limit=9) {
+    const seen = new Set(), unique = [];
+    for (const package_ of frontier || []) {
+      const key = materialPackageKey(package_);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(package_);
+      if (unique.length >= limit) break;
+    }
+    return unique;
+  }
+
+  window.NegotiationFrontier = {materialPackageKey, bestUniqueFrontierPackages};
+
   function primaryPackage(model) {
     const robust = result?.robustness;
     const metrics = (robust?.packages || []).find(p => p.packageId === robust?.recommendedPackageId);
@@ -107,8 +128,8 @@
     document.querySelector('#negotiationIssues').innerHTML = (package_.issues || []).map(issueRow).join('');
     document.querySelector('#tradeChannels').innerHTML = `<div><span>Canadian exports</span><b class="${package_.canadaExportChange<0?'negative':'positive'}">${signed(package_.canadaExportChange,'%')}</b><small>Verified base responds to the selected U.S. sector-coverage schedule; bargaining relief and linked commitments are layered on top.</small></div><div><span>U.S. exports</span><b class="${package_.usExportChange<0?'negative':'positive'}">${signed(package_.usExportChange,'%')}</b><small>Verified independently from Canadian exports and responds to the selected Canadian retaliation schedule.</small></div>`;
 
-    const visibleFrontier = (model.frontier || []).slice(0, 12);
-    document.querySelector('#paretoCount').textContent = `${model.paretoFrontierSize} ε-frontier packages · showing ${visibleFrontier.length}${model.frontierComplete===false?' · candidate cap bound':''}`;
+    const visibleFrontier = bestUniqueFrontierPackages(model.frontier, 9);
+    document.querySelector('#paretoCount').textContent = `${model.paretoFrontierSize} ε-frontier packages · showing ${visibleFrontier.length} best unique${model.frontierComplete===false?' · candidate cap bound':''}`;
     document.querySelector('#paretoPackages').innerHTML = visibleFrontier.map(packageCard).join('');
     document.querySelectorAll('.pareto-card').forEach(card => card.addEventListener('click', () => {
       if (typeof selected === 'undefined' || typeof render !== 'function') return;
