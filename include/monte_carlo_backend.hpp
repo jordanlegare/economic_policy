@@ -13,7 +13,7 @@ inline constexpr std::size_t kQuarterCount = 12;
 inline constexpr std::size_t kInnovationsPerQuarter = 8;
 inline constexpr double kGpuEquivalenceTolerance = 1e-10;
 inline constexpr int kAutoGpuMinimumDraws = 2048;
-inline constexpr double kAutoGpuMinimumSpeedupPerCpuLane = 1.10;
+inline constexpr double kAutoGpuMinimumConcurrentSpeedup = 1.10;
 
 struct StructuralInputs {
   double neutral_rate = 2.5;
@@ -138,6 +138,9 @@ struct BackendStatus {
   double max_equivalence_error = 0.0;
   double measured_speedup = 0.0;
   double required_speedup = 0.0;
+  std::size_t performance_lanes = 0;
+  int performance_draws = 0;
+  std::size_t max_concurrent_gpu_runs = 0;
   std::uint64_t gpu_runs = 0;
   std::uint64_t cpu_fallback_runs = 0;
 };

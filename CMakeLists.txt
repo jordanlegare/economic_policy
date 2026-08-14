@@ -29,6 +29,7 @@ endif()
 
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  add_compile_definitions(NOMINMAX)
 endif()
 
 function(cad_enable_warnings target)
