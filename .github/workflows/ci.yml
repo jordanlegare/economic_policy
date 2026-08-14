@@ -155,7 +155,11 @@ jobs:
           grep -q '/api/v2/robustness-batch' src/server.cpp
           grep -q 'X-CAD-Session-Id' web/session.js
           grep -q 'Authorization' web/session.js
-          grep -q 'Diplomatic decision desk' web/diplomat.js
+          grep -q 'AmbassadorQuickLookWidgets' web/diplomat.js
+          grep -q 'Deal-resolution widgets' web/diplomat.js
+          grep -q 'module.exports' web/diplomat.js
+          grep -q 'Current /api/evaluate payload' web/diplomat.js
+          ! grep -q "section.id = 'diplomatCommand'" web/diplomat.js
           grep -q 'Computational negotiation support' web/negotiation-model.js
           grep -q 'Canada–U.S. trade diplomacy operations' web/trade-diplomacy.js
           grep -q 'Data provenance & calibration' web/calibration.js
