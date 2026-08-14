@@ -41,7 +41,7 @@ function(cad_enable_warnings target)
 endfunction()
 
 add_library(policy_engine
-  src/policy_engine.cpp
+  src/policy_engine_accelerated.cpp
   src/trade_network.cpp
   src/decision_robustness.cpp
   src/welfare_sensitivity.cpp
@@ -162,6 +162,7 @@ cad_add_test(evaluation_provenance_tests tests/evaluation_provenance_test.cpp ev
 cad_add_test(evaluation_result_cache_tests tests/evaluation_result_cache_test.cpp evaluation_result_cache)
 cad_add_test(monte_carlo_backend_tests tests/monte_carlo_backend_test.cpp monte_carlo_backend)
 cad_add_test(monte_carlo_opencl_tests tests/monte_carlo_opencl_test.cpp monte_carlo_opencl_equivalence)
+cad_add_test(search_acceleration_tests tests/search_acceleration_test.cpp search_acceleration)
 cad_add_test(compute_executor_tests tests/compute_executor_test.cpp compute_executor_concurrency)
 cad_add_test(thread_pool_tests tests/thread_pool_test.cpp thread_pool_concurrency)
 cad_add_test(trade_episode_validation_tests tests/trade_episode_validation_test.cpp trade_episode_validation)

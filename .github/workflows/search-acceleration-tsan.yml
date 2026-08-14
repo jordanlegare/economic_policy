@@ -1,0 +1,29 @@
+name: Global search cache TSan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cache-concurrency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure TSan
+        env:
+          CC: clang
+          CXX: clang++
+          CXXFLAGS: -fsanitize=thread -fno-omit-frame-pointer
+          LDFLAGS: -fsanitize=thread
+        run: cmake -S . -B build-search-tsan -DCMAKE_BUILD_TYPE=Debug
+      - name: Build search acceleration contract
+        run: cmake --build build-search-tsan --parallel --target search_acceleration_tests
+      - name: Run concurrent deterministic cache contract
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-search-tsan --output-on-failure -R '^search_acceleration$'

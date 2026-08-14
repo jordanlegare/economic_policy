@@ -2,10 +2,17 @@
 #include "accelerator_status.hpp"
 #include "compute_executor.hpp"
 #include "monte_carlo_backend.hpp"
+#include "search_acceleration.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <functional>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -18,6 +25,80 @@ bool parse_integer(const std::string& value, int& out) {
     return true;
   } catch (...) {
     return false;
+  }
+}
+
+std::uint64_t delta(std::uint64_t current, std::uint64_t previous) {
+  return current >= previous ? current - previous : 0;
+}
+
+double milliseconds(std::uint64_t nanoseconds) {
+  return static_cast<double>(nanoseconds) / 1'000'000.0;
+}
+
+void report_search_profile(std::atomic<bool>& stop) {
+  auto previous = cad::search_acceleration::snapshot();
+  auto previous_backend = cad::monte_carlo::status();
+
+  while (!stop.load(std::memory_order_relaxed)) {
+    for (int tenth = 0; tenth < 10 && !stop.load(std::memory_order_relaxed); ++tenth)
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (stop.load(std::memory_order_relaxed)) break;
+
+    const auto current = cad::search_acceleration::snapshot();
+    const std::uint64_t network_calls = delta(current.trade_network_calls, previous.trade_network_calls);
+    const std::uint64_t source_calls = delta(current.trade_source_calls, previous.trade_source_calls);
+    const std::uint64_t ledger_calls = delta(current.bilateral_ledger_calls, previous.bilateral_ledger_calls);
+    const std::uint64_t monte_calls = delta(current.monte_carlo_calls, previous.monte_carlo_calls);
+    const std::uint64_t parallel_blocks = delta(current.policy_parallel_blocks, previous.policy_parallel_blocks);
+    if (network_calls == 0 && source_calls == 0 && ledger_calls == 0
+        && monte_calls == 0 && parallel_blocks == 0) {
+      previous = current;
+      continue;
+    }
+
+    const auto backend = cad::monte_carlo::status();
+    const std::uint64_t network_hits = delta(
+        current.trade_network_cache_hits, previous.trade_network_cache_hits);
+    const std::uint64_t source_hits = delta(
+        current.trade_source_cache_hits, previous.trade_source_cache_hits);
+    const std::uint64_t network_computations = delta(
+        current.trade_network_computations, previous.trade_network_computations);
+    const std::uint64_t source_computations = delta(
+        current.trade_source_computations, previous.trade_source_computations);
+    const std::uint64_t parallel_items = delta(
+        current.policy_parallel_items, previous.policy_parallel_items);
+
+    std::ostringstream line;
+    line << std::fixed << std::setprecision(1)
+         << "GLOBAL SEARCH PROFILE 1s | parallel=" << parallel_blocks
+         << " blocks/" << parallel_items << " items, wall="
+         << milliseconds(delta(current.policy_parallel_wall_ns,
+                               previous.policy_parallel_wall_ns)) << " ms"
+         << " | trade-network=" << network_calls << " calls ("
+         << network_hits << " cached, " << network_computations << " computed), worker="
+         << milliseconds(delta(current.trade_network_compute_ns,
+                               previous.trade_network_compute_ns)) << " ms"
+         << " | sector-source=" << source_calls << " calls ("
+         << source_hits << " cached, " << source_computations << " computed), worker="
+         << milliseconds(delta(current.trade_source_compute_ns,
+                               previous.trade_source_compute_ns)) << " ms"
+         << " | bilateral-ledger=" << ledger_calls << " calls, worker="
+         << milliseconds(delta(current.bilateral_ledger_ns,
+                               previous.bilateral_ledger_ns)) << " ms"
+         << " | MonteCarlo=" << monte_calls << " calls, worker="
+         << milliseconds(delta(current.monte_carlo_ns,
+                               previous.monte_carlo_ns)) << " ms"
+         << " | backend=" << backend.active_backend
+         << ", GPU runs=" << delta(backend.gpu_runs, previous_backend.gpu_runs)
+         << ", CPU fallbacks=" << delta(backend.cpu_fallback_runs,
+                                         previous_backend.cpu_fallback_runs);
+    if (backend.performance_checked)
+      line << ", qualified speedup=" << backend.measured_speedup << 'x';
+    std::cout << line.str() << '\n';
+
+    previous = current;
+    previous_backend = backend;
   }
 }
 
@@ -107,5 +188,18 @@ int main(int argc, char** argv) {
     std::cout << "Monte Carlo backend: cpu-multicore (" << monte_carlo.detail << ")\n";
   }
 
-  return cad::server::run(options);
+  if (cad::search_acceleration::trade_cache_enabled())
+    std::cout << "Global-search deterministic trade cache: enabled\n";
+  if (cad::search_acceleration::logging_enabled())
+    std::cout << "Global-search live profiler: enabled (set CAD_GLOBAL_SEARCH_PROFILE=0 to disable)\n";
+
+  std::atomic<bool> profile_stop{false};
+  std::thread profile_thread;
+  if (cad::search_acceleration::logging_enabled())
+    profile_thread = std::thread(report_search_profile, std::ref(profile_stop));
+
+  const int result = cad::server::run(options);
+  profile_stop.store(true, std::memory_order_relaxed);
+  if (profile_thread.joinable()) profile_thread.join();
+  return result;
 }
