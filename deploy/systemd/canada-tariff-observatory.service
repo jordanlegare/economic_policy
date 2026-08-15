@@ -1,0 +1,42 @@
+[Unit]
+Description=Canada Tariff Observatory HTTP service
+Documentation=https://github.com/jordanlegare/economic_policy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cad-policy
+Group=cad-policy
+WorkingDirectory=/opt/cad-policy
+EnvironmentFile=/etc/cad-policy-studio/backend.env
+ExecStart=/opt/cad-policy/bin/cad-policy-studio 18080 --bind-all --no-browser --workers=8 --compute-workers=1
+Restart=on-failure
+RestartSec=2s
+KillSignal=SIGTERM
+TimeoutStopSec=180s
+LimitNOFILE=131072
+TasksMax=4096
+UMask=0027
+
+# Runtime storage is the only writable application path.
+ReadWritePaths=/opt/cad-policy/runtime
+
+# Service hardening.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
