@@ -1,0 +1,13 @@
+# Backends use --bind-all so the application keeps its bearer-token contract and
+# renders CAD_API_AUTH_REQUIRED=true. Prevent public clients from bypassing Nginx
+# and reaching the backend ports directly. Nginx connects over loopback.
+#
+# Apply with:
+#   sudo nft -f deploy/nftables/cad-policy-backends.nft
+
+table inet cad_policy_backends {
+    chain input {
+        type filter hook input priority -10; policy accept;
+        iifname != "lo" tcp dport 18080-18095 drop
+    }
+}

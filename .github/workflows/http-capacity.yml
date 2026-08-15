@@ -1,0 +1,46 @@
+name: HTTP capacity contracts
+
+on:
+  pull_request:
+    paths:
+      - 'include/server_session.hpp'
+      - 'deploy/**'
+      - 'docs/http-capacity.md'
+      - 'tools/load/http_capacity.py'
+      - 'tests/http_capacity_config_test.py'
+      - '.github/workflows/http-capacity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'include/server_session.hpp'
+      - 'deploy/**'
+      - 'docs/http-capacity.md'
+      - 'tools/load/http_capacity.py'
+      - 'tests/http_capacity_config_test.py'
+      - '.github/workflows/http-capacity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  capacity-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment contracts
+        run: python3 tests/http_capacity_config_test.py
+
+      - name: Validate load tool CLI
+        run: python3 tools/load/http_capacity.py --help >/dev/null
+
+      - name: Install Nginx syntax checker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx
+
+      - name: Validate Nginx production config syntax
+        run: |
+          sudo mkdir -p /var/cache/nginx/cad-policy /var/log/nginx
+          sudo nginx -t -c "$GITHUB_WORKSPACE/deploy/nginx/nginx-100k.conf"
