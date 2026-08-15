@@ -6,10 +6,14 @@
 #include "server_contracts.hpp"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -113,39 +117,66 @@ struct SessionState {
   bool has_evaluation = false;
 };
 
+inline std::size_t session_cache_capacity_from_environment() {
+  constexpr std::size_t fallback = 128;
+  constexpr std::size_t minimum = 16;
+  constexpr std::size_t maximum = 65536;
+  const char* raw = std::getenv("CAD_SESSION_CACHE_SIZE");
+  if (!raw || !*raw) return fallback;
+
+  try {
+    const std::string text(raw);
+    std::size_t used = 0;
+    const unsigned long long parsed = std::stoull(text, &used, 10);
+    if (used != text.size()) return fallback;
+    const unsigned long long bounded = std::min<unsigned long long>(parsed, maximum);
+    return std::max<std::size_t>(minimum, static_cast<std::size_t>(bounded));
+  } catch (...) {
+    return fallback;
+  }
+}
+
 class SessionStore {
  public:
   SessionStore(std::filesystem::path runtime_root, Economy baseline,
-               std::size_t max_sessions = 128)
+               std::size_t max_sessions = 0)
       : sessions_root_(std::move(runtime_root) / "sessions"),
         baseline_(std::move(baseline)),
-        max_sessions_(std::max<std::size_t>(1, max_sessions)) {}
+        max_sessions_(max_sessions == 0
+            ? session_cache_capacity_from_environment()
+            : std::max<std::size_t>(1, max_sessions)) {}
 
   std::shared_ptr<SessionState> get(const std::string& raw_id) {
     const std::string id = session_id_or_default(raw_id);
     if (!valid_session_id(id)) throw std::invalid_argument("invalid session id");
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    Shard& shard = shard_for(id);
+    std::lock_guard<std::mutex> lock(shard.mutex);
     const auto now = Clock::now();
-    auto it = sessions_.find(id);
-    if (it != sessions_.end()) {
+    auto it = shard.sessions.find(id);
+    if (it != shard.sessions.end()) {
       it->second.last_touch = now;
       return it->second.state;
     }
 
-    prune_locked();
+    if (session_count_.load(std::memory_order_relaxed) >= max_sessions_)
+      prune_locked(shard);
+
     const auto path = sessions_root_ / id / "negotiation-room.events";
     Entry entry;
     entry.state = std::make_shared<SessionState>(id, path, baseline_);
     entry.last_touch = now;
-    auto inserted = sessions_.emplace(id, std::move(entry));
+    auto inserted = shard.sessions.emplace(id, std::move(entry));
+    if (inserted.second)
+      session_count_.fetch_add(1, std::memory_order_relaxed);
     return inserted.first->second.state;
   }
 
   std::size_t size() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return sessions_.size();
+    return session_count_.load(std::memory_order_relaxed);
   }
+
+  std::size_t capacity() const { return max_sessions_; }
 
  private:
   using Clock = std::chrono::steady_clock;
@@ -154,27 +185,39 @@ class SessionStore {
     Clock::time_point last_touch{};
   };
 
-  void prune_locked() {
-    while (sessions_.size() >= max_sessions_) {
-      auto victim = sessions_.end();
-      for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
+  struct Shard {
+    mutable std::mutex mutex;
+    std::unordered_map<std::string, Entry> sessions;
+  };
+
+  static constexpr std::size_t shard_count = 64;
+
+  Shard& shard_for(const std::string& id) {
+    return shards_[std::hash<std::string>{}(id) % shard_count];
+  }
+
+  void prune_locked(Shard& shard) {
+    while (session_count_.load(std::memory_order_relaxed) >= max_sessions_) {
+      auto victim = shard.sessions.end();
+      for (auto it = shard.sessions.begin(); it != shard.sessions.end(); ++it) {
         // A state that is currently being used by a worker keeps its map-owned
         // reference plus at least one external reference. Do not evict it and
         // create two live states for the same session id.
         if (it->second.state.use_count() != 1) continue;
-        if (victim == sessions_.end()
+        if (victim == shard.sessions.end()
             || it->second.last_touch < victim->second.last_touch) victim = it;
       }
-      if (victim == sessions_.end()) return;
-      sessions_.erase(victim);
+      if (victim == shard.sessions.end()) return;
+      shard.sessions.erase(victim);
+      session_count_.fetch_sub(1, std::memory_order_relaxed);
     }
   }
 
   std::filesystem::path sessions_root_;
   Economy baseline_;
   std::size_t max_sessions_ = 128;
-  mutable std::mutex mutex_;
-  std::unordered_map<std::string, Entry> sessions_;
+  std::array<Shard, shard_count> shards_{};
+  std::atomic<std::size_t> session_count_{0};
 };
 
 }  // namespace cad::server
