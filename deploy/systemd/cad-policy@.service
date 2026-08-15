@@ -1,0 +1,27 @@
+[Unit]
+Description=Canada Policy Studio backend on port %i
+After=network-online.target
+Wants=network-online.target
+PartOf=cad-policy-backends.target
+
+[Service]
+Type=simple
+User=cad-policy
+Group=cad-policy
+WorkingDirectory=/opt/cad-policy
+EnvironmentFile=/etc/cad-policy-studio/backend.env
+ExecStart=/opt/cad-policy/bin/cad-policy-studio %i --bind-all --no-browser --workers=8 --compute-workers=1
+Restart=always
+RestartSec=1s
+KillSignal=SIGTERM
+TimeoutStopSec=180s
+LimitNOFILE=131072
+TasksMax=4096
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cad-policy/runtime
+
+[Install]
+WantedBy=cad-policy-backends.target

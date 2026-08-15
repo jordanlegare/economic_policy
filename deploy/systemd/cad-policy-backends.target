@@ -1,0 +1,10 @@
+[Unit]
+Description=Canada Policy Studio backend pool
+Wants=cad-policy@18080.service cad-policy@18081.service cad-policy@18082.service cad-policy@18083.service
+Wants=cad-policy@18084.service cad-policy@18085.service cad-policy@18086.service cad-policy@18087.service
+Wants=cad-policy@18088.service cad-policy@18089.service cad-policy@18090.service cad-policy@18091.service
+Wants=cad-policy@18092.service cad-policy@18093.service cad-policy@18094.service cad-policy@18095.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target
